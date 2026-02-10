@@ -1,0 +1,10 @@
+import importlib.util
+spec = importlib.util.spec_from_file_location('dash', 'etsy_dashboard.py')
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+print(f"net_profit:       {mod.net_profit:,.2f}")
+print(f"etsy_net_earned:  {mod.etsy_net_earned:,.2f}")
+print(f"Match: {abs(mod.net_profit - mod.etsy_net_earned) < 0.01}")
+print(f"profit_margin:    {mod.profit_margin:.1f}%")
+print(f"real_profit:      {mod.real_profit:,.2f}")
+print(f"true_net_profit:  {mod.true_net_profit:,.2f}")

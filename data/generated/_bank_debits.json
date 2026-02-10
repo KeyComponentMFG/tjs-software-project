@@ -1,0 +1,470 @@
+[
+  {
+    "date": "12/12/2025",
+    "desc": "AMAZON MKTPL YJ01H91J3",
+    "amount": 44.16,
+    "cat": "Amazon Inventory"
+  },
+  {
+    "date": "12/12/2025",
+    "desc": "AMAZON MKTPL XO7VT5L53",
+    "amount": 51.68,
+    "cat": "Amazon Inventory"
+  },
+  {
+    "date": "12/15/2025",
+    "desc": "UPS STORE 1849 TULSA OK",
+    "amount": 16.39,
+    "cat": "Shipping"
+  },
+  {
+    "date": "12/15/2025",
+    "desc": "USPS CLICKNSHIP",
+    "amount": 4.92,
+    "cat": "Shipping"
+  },
+  {
+    "date": "12/15/2025",
+    "desc": "AMAZON MKTPL E409Z4AL3",
+    "amount": 18.44,
+    "cat": "Amazon Inventory"
+  },
+  {
+    "date": "12/15/2025",
+    "desc": "AMAZON MKTPL 2V1YI7X13",
+    "amount": 35.8,
+    "cat": "Amazon Inventory"
+  },
+  {
+    "date": "12/15/2025",
+    "desc": "AMAZON MKTPL 5P9CF5KZ3",
+    "amount": 196.4,
+    "cat": "Amazon Inventory"
+  },
+  {
+    "date": "12/16/2025",
+    "desc": "WESTLAKE HARDWARE 088",
+    "amount": 41.0,
+    "cat": "Pending"
+  },
+  {
+    "date": "12/17/2025",
+    "desc": "HOBBYLOBBY TULSA OK",
+    "amount": 7.57,
+    "cat": "Craft Supplies"
+  },
+  {
+    "date": "12/17/2025",
+    "desc": "ETSY COM US",
+    "amount": 29.0,
+    "cat": "Etsy Fees"
+  },
+  {
+    "date": "12/17/2025",
+    "desc": "PAYPAL ALIPAYUSINC",
+    "amount": 76.57,
+    "cat": "AliExpress Supplies"
+  },
+  {
+    "date": "12/19/2025",
+    "desc": "AMAZON MKTPL OR4FP0NE3",
+    "amount": 37.97,
+    "cat": "Amazon Inventory"
+  },
+  {
+    "date": "12/19/2025",
+    "desc": "AMAZON MKTPL NF2IJ0HX3",
+    "amount": 67.73,
+    "cat": "Amazon Inventory"
+  },
+  {
+    "date": "12/22/2025",
+    "desc": "AMAZON MKTPL 5J8JP26T3",
+    "amount": 17.31,
+    "cat": "Amazon Inventory"
+  },
+  {
+    "date": "12/22/2025",
+    "desc": "AMAZON MKTPL TW2K20SU3",
+    "amount": 49.91,
+    "cat": "Amazon Inventory"
+  },
+  {
+    "date": "12/23/2025",
+    "desc": "AMAZON MKTPL C72SV1CY3",
+    "amount": 54.56,
+    "cat": "Amazon Inventory"
+  },
+  {
+    "date": "12/24/2025",
+    "desc": "REASORS 25 TULSA OK",
+    "amount": 50.0,
+    "cat": "Personal"
+  },
+  {
+    "date": "12/24/2025",
+    "desc": "WILDFLOWERCAFE TULSA OK",
+    "amount": 26.09,
+    "cat": "Personal"
+  },
+  {
+    "date": "12/24/2025",
+    "desc": "ANTHROPOLOGIE 00546",
+    "amount": 30.38,
+    "cat": "Personal"
+  },
+  {
+    "date": "12/26/2025",
+    "desc": "LULULEMON CENTER 1",
+    "amount": 50.0,
+    "cat": "Personal"
+  },
+  {
+    "date": "12/29/2025",
+    "desc": "PAYPAL THANGS 3D",
+    "amount": 20.15,
+    "cat": "3D Subscription"
+  },
+  {
+    "date": "12/29/2025",
+    "desc": "AMAZON MKTPL HU1NU1E73",
+    "amount": 30.9,
+    "cat": "Amazon Inventory"
+  },
+  {
+    "date": "12/29/2025",
+    "desc": "AMAZON MKTPL HZ3VL8FR3",
+    "amount": 59.67,
+    "cat": "Amazon Inventory"
+  },
+  {
+    "date": "01/02/2026",
+    "desc": "ETSY COM US",
+    "amount": 10.0,
+    "cat": "Etsy Fees"
+  },
+  {
+    "date": "01/05/2026",
+    "desc": "HOBBYLOBBY TULSA OK",
+    "amount": 11.36,
+    "cat": "Craft Supplies"
+  },
+  {
+    "date": "01/05/2026",
+    "desc": "WAL MART 0992 TULSA OK",
+    "amount": 15.27,
+    "cat": "Pending"
+  },
+  {
+    "date": "01/06/2026",
+    "desc": "AMAZON MKTPL KB6AD5XB3",
+    "amount": 15.97,
+    "cat": "Amazon Inventory"
+  },
+  {
+    "date": "01/06/2026",
+    "desc": "AMAZON MKTPL ZU68D7WB3",
+    "amount": 16.01,
+    "cat": "Amazon Inventory"
+  },
+  {
+    "date": "01/06/2026",
+    "desc": "AMAZON MKTPL AZ6BK1DB3",
+    "amount": 20.56,
+    "cat": "Amazon Inventory"
+  },
+  {
+    "date": "01/06/2026",
+    "desc": "AMAZON MKTPL Q51HU05A3",
+    "amount": 35.04,
+    "cat": "Amazon Inventory"
+  },
+  {
+    "date": "01/06/2026",
+    "desc": "VENMO PRICE PETTIT",
+    "amount": 36.0,
+    "cat": "Owner Draw - Tulsa"
+  },
+  {
+    "date": "01/06/2026",
+    "desc": "AMAZON MKTPL 8H1DG3DA3",
+    "amount": 37.2,
+    "cat": "Amazon Inventory"
+  },
+  {
+    "date": "01/06/2026",
+    "desc": "AMAZON MKTPL 287II1HF3",
+    "amount": 48.69,
+    "cat": "Amazon Inventory"
+  },
+  {
+    "date": "01/06/2026",
+    "desc": "AMAZON MKTPL 158CW8QL3",
+    "amount": 48.81,
+    "cat": "Amazon Inventory"
+  },
+  {
+    "date": "01/06/2026",
+    "desc": "VENMO JACOB SHELLEY",
+    "amount": 57.0,
+    "cat": "Owner Draw - Tulsa"
+  },
+  {
+    "date": "01/06/2026",
+    "desc": "AMAZON MKTPL 9G6FP5GA3",
+    "amount": 71.15,
+    "cat": "Amazon Inventory"
+  },
+  {
+    "date": "01/07/2026",
+    "desc": "AMAZON MKTPL R12KW4BP3",
+    "amount": 34.96,
+    "cat": "Amazon Inventory"
+  },
+  {
+    "date": "01/07/2026",
+    "desc": "AMAZON MKTPL AY55313W3",
+    "amount": 100.0,
+    "cat": "Amazon Inventory"
+  },
+  {
+    "date": "01/08/2026",
+    "desc": "AMAZON MKTPL WQ6J56WE3",
+    "amount": 20.61,
+    "cat": "Amazon Inventory"
+  },
+  {
+    "date": "01/08/2026",
+    "desc": "AMAZON MKTPL TK7525Y53",
+    "amount": 116.87,
+    "cat": "Amazon Inventory"
+  },
+  {
+    "date": "01/09/2026",
+    "desc": "AMAZON MKTPL OG8499T63",
+    "amount": 34.92,
+    "cat": "Amazon Inventory"
+  },
+  {
+    "date": "01/12/2026",
+    "desc": "AMAZON MKTPL 993EC6V63",
+    "amount": 23.04,
+    "cat": "Amazon Inventory"
+  },
+  {
+    "date": "01/12/2026",
+    "desc": "AMAZON MKTPL OM7OI60L3",
+    "amount": 29.19,
+    "cat": "Amazon Inventory"
+  },
+  {
+    "date": "01/12/2026",
+    "desc": "AMAZON MKTPL U37PZ3L83",
+    "amount": 30.51,
+    "cat": "Amazon Inventory"
+  },
+  {
+    "date": "01/12/2026",
+    "desc": "AMAZON MKTPL GS5T14M53",
+    "amount": 30.59,
+    "cat": "Amazon Inventory"
+  },
+  {
+    "date": "01/12/2026",
+    "desc": "AMAZON MKTPL 5P2Z17GU3",
+    "amount": 49.78,
+    "cat": "Amazon Inventory"
+  },
+  {
+    "date": "01/12/2026",
+    "desc": "AMAZON MKTPL W607J8553",
+    "amount": 54.85,
+    "cat": "Amazon Inventory"
+  },
+  {
+    "date": "01/13/2026",
+    "desc": "AMAZON MKTPL L781I8BJ3",
+    "amount": 26.9,
+    "cat": "Amazon Inventory"
+  },
+  {
+    "date": "01/14/2026",
+    "desc": "AMAZON MKTPL 808DT2723",
+    "amount": 125.8,
+    "cat": "Amazon Inventory"
+  },
+  {
+    "date": "01/15/2026",
+    "desc": "BEST BUY AUTO PYMT",
+    "amount": 100.0,
+    "cat": "Personal"
+  },
+  {
+    "date": "01/16/2026",
+    "desc": "ETSY COM US",
+    "amount": 29.0,
+    "cat": "Etsy Fees"
+  },
+  {
+    "date": "01/20/2026",
+    "desc": "AMAZON MKTPL E11RB5RU3",
+    "amount": 55.93,
+    "cat": "Amazon Inventory"
+  },
+  {
+    "date": "01/21/2026",
+    "desc": "AMAZON MKTPL BQ8BF1YM1",
+    "amount": 17.53,
+    "cat": "Amazon Inventory"
+  },
+  {
+    "date": "01/21/2026",
+    "desc": "CHIPOTLE 2155 TULSA OK",
+    "amount": 20.08,
+    "cat": "Personal"
+  },
+  {
+    "date": "01/21/2026",
+    "desc": "AMAZON MKTPL YN46J1BJ3",
+    "amount": 91.83,
+    "cat": "Amazon Inventory"
+  },
+  {
+    "date": "01/22/2026",
+    "desc": "AMAZON MKTPL I77IO2DE3",
+    "amount": 30.84,
+    "cat": "Amazon Inventory"
+  },
+  {
+    "date": "01/23/2026",
+    "desc": "AMAZON MKTPL N33CL1IK3",
+    "amount": 18.39,
+    "cat": "Amazon Inventory"
+  },
+  {
+    "date": "01/23/2026",
+    "desc": "AMAZON MKTPL 2X7C91G13",
+    "amount": 18.44,
+    "cat": "Amazon Inventory"
+  },
+  {
+    "date": "01/23/2026",
+    "desc": "AMAZON MKTPL 2V1EC6XB3",
+    "amount": 53.88,
+    "cat": "Amazon Inventory"
+  },
+  {
+    "date": "01/23/2026",
+    "desc": "VENMO BRADEN WALKER",
+    "amount": 450.0,
+    "cat": "Owner Draw - Texas"
+  },
+  {
+    "date": "01/26/2026",
+    "desc": "PAYPAL AOWEIKEGTTA",
+    "amount": 25.98,
+    "cat": "AliExpress Supplies"
+  },
+  {
+    "date": "01/26/2026",
+    "desc": "PAYPAL AOWEIKEGTTA",
+    "amount": 39.56,
+    "cat": "AliExpress Supplies"
+  },
+  {
+    "date": "01/26/2026",
+    "desc": "VENMO BRADEN WALKER",
+    "amount": 100.0,
+    "cat": "Owner Draw - Texas"
+  },
+  {
+    "date": "01/28/2026",
+    "desc": "AMAZON MKTPL WM9RC81X3",
+    "amount": 16.01,
+    "cat": "Amazon Inventory"
+  },
+  {
+    "date": "01/28/2026",
+    "desc": "AMAZON MKTPL Q61PB33T3",
+    "amount": 49.91,
+    "cat": "Amazon Inventory"
+  },
+  {
+    "date": "01/29/2026",
+    "desc": "PAYPAL THANGS 3D",
+    "amount": 20.15,
+    "cat": "3D Subscription"
+  },
+  {
+    "date": "01/29/2026",
+    "desc": "AMAZON MKTPL SJ3R644D3",
+    "amount": 68.1,
+    "cat": "Amazon Inventory"
+  },
+  {
+    "date": "02/02/2026",
+    "desc": "ETSY COM US (fees)",
+    "amount": 13.98,
+    "cat": "Etsy Fees"
+  },
+  {
+    "date": "02/02/2026",
+    "desc": "ETSY COM US (fees)",
+    "amount": 10.0,
+    "cat": "Etsy Fees"
+  },
+  {
+    "date": "02/02/2026",
+    "desc": "AMAZON MKTPL (split)",
+    "amount": 16.44,
+    "cat": "Amazon Inventory"
+  },
+  {
+    "date": "02/02/2026",
+    "desc": "AMAZON MKTPL (split)",
+    "amount": 29.21,
+    "cat": "Amazon Inventory"
+  },
+  {
+    "date": "02/02/2026",
+    "desc": "AMAZON MKTPL (split)",
+    "amount": 31.46,
+    "cat": "Amazon Inventory"
+  },
+  {
+    "date": "02/02/2026",
+    "desc": "AMAZON MKTPL (split)",
+    "amount": 36.84,
+    "cat": "Amazon Inventory"
+  },
+  {
+    "date": "02/02/2026",
+    "desc": "VENMO TJ MCNULTY",
+    "amount": 350.0,
+    "cat": "Owner Draw - Tulsa"
+  },
+  {
+    "date": "02/03/2026",
+    "desc": "ETSY PAYOUT",
+    "amount": 483.28,
+    "cat": "Etsy Payout"
+  },
+  {
+    "date": "02/06/2026",
+    "desc": "AMAZON MKTPL (pending)",
+    "amount": 17.25,
+    "cat": "Amazon Inventory"
+  },
+  {
+    "date": "02/06/2026",
+    "desc": "AMAZON MKTPL (pending)",
+    "amount": 23.79,
+    "cat": "Amazon Inventory"
+  },
+  {
+    "date": "02/06/2026",
+    "desc": "AMAZON MKTPL (pending)",
+    "amount": 23.86,
+    "cat": "Amazon Inventory"
+  }
+]
