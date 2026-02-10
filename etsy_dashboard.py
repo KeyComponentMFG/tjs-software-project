@@ -45,11 +45,14 @@ CHART_LAYOUT = dict(
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# ── Load config ──────────────────────────────────────────────────────────────
-_config_path = os.path.join(BASE_DIR, "data", "config.json")
-with open(_config_path) as _cf:
-    CONFIG = json.load(_cf)
+from supabase_loader import load_data as _load_data
+_sb = _load_data()
+DATA = _sb["DATA"]
+CONFIG = _sb["CONFIG"]
+INVOICES = _sb["INVOICES"]
+BANK_TXNS = _sb["BANK_TXNS"]
 
+# ── Extract config values ───────────────────────────────────────────────────
 etsy_balance = CONFIG["etsy_balance"]
 etsy_pre_capone_deposits = CONFIG["etsy_pre_capone_deposits"]
 pre_capone_detail = [tuple(row) for row in CONFIG["pre_capone_detail"]]
@@ -85,25 +88,6 @@ def parse_money(val):
     except Exception:
         return 0.0
 
-
-def load_all():
-    frames = []
-    statements_dir = os.path.join(BASE_DIR, "data", "etsy_statements")
-    for f in os.listdir(statements_dir):
-        if f.startswith("etsy_statement") and f.endswith(".csv"):
-            frames.append(pd.read_csv(os.path.join(statements_dir, f)))
-    df = pd.concat(frames, ignore_index=True)
-    df["Amount_Clean"] = df["Amount"].apply(parse_money)
-    df["Net_Clean"] = df["Net"].apply(parse_money)
-    df["Fees_Clean"] = df["Fees & Taxes"].apply(parse_money)
-    df["Date_Parsed"] = pd.to_datetime(df["Date"], format="%B %d, %Y", errors="coerce")
-    df["Month"] = df["Date_Parsed"].dt.to_period("M").astype(str)
-    df["Week"] = df["Date_Parsed"].dt.to_period("W").apply(lambda p: p.start_time)
-    return df
-
-
-DATA = load_all()
-
 # ── Pre-compute metrics ─────────────────────────────────────────────────────
 
 sales_df = DATA[DATA["Type"] == "Sale"]
@@ -131,12 +115,7 @@ avg_order = gross_sales / order_count if order_count else 0
 profit_margin = (net_profit / gross_sales * 100) if gross_sales else 0
 
 # ── Load Inventory / COGS Data ─────────────────────────────────────────────
-
-import json as _json
-
-INVOICE_PATH = os.path.join(BASE_DIR, "data", "generated", "inventory_orders.json")
-with open(INVOICE_PATH) as _f:
-    INVOICES = _json.load(_f)
+# INVOICES already loaded by supabase_loader
 
 # Build inventory DataFrames
 inv_rows = []
@@ -220,19 +199,15 @@ monthly_inv_spend = INV_DF.groupby("month")["grand_total"].sum()
 monthly_inv_subtotal = INV_DF.groupby("month")["subtotal"].sum()
 
 # ── Bank Statement Data (Capital One Checking 3650) ────────────────────────
-# Loaded from data/generated/bank_transactions.json (produced by _parse_bank_statements.py)
+# BANK_TXNS already loaded by supabase_loader
 
+# Count source files for display (local fallback info)
 _bank_json_path = os.path.join(BASE_DIR, "data", "generated", "bank_transactions.json")
 if os.path.exists(_bank_json_path):
     with open(_bank_json_path) as _bf:
-        _bank_data = json.load(_bf)
-    BANK_TXNS = _bank_data["transactions"]
-    _bank_source_files = _bank_data.get("metadata", {}).get("source_files", [])
+        _bank_source_files = json.load(_bf).get("metadata", {}).get("source_files", [])
 else:
-    print("WARNING: data/generated/bank_transactions.json not found. Run: python import_data.py")
-    BANK_TXNS = []
     _bank_source_files = []
-
 bank_statement_count = len(_bank_source_files)
 
 # Bank aggregates
@@ -3404,6 +3379,7 @@ _bank_cat_color_map, _bank_acct_gap, _bank_no_receipt, _bank_amazon_txns = _get_
 # ── Build Layout ─────────────────────────────────────────────────────────────
 
 app = dash.Dash(__name__)
+server = app.server
 app.title = "TJs Software Project"
 
 # Shared tab styling
@@ -6004,7 +5980,8 @@ if __name__ == "__main__":
     print()
     print("=" * 50)
     print("  ETSY DASHBOARD v2 RUNNING")
-    print("  Open: http://127.0.0.1:8070")
+    port = int(os.environ.get("PORT", 8070))
+    print(f"  Open: http://127.0.0.1:{port}")
     print("=" * 50)
     print()
-    app.run(debug=False, host="127.0.0.1", port=8070)
+    app.run(debug=False, host="0.0.0.0", port=port)

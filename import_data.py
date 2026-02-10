@@ -75,6 +75,15 @@ def main():
         print("\nAborting. Fix errors above and retry.")
         return
 
+    # Step 4: Upload to Supabase (if configured)
+    from dotenv import load_dotenv
+    load_dotenv(os.path.join(BASE_DIR, ".env"))
+    if os.environ.get("SUPABASE_URL") and "YOUR_PROJECT" not in os.environ.get("SUPABASE_URL", ""):
+        if not run_script("migrate_to_supabase.py"):
+            print("\n  WARNING: Supabase upload failed. Local files are fine — dashboard will use fallback.")
+    else:
+        print("\n  Skipping Supabase upload (SUPABASE_URL not configured in .env)")
+
     print(f"\n{'='*60}")
     print("  ALL DATA PROCESSED SUCCESSFULLY")
     print(f"{'='*60}")

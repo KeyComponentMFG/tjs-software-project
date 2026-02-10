@@ -3,3 +3,9 @@ __pycache__/
 *.pyo
 .DS_Store
 Thumbs.db
+.env
+
+# Local data files (production reads from Supabase)
+data/
+_archive/
+*.pdf
