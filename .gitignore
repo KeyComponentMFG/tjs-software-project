@@ -9,3 +9,11 @@ Thumbs.db
 data/
 _archive/
 *.pdf
+
+# WIP modular refactor (not used in production)
+etsy_dashboard/
+
+# Debug/temp files
+_*.py
+deepdive_resp.json
+nul

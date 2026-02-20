@@ -3303,7 +3303,7 @@ def chart_context(description, metrics=None, legend=None, look_for=None, simple=
 def _rebuild_all_charts():
     global BANK_MONTH_NAMES, _anomaly_high, _anomaly_low, _aov_best_week, _aov_worst_week, _best_day_rev, _best_dow, _breakeven_daily
     global _breakeven_monthly, _breakeven_orders, _cf_cum, _cf_debits, _cf_deposits, _cf_months, _cf_net, _contrib_margin_pct
-    global _corr_ad_vals, _corr_rev_vals, _current_14d_profit_avg, _daily_orders_avg, _daily_profit_avg, _daily_rev_avg, _daily_rev_mean, _daily_rev_std
+    global _corr_ad_vals, _corr_r2, _corr_rev_vals, _current_14d_profit_avg, _daily_orders_avg, _daily_profit_avg, _daily_rev_avg, _daily_rev_mean, _daily_rev_std
     global _dow_names, _dow_ord_vals, _dow_orders, _dow_prof_vals, _dow_profit, _dow_rev_vals, _dow_revenue, _etsy_took
     global _growth_pct, _inv_cogs_ratio, _inv_months, _inv_rev_vals, _inv_spend_vals, _last_aov_val, _last_fee_pct, _last_margin_pct
     global _last_mkt_pct, _last_ppo_m, _last_ppo_val, _last_ratio_m, _last_ref_pct, _last_ship_pct, _latest_month_net, _latest_month_rev
@@ -3314,7 +3314,7 @@ def _rebuild_all_charts():
     global corr_fig, cost_ratio_fig, cum_fig, daily_fig, dow_fig, expense_colors_list, expense_labels_list, expense_pie
     global expense_values_list, fee_pcts, intl_fig, inv_cat_bar, inv_cat_fig, inv_monthly_fig, inv_months_sorted, loc_fig
     global loc_monthly_fig, margin_pcts, mkt_pcts_list, monthly_fig, net_by_month, orders_day_fig, ppo_fig, ppo_months
-    global ppo_vals, prod_name, product_fig, profit_rolling_fig, proj_chart, ratio_months, ref_pcts, rev_cogs_fig
+    global ppo_vals, prod_name, product_fig, product_heat, profit_rolling_fig, proj_chart, ratio_months, ref_pcts, rev_cogs_fig
     global rev_inv_fig, sankey_fig, sankey_link_colors, sankey_node_colors, sankey_node_labels, sankey_sources, sankey_targets, sankey_values
     global ship_pcts, ship_type_colors, ship_type_fig, ship_type_names, ship_type_vals, shipping_compare, texas_cat_fig, top_n
     global top_products, trend_profit_rev, true_profit_monthly, tulsa_cat_fig, unit_wf
@@ -6602,6 +6602,7 @@ _SOURCE_FOLDER_MAP = {
     "Alibaba": "other_receipts",
 }
 
+
 @server.route("/api/receipt/<subfolder>/<path:filename>")
 def serve_receipt_pdf(subfolder, filename):
     folder = os.path.join(BASE_DIR, "data", "invoices", subfolder)
@@ -7703,7 +7704,7 @@ def build_tab6_valuation():
     wf_measures = ["absolute", "relative", "relative", "relative", "relative", "relative"]
     wf_colors = [GREEN, RED, RED, RED, RED, RED]
     if total_buyer_fees > 0:
-        wf_labels.append("Buyer Fees")
+        wf_labels.append("CO Buyer Fee")
         wf_values.append(-total_buyer_fees)
         wf_measures.append("relative")
         wf_colors.append(RED)
@@ -8705,6 +8706,55 @@ def build_tab2_deep_dive():
     ], style={"padding": TAB_PADDING})
 
 
+def _build_shipping_compare():
+    """Build Shipping: Buyer Paid vs Your Cost chart fresh from current data."""
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        name="Buyers Paid", x=["Shipping"], y=[buyer_paid_shipping],
+        marker_color=GREEN, text=[f"${buyer_paid_shipping:,.2f}"], textposition="outside", width=0.3, offset=-0.15,
+    ))
+    fig.add_trace(go.Bar(
+        name="Your Label Cost", x=["Shipping"], y=[total_shipping_cost],
+        marker_color=RED, text=[f"${total_shipping_cost:,.2f}"], textposition="outside", width=0.3, offset=0.15,
+    ))
+    fig.add_annotation(
+        x="Shipping", y=max(buyer_paid_shipping, total_shipping_cost) + 200,
+        text=f"{'Loss' if shipping_profit < 0 else 'Profit'}: ${abs(shipping_profit):,.2f}",
+        showarrow=False, font=dict(size=18, color=RED if shipping_profit < 0 else GREEN, family="Arial Black"),
+    )
+    make_chart(fig, 340, False)
+    fig.update_layout(title="Shipping: Buyer Paid vs Your Cost", showlegend=True, yaxis_title="Amount ($)")
+    return fig
+
+
+def _build_ship_type():
+    """Build Shipping Cost by Type chart fresh from current data."""
+    names, vals, colors = [], [], []
+    for nm, val, clr in [
+        (f"USPS Outbound ({usps_outbound_count})", usps_outbound, BLUE),
+        (f"USPS Return ({usps_return_count})", usps_return, RED),
+        (f"Asendia Intl ({asendia_count})", asendia_labels, PURPLE),
+        (f"Adjustments ({ship_adjust_count})", ship_adjustments, ORANGE),
+        (f"Insurance ({ship_insurance_count})", ship_insurance, TEAL),
+    ]:
+        if val > 0:
+            names.append(nm)
+            vals.append(val)
+            colors.append(clr)
+    if ship_credits != 0:
+        names.append(f"Credits ({ship_credit_count})")
+        vals.append(abs(ship_credits))
+        colors.append(GREEN)
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        x=names, y=vals, marker_color=colors,
+        text=[f"${v:,.2f}" for v in vals], textposition="outside",
+    ))
+    make_chart(fig, 340, False)
+    fig.update_layout(title="Shipping Cost by Type", yaxis_title="Amount ($)")
+    return fig
+
+
 def build_tab3_financials():
     """Tab 3 - Financials: Full P&L + Cash Flow + Shipping + Monthly + Fees + Ledger"""
     net_fees_after_credits = total_fees_gross - abs(total_credits)
@@ -8729,38 +8779,43 @@ def build_tab3_financials():
         "relative", "relative", "relative", "relative", "relative",
     ]
     if total_buyer_fees > 0:
-        _wf_labels.append("Buyer Fees")
+        _wf_labels.append("CO Buyer Fee")
         _wf_values.append(-total_buyer_fees)
         _wf_measures.append("relative")
-    _wf_labels += [
-        "AFTER ETSY FEES",
-        "Amazon Inv.", "AliExpress", "Craft", "Etsy Fees",
-        "Subscriptions", "Ship Supplies", "Best Buy CC",
-        "Owner Draws",
-        "CASH ON HAND",
-        "Prior Bank Inv.", "Unmatched Bank", "Untracked Etsy",
-        "ACCOUNTED",
-    ]
-    _wf_values += [
-        0,
-        -bank_by_cat.get("Amazon Inventory", 0), -bank_by_cat.get("AliExpress Supplies", 0),
-        -bank_by_cat.get("Craft Supplies", 0), -bank_by_cat.get("Etsy Fees", 0),
-        -bank_by_cat.get("Subscriptions", 0), -bank_by_cat.get("Shipping", 0),
-        -bank_by_cat.get("Business Credit Card", 0),
-        -bank_owner_draw_total,
-        0,
-        -old_bank_receipted, -bank_unaccounted, -etsy_csv_gap,
-        0,
-    ]
-    _wf_measures += [
-        "total",
-        "relative", "relative", "relative", "relative",
-        "relative", "relative", "relative",
-        "relative",
-        "total",
-        "relative", "relative", "relative",
-        "total",
-    ]
+    _wf_labels += ["AFTER ETSY FEES"]
+    _wf_values += [0]
+    _wf_measures += ["total"]
+    # Bank expenses — only include non-zero categories
+    for _lbl, _val in [
+        ("Amazon Inv.", bank_by_cat.get("Amazon Inventory", 0)),
+        ("AliExpress", bank_by_cat.get("AliExpress Supplies", 0)),
+        ("Craft", bank_by_cat.get("Craft Supplies", 0)),
+        ("Etsy Fees", bank_by_cat.get("Etsy Fees", 0)),
+        ("Subscriptions", bank_by_cat.get("Subscriptions", 0)),
+        ("Ship Supplies", bank_by_cat.get("Shipping", 0)),
+        ("Best Buy CC", bank_by_cat.get("Business Credit Card", 0)),
+    ]:
+        if _val > 0:
+            _wf_labels.append(_lbl)
+            _wf_values.append(-_val)
+            _wf_measures.append("relative")
+    if bank_owner_draw_total > 0:
+        _wf_labels.append("Owner Draws")
+        _wf_values.append(-bank_owner_draw_total)
+        _wf_measures.append("relative")
+    # Reconciliation items — only include non-zero
+    for _lbl, _val in [
+        ("Prior Bank Inv.", old_bank_receipted),
+        ("Unmatched Bank", bank_unaccounted),
+        ("Untracked Etsy", etsy_csv_gap),
+    ]:
+        if abs(_val) > 0.01:
+            _wf_labels.append(_lbl)
+            _wf_values.append(-_val)
+            _wf_measures.append("relative")
+    _wf_labels.append("CASH ON HAND")
+    _wf_values.append(0)
+    _wf_measures.append("total")
     recon_fig = go.Figure(go.Waterfall(
         orientation="v", measure=_wf_measures, x=_wf_labels, y=_wf_values,
         connector={"line": {"color": "#555"}},
@@ -9056,10 +9111,10 @@ def build_tab3_financials():
                 f"Average cost of a USPS outbound label. Range: ${usps_min:.2f} (lightest) to ${usps_max:.2f} (heaviest). {usps_outbound_count} labels total. Heavier/larger items cost more to ship."),
         ], style={"display": "flex", "gap": "8px", "marginBottom": "14px", "flexWrap": "wrap"}),
 
-        # Shipping charts
+        # Shipping charts — built inline so they always reflect current data
         html.Div([
-            html.Div([dcc.Graph(figure=shipping_compare, config={"displayModeBar": False})], style={"flex": "1"}),
-            html.Div([dcc.Graph(figure=ship_type_fig, config={"displayModeBar": False})], style={"flex": "1"}),
+            html.Div([dcc.Graph(figure=_build_shipping_compare(), config={"displayModeBar": False})], style={"flex": "1"}),
+            html.Div([dcc.Graph(figure=_build_ship_type(), config={"displayModeBar": False})], style={"flex": "1"}),
         ], style={"display": "flex", "gap": "8px", "marginBottom": "10px"}),
 
         # Shipping P&L section
@@ -11965,4 +12020,4 @@ if __name__ == "__main__":
     print(f"  Open: http://127.0.0.1:{port}")
     print("=" * 50)
     print()
-    app.run(debug=True, host="0.0.0.0", port=port, use_reloader=False)
+    app.run(debug=False, host="0.0.0.0", port=port)
