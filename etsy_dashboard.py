@@ -6608,6 +6608,41 @@ def serve_receipt_pdf(subfolder, filename):
     folder = os.path.join(BASE_DIR, "data", "invoices", subfolder)
     return flask.send_from_directory(folder, filename)
 
+
+@server.route("/api/diagnostics")
+def api_diagnostics():
+    """Return key financial metrics as JSON for remote debugging."""
+    return flask.jsonify({
+        "etsy": {
+            "rows": len(DATA),
+            "gross_sales": round(gross_sales, 2),
+            "total_fees": round(total_fees, 2),
+            "total_shipping_cost": round(total_shipping_cost, 2),
+            "total_marketing": round(total_marketing, 2),
+            "total_refunds": round(total_refunds, 2),
+            "total_taxes": round(total_taxes, 2),
+            "total_buyer_fees": round(total_buyer_fees, 2),
+            "etsy_net": round(etsy_net, 2),
+            "etsy_balance": round(etsy_balance, 2),
+        },
+        "bank": {
+            "txn_count": len(BANK_TXNS),
+            "deposits": round(bank_total_deposits, 2),
+            "debits": round(bank_total_debits, 2),
+            "net_cash": round(bank_net_cash, 2),
+            "by_category": {k: round(v, 2) for k, v in bank_by_cat.items()},
+            "owner_draw_total": round(bank_owner_draw_total, 2),
+            "tulsa_draws": round(tulsa_draw_total, 2),
+            "texas_draws": round(texas_draw_total, 2),
+        },
+        "profit": {
+            "cash_on_hand": round(bank_cash_on_hand, 2),
+            "real_profit": round(real_profit, 2),
+            "profit": round(profit, 2),
+            "profit_margin": round(real_profit_margin, 1),
+        },
+    })
+
 # Shared tab styling
 tab_style = {
     "backgroundColor": CARD2, "color": GRAY, "border": "none",
