@@ -1,22 +1,22 @@
 ======================================================================
 ETSY BUSINESS SUMMARY REPORT
-Generated: 2026-02-09 00:52:28
+Generated: 2026-02-16 02:23:06
 ======================================================================
 
 FINANCIAL SUMMARY
 ----------------------------------------
-Gross Sales:          $   15,187.67
-Etsy Fees:            $   -1,487.94
-Shipping Labels:      $   -3,260.46
-Marketing/Ads:        $     -802.04
-Taxes Collected:      $   -1,029.16
+Gross Sales:          $   16,195.89
+Etsy Fees:            $   -1,587.09
+Shipping Labels:      $   -3,448.23
+Marketing/Ads:        $     -876.43
+Taxes Collected:      $   -1,096.52
 Refunds:              $     -605.63
 ----------------------------------------
-NET REVENUE:          $    8,002.44
+NET REVENUE:          $    8,581.99
 ----------------------------------------
 
-Total Orders: 318
-Avg Order Value: $47.76
+Total Orders: 333
+Avg Order Value: $48.64
 
 MONTHLY BREAKDOWN
 ----------------------------------------
@@ -24,4 +24,4 @@ MONTHLY BREAKDOWN
 2025-11: $    1,132.64
 2025-12: $    2,600.18
 2026-01: $    3,425.75
-2026-02: $      523.74
+2026-02: $    1,102.73

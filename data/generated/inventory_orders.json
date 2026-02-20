@@ -1462,57 +1462,37 @@
     "payment_method": "Discover ending in 4570"
   },
   {
-    "order_num": "112-4560091-6797820",
-    "date": "December 12, 2025",
-    "grand_total": 196.4,
-    "subtotal": 180.98,
-    "tax": 15.42,
+    "order_num": "112-1149554-6621800",
+    "date": "February 11, 2026",
+    "grand_total": 69.81,
+    "subtotal": 69.74,
+    "tax": 5.32,
     "items": [
       {
         "qty": 1,
-        "name": "NATIONAL GEOGRAPHIC Hobby Pottery Wheel Kit - 8\" Variable Speed Pottery Wheel for Adults & Teens with Innovativ e Arm Tool, 3 Lb Air Dry Clay & Art Supplies, Crafts for Adults, Craft Kits for Teenager",
-        "price": 115.99,
-        "seller": "Amazon.com",
-        "ship_to": "Thomas McNulty, 2725 E 47TH ST, TULSA, OK 74105-5346"
+        "name": "Rechargeable Battery Operated Light Bulb: E26 Wireless LED Night Light with Remote Control and Timer for Lamp, 3000mAh D immable Magnetic Puck Lights, 3 Color Temperatures+12 RGB Colors, Outdoor, 4pcs",
+        "price": 34.99,
+        "seller": "Waqiao Direct",
+        "ship_to": "Braden Walker, 606 W ASH ST, CELINA, TX 75009-6404"
       },
       {
         "qty": 1,
-        "name": "Meat Grinder & Slicer Shredder Attachments for KitchenAid Stand Mixer, Meat Grinder with Sausage Stuffer Tubes and S licer Shredder Set, 2 Pcs Attachment Set for KitchenAid Mixers by Cofun",
-        "price": 64.99,
-        "seller": "Cofun US",
-        "ship_to": "Thomas McNulty, 2725 E 47TH ST, TULSA, OK 74105-5346"
-      }
-    ],
-    "source": "Key Component Mfg",
-    "file": "order-document (Gigi.pdf",
-    "ship_address": "Thomas McNulty, 2725 E 47TH ST, TULSA, OK 74105-5346",
-    "payment_method": "Discover ending in 4570"
-  },
-  {
-    "order_num": "114-1542464-8103453",
-    "date": "February 6, 2026",
-    "grand_total": 23.86,
-    "subtotal": 21.98,
-    "tax": 1.88,
-    "items": [
-      {
-        "qty": 1,
-        "name": "GEFTOL Jewelry Gift Boxes 20 Pack 3.5x3.5x1 Inch Cardboard Jewelry Boxes,Small Gift Boxes for Jewelry Earrings Necklaces Handmade Bangles Bracelets(Brown)",
-        "price": 12.99,
-        "seller": "Giftol",
-        "ship_to": "TJ McNulty, 2725 E 47TH ST, TULSA, OK 74105-5346"
+        "name": "SUNLU PLA Plus Filament 1.75mm Wood 1KG, Neatly Wound 3D Printer Filament 1.75mm, PLA+ 1000g, Dimensional Accuracy +/- 0 .02 mm, Fit Most FDM 3D Printers, 1kg Spool (2.2lbs), Oak Wood",
+        "price": 18.99,
+        "seller": "SUNLU-US",
+        "ship_to": "Braden Walker, 606 W ASH ST, CELINA, TX 75009-6404"
       },
       {
         "qty": 1,
-        "name": "Thrilez Hypoallergenic Earring Hooks, 600Pcs Earring Making Kit with Hypoallergenic Earring Hooks, Jump Rings and Clear Rubber Earring Backs for DIY Jewelry Making (Silver and Gold)",
-        "price": 8.99,
-        "seller": "Thrilez Direct",
-        "ship_to": "TJ McNulty, 2725 E 47TH ST, TULSA, OK 74105-5346"
+        "name": "SUNLU PLA 3D Printer Filament PLA Filament 1.75mm, Neatly Wound 3D Printing Filament 1.75mm, Dimensional Accuracy +/- 0. 02 mm, Fit Most FDM 3D Printers, 1kg Spool (2.2lbs), Red",
+        "price": 15.76,
+        "seller": "SUNLU Industry",
+        "ship_to": "Braden Walker, 606 W ASH ST, CELINA, TX 75009-6404"
       }
     ],
     "source": "Key Component Mfg",
     "file": "order-document.pdf",
-    "ship_address": "TJ McNulty, 2725 E 47TH ST, TULSA, OK 74105-5346",
+    "ship_address": "Braden Walker, 606 W ASH ST, CELINA, TX 75009-6404",
     "payment_method": "Discover ending in 4570"
   },
   {
@@ -1525,9 +1505,16 @@
     "items": [
       {
         "qty": 1,
-        "name": "Your package was left near the front door or porch. Kadrick Metric Screw Assortment, 660 Pcs M2 Screws, M2*4mm/6mm/8mm/10mm/12mm/16mm,12.9 Grade Alloy Steel, Metric Hex Socket Head Cap Screws Nuts Was",
+        "name": "Kadrick Metric Screw Assortment, 660 Pcs M2 Screws, M2*4mm/6mm/8mm/10mm/12mm/16mm,12.9 Grade Alloy Steel, Metric Hex Socket Head Cap Screws Nuts Washers Kit, Black Zinc Plated Anti Rust Upgrade",
         "price": 8.99,
         "seller": "Kadrick\u2014\u2014Expert of Fastener",
+        "ship_to": "Braden Walker, 606 W ASH ST, CELINA, TX 75009-6404"
+      },
+      {
+        "qty": 1,
+        "name": "Cadrim Under Cabinet Lighting, Rechargeable Puck Lights with Remote Control, 13 Colors RGB LED Rechargeable Night Light, 1000mAh Battery Operated Wireless Push Light, Magnetic Stick-on Design (6pcs)",
+        "price": 27.99,
+        "seller": "bochuang us",
         "ship_to": "Braden Walker, 606 W ASH ST, CELINA, TX 75009-6404"
       }
     ],
@@ -1546,7 +1533,7 @@
     "items": [
       {
         "qty": 1,
-        "name": "Your package was left near the front door or porch. eSUN PLA Basic Filament 1.75mm, 1KG Spool (2.2 LBS) High Speed Printing 3D Printer PLA Filament,Designed for Fast Printing, Black",
+        "name": "eSUN PLA Basic Filament 1.75mm, 1KG Spool (2.2 LBS) High Speed Printing 3D Printer PLA Filament,Designed for Fast Printing, Black",
         "price": 11.99,
         "seller": "eSUN Bio New Material",
         "ship_to": "Braden Walker, 606 W ASH ST, CELINA, TX 75009-6404"
@@ -1567,9 +1554,16 @@
     "items": [
       {
         "qty": 1,
-        "name": "Your package was left near the front door or porch. ELEGOO PLA Plus Filament 1.75mm White 2KG, PLA+ Tougher and Stronger 3D Printer Filament Dimensional Accuracy +/- 0.02mm, 2 Pcs 1kg Spool(2.2lbs) Fi",
+        "name": "ELEGOO PLA Plus Filament 1.75mm White 2KG, PLA+ Tougher and Stronger 3D Printer Filament Dimensional Accuracy +/- 0.02mm, 2 Pcs 1kg Spool(2.2lbs) Fits for Most FDM 3D Printers",
         "price": 24.63,
         "seller": "ELEGOO Official US",
+        "ship_to": "Braden Walker, 606 W ASH ST, CELINA, TX 75009-6404"
+      },
+      {
+        "qty": 1,
+        "name": "DiCUNO Medium Base E26 Ceramic Light Threaded Socket with White Shade Ring, Screw-in Light Bulb Socket, UL Listed Porcelain Pre-Wired Lead 6 Inches Lamp Holder for Halogen LED Bulb, 2 Packs",
+        "price": 14.99,
+        "seller": "DiCUNO US Direct",
         "ship_to": "Braden Walker, 606 W ASH ST, CELINA, TX 75009-6404"
       }
     ],
@@ -1588,7 +1582,7 @@
     "items": [
       {
         "qty": 1,
-        "name": "Your package was left near the front door or porch. ELEGOO Matte PLA Filament Bundle 4KG, 1.75mm 3D Printer Filament Dimensional Accuracy +/- 0.02mm, 1kg Spool (2.2lbs) Fits for Most FDM 3D Printers N",
+        "name": "ELEGOO Matte PLA Filament Bundle 4KG, 1.75mm 3D Printer Filament Dimensional Accuracy +/- 0.02mm, 1kg Spool (2.2lbs) Fits for Most FDM 3D Printers Navy Blue/Ruby Red/Mint Green/Sunshine Yellow",
         "price": 44.16,
         "seller": "ELEGOO Official US",
         "ship_to": "Braden Walker, 606 W ASH ST, CELINA, TX 75009-6404"
@@ -1609,7 +1603,7 @@
     "items": [
       {
         "qty": 1,
-        "name": "Your package was left near the front door or porch. DiCUNO Medium Base E26 Ceramic Light Threaded Socket with White Shade Ring, Standard Screw-in Light Bulb Socket, UL Listed Porcelain Pre-Wired Lead ",
+        "name": "DiCUNO Medium Base E26 Ceramic Light Threaded Socket with White Shade Ring, Standard Screw-in Light Bulb Socket, UL Listed Porcelain Pre-Wired Lead 6 Inches Lamp Holder for Halogen LED Bulb, 1 Pack",
         "price": 8.99,
         "seller": "DiCUNO US Direct",
         "ship_to": "Braden Walker, 606 W ASH ST, CELINA, TX 75009-6404"
@@ -1649,22 +1643,22 @@
     "items": [
       {
         "qty": 1,
-        "name": "12 IN. X 25 FT. Orange Heavy Duty Tape",
+        "name": "Orange Heavy Duty Bubble Wrap 12 IN. X 25 FT.",
         "price": 9.98,
         "seller": "Home Depot",
-        "ship_to": "4041 S Sheridan, Tulsa, OK 74145"
+        "ship_to": "Braden Walker, 606 W ASH ST, Celina, TX 75009"
       },
       {
         "qty": 1,
         "name": "HD Small Box 16x10x12",
         "price": 5.56,
         "seller": "Home Depot",
-        "ship_to": "4041 S Sheridan, Tulsa, OK 74145"
+        "ship_to": "Braden Walker, 606 W ASH ST, Celina, TX 75009"
       }
     ],
     "source": "Home Depot",
     "file": "Paper Receipts.pdf (page 2)",
-    "ship_address": "4041 S Sheridan, Tulsa, OK 74145",
+    "ship_address": "Braden Walker, 606 W ASH ST, Celina, TX 75009",
     "payment_method": "Unknown (paper receipt)"
   },
   {
@@ -1679,19 +1673,19 @@
         "name": "Crafts supplies",
         "price": 5.58,
         "seller": "Hobby Lobby",
-        "ship_to": "3132 E 51st St, Tulsa, OK 74105"
+        "ship_to": "Braden Walker, 606 W ASH ST, Celina, TX 75009"
       },
       {
         "qty": 1,
         "name": "Crafts supplies",
         "price": 1.41,
         "seller": "Hobby Lobby",
-        "ship_to": "3132 E 51st St, Tulsa, OK 74105"
+        "ship_to": "Braden Walker, 606 W ASH ST, Celina, TX 75009"
       }
     ],
     "source": "Hobby Lobby",
     "file": "Paper Receipts.pdf (page 3)",
-    "ship_address": "3132 E 51st St, Tulsa, OK 74105",
+    "ship_address": "Braden Walker, 606 W ASH ST, Celina, TX 75009",
     "payment_method": "Unknown (paper receipt)"
   },
   {
@@ -1744,22 +1738,22 @@
       {
         "qty": 1,
         "name": "Luminate 3D Printer Magnetic Build Plate 256x256x2, X1C/X1/P1P/P1S Compatible G10 Garolite FR4",
-        "price": 38.5,
+        "price": 28.5,
         "seller": "Luminate 3D",
         "ship_to": "Thomas, 2725 E 47TH ST, TULSA, OK 74105-5346"
       },
       {
         "qty": 1,
-        "name": "WOKSEDO 12 X 3g Super Glue Liquid, Clear Strong Adhesive, Fast Drying Cyanoacrylate Glue",
+        "name": "WOUSEDO 12 X 3g Super Glue Liquid, Clear Strong Adhesive, Fast Drying Cyanoacrylate Glue",
         "price": 4.99,
-        "seller": "Wueedo",
+        "seller": "Wusedo",
         "ship_to": "Thomas, 2725 E 47TH ST, TULSA, OK 74105-5346"
       }
     ],
     "source": "Personal Amazon",
     "file": "771DED3D-27DE-4580-8D34-B68DDC85A922_3691A3DEAEC4.pdf",
     "ship_address": "Thomas, 2725 E 47TH ST, TULSA, OK 74105-5346",
-    "payment_method": "Unknown (scanned receipt)"
+    "payment_method": "Visa ending in 3146"
   },
   {
     "order_num": "SOS-20251107",
@@ -1821,5 +1815,92 @@
     "file": "EEE20255-076A-4A0E-B152-09507DF493CD_3E772D0A95AA.pdf",
     "ship_address": "Thomas, 2725 E 47TH ST, TULSA, OK 74105-5346",
     "payment_method": "Unknown (scanned receipt)"
+  },
+  {
+    "order_num": "TA_CONTRACT_1770786820686",
+    "date": "December 17, 2025",
+    "grand_total": 75.31,
+    "subtotal": 45.0,
+    "tax": 5.9,
+    "items": [
+      {
+        "qty": 1,
+        "name": "Bambu Lab LED Lamp Kit 60mm w/ IR Remote 30 Pack (Silver Shell)",
+        "price": 45.0,
+        "seller": "RTR LED Limited",
+        "ship_to": "TJ McNulty, 2725 E 47TH ST, TULSA, OK 74105-5346"
+      }
+    ],
+    "source": "Alibaba",
+    "file": "TA_CONTRACT_1770786820686.pdf",
+    "ship_address": "TJ McNulty, 2725 E 47TH ST, TULSA, OK 74105-5346",
+    "payment_method": "Discover ending in 4570 (via PayPal)"
+  },
+  {
+    "order_num": "SL29941425",
+    "date": "November 21, 2025",
+    "grand_total": 69.84,
+    "subtotal": 69.84,
+    "tax": 0.0,
+    "items": [
+      {
+        "qty": 1,
+        "name": "SUNLU High Speed PLA/Matte PLA Filament 1KG 6-Pack (White, Black, Oliver, Sunny, Sky Blue, Red)",
+        "price": 69.84,
+        "seller": "SUNLU Direct",
+        "ship_to": "Thomas McNulty, 2725 E 47TH ST, TULSA, OK 74105"
+      }
+    ],
+    "source": "SUNLU",
+    "file": "order_receipt_10028582812.pdf",
+    "ship_address": "Thomas McNulty, 2725 E 47TH ST, TULSA, OK 74105",
+    "payment_method": "Visa ending in 5683 (Shop Pay)"
+  },
+  {
+    "order_num": "SL33398726",
+    "date": "January 25, 2026",
+    "grand_total": 25.98,
+    "subtotal": 25.98,
+    "tax": 0.0,
+    "items": [
+      {
+        "qty": 1,
+        "name": "SUNLU High Speed Matte PLA 1KG Cherry Red 2-Pack",
+        "price": 25.98,
+        "seller": "SUNLU Direct",
+        "ship_to": "Braden Walker, 606 W ASH ST, Celina, TX 75009"
+      }
+    ],
+    "source": "SUNLU",
+    "file": "order_receipt_10954105734.pdf",
+    "ship_address": "Braden Walker, 606 W ASH ST, Celina, TX 75009",
+    "payment_method": "PayPal"
+  },
+  {
+    "order_num": "SL33398226",
+    "date": "January 25, 2026",
+    "grand_total": 39.56,
+    "subtotal": 39.56,
+    "tax": 0.0,
+    "items": [
+      {
+        "qty": 1,
+        "name": "SUNLU High Speed Matte PLA 1KG Cherry Red 2-Pack",
+        "price": 26.78,
+        "seller": "SUNLU Direct",
+        "ship_to": "Thomas McNulty, 2725 E 47TH ST, TULSA, OK 74105"
+      },
+      {
+        "qty": 1,
+        "name": "SUNLU SILK 3D Printer Filament 1KG Silk Silver",
+        "price": 13.99,
+        "seller": "SUNLU Direct",
+        "ship_to": "Thomas McNulty, 2725 E 47TH ST, TULSA, OK 74105"
+      }
+    ],
+    "source": "SUNLU",
+    "file": "order_receipt_10953944433.pdf",
+    "ship_address": "Thomas McNulty, 2725 E 47TH ST, TULSA, OK 74105",
+    "payment_method": "PayPal"
   }
 ]

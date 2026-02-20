@@ -16,18 +16,36 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # ── Supabase helpers ────────────────────────────────────────────────────────
 
+_supabase_client_cache = {"client": None, "failed": False, "checked": False}
+
+
 def _get_supabase_client():
-    """Return a Supabase client, or None if credentials are missing."""
+    """Return a Supabase client, or None if credentials are missing or connection failed."""
+    # If we already know Supabase is down, don't retry (avoids 60s+ timeout per call)
+    if _supabase_client_cache["failed"]:
+        return None
+    if _supabase_client_cache["checked"]:
+        return _supabase_client_cache["client"]
+
     from dotenv import load_dotenv
     load_dotenv(os.path.join(BASE_DIR, ".env"))
 
     url = os.environ.get("SUPABASE_URL", "")
     key = os.environ.get("SUPABASE_KEY", "")
     if not url or not key or "YOUR_PROJECT" in url:
+        _supabase_client_cache["checked"] = True
         return None
 
     from supabase import create_client
-    return create_client(url, key)
+    client = create_client(url, key)
+    _supabase_client_cache["client"] = client
+    _supabase_client_cache["checked"] = True
+    return client
+
+
+def _mark_supabase_failed():
+    """Mark Supabase as unavailable so subsequent calls skip it instantly."""
+    _supabase_client_cache["failed"] = True
 
 
 def _fetch_all(client, table: str, order_col: str = "id") -> list[dict]:
@@ -57,7 +75,7 @@ def _load_etsy_from_supabase(client) -> pd.DataFrame:
     """etsy_transactions → DataFrame matching CSV column names."""
     rows = _fetch_all(client, "etsy_transactions")
     if not rows:
-        raise ValueError("etsy_transactions table is empty")
+        return pd.DataFrame(columns=["Date", "Type", "Title", "Info", "Currency", "Amount", "Fees & Taxes", "Net"])
 
     df = pd.DataFrame(rows)
 
@@ -86,7 +104,13 @@ def _load_config_from_supabase(client) -> dict:
     """config table (key/value JSONB) → dict matching config.json."""
     rows = _fetch_all(client, "config", order_col="key")
     if not rows:
-        raise ValueError("config table is empty")
+        return {
+            "etsy_balance": 0,
+            "etsy_pre_capone_deposits": 0,
+            "pre_capone_detail": [],
+            "draw_reasons": {},
+            "best_buy_cc": {"credit_limit": 0, "purchases": [], "payments": []},
+        }
 
     config = {}
     for row in rows:
@@ -113,6 +137,7 @@ def _load_invoices_from_supabase(client) -> list[dict]:
             "price": float(item["price"]) if item["price"] is not None else 0.0,
             "seller": item.get("seller", "Unknown"),
             "ship_to": item.get("ship_to", ""),
+            "image_url": item.get("image_url", ""),
         })
 
     invoices = []
@@ -150,24 +175,389 @@ def _load_bank_txns_from_supabase(client) -> list[dict]:
     return txns
 
 
+def load_inventory_items_with_ids() -> list[dict]:
+    """Fetch raw inventory_items rows (with id and image_url) for Image Manager saves."""
+    client = _get_supabase_client()
+    if client is None:
+        return []
+    return _fetch_all(client, "inventory_items")
+
+
+def save_image_url(item_name: str, image_url: str) -> int:
+    """Write image_url to all inventory_items rows matching the given item name.
+    Returns the number of rows updated."""
+    client = _get_supabase_client()
+    if client is None:
+        return 0
+    resp = client.table("inventory_items").update({"image_url": image_url}).eq("name", item_name).execute()
+    count = len(resp.data) if resp.data else 0
+    # If 0 rows updated (renamed item), save as image override in config
+    if count == 0:
+        save_image_override(item_name, image_url)
+    return count
+
+
+def load_image_overrides() -> dict:
+    """Load image URL overrides from config table (for renamed items).
+    Returns dict of {display_name: image_url}."""
+    client = _get_supabase_client()
+    if client is None:
+        return {}
+    try:
+        resp = client.table("config").select("value").eq("key", "image_overrides").execute()
+        if resp.data and resp.data[0].get("value"):
+            val = resp.data[0]["value"]
+            if isinstance(val, str):
+                return json.loads(val)
+            return val
+    except Exception:
+        pass
+    return {}
+
+
+def save_image_override(item_name: str, image_url: str) -> bool:
+    """Save an image URL override for a renamed item (persists in config table)."""
+    client = _get_supabase_client()
+    if client is None:
+        return False
+    try:
+        # Load current overrides
+        current = load_image_overrides()
+        if image_url:
+            current[item_name] = image_url
+        else:
+            current.pop(item_name, None)
+        # Upsert to config table
+        client.table("config").upsert(
+            {"key": "image_overrides", "value": current},
+            on_conflict="key",
+        ).execute()
+        return True
+    except Exception:
+        return False
+
+
+# ── Location Override helpers ─────────────────────────────────────────────
+
+def load_location_overrides() -> list[dict]:
+    """Fetch all rows from inventory_location_overrides. Returns list of dicts."""
+    client = _get_supabase_client()
+    if client is None:
+        return []
+    try:
+        return _fetch_all(client, "inventory_location_overrides")
+    except Exception:
+        return []
+
+
+def save_location_override(order_num: str, item_name: str, overrides: list[dict]) -> bool:
+    """Replace overrides for (order_num, item_name).
+
+    Parameters
+    ----------
+    overrides : list of {"location": str, "qty": int}
+        1 entry = simple reassign, 2 entries = split between locations.
+    """
+    client = _get_supabase_client()
+    if client is None:
+        return False
+    # Delete existing rows for this item
+    client.table("inventory_location_overrides") \
+        .delete() \
+        .eq("order_num", order_num) \
+        .eq("item_name", item_name) \
+        .execute()
+    # Insert new rows
+    rows = [
+        {"order_num": order_num, "item_name": item_name,
+         "location": o["location"], "qty": o["qty"]}
+        for o in overrides
+    ]
+    if rows:
+        client.table("inventory_location_overrides").insert(rows).execute()
+    return True
+
+
+def delete_location_override(order_num: str, item_name: str) -> bool:
+    """Delete all override rows for (order_num, item_name), reverting to original."""
+    client = _get_supabase_client()
+    if client is None:
+        return False
+    client.table("inventory_location_overrides") \
+        .delete() \
+        .eq("order_num", order_num) \
+        .eq("item_name", item_name) \
+        .execute()
+    return True
+
+
+# ── Item Detail helpers (rename / categorize / true qty) ──────────────────
+
+def load_item_details() -> list[dict]:
+    """Fetch all rows from inventory_item_details. Returns list of dicts."""
+    client = _get_supabase_client()
+    if client is None:
+        return []
+    try:
+        return _fetch_all(client, "inventory_item_details")
+    except Exception:
+        return []
+
+
+def save_item_details(order_num: str, item_name: str, details: list[dict]) -> bool:
+    """Replace detail rows for (order_num, item_name).
+
+    Stores all detail entries as a JSON array in a single DB row.
+    Uses UPDATE for existing _JSON_ rows to avoid duplicate key race conditions.
+    """
+    client = _get_supabase_client()
+    if client is None:
+        return False
+    filtered = [d for d in details if d.get("display_name", "").strip()]
+
+    # Find existing rows for this item (by id for safe deletion)
+    try:
+        existing = client.table("inventory_item_details") \
+            .select("id,category") \
+            .eq("order_num", order_num) \
+            .eq("item_name", item_name) \
+            .execute()
+        existing_rows = existing.data or []
+    except Exception:
+        existing_rows = []
+
+    if not filtered:
+        # Delete all existing rows
+        for r in existing_rows:
+            try:
+                client.table("inventory_item_details").delete().eq("id", r["id"]).execute()
+            except Exception:
+                pass
+        return True
+
+    total_qty = sum(d.get("true_qty", 1) for d in filtered)
+    json_str = json.dumps(filtered)
+
+    # Check if there's already a _JSON_ row we can UPDATE (avoids delete+insert race)
+    json_row = next((r for r in existing_rows if r.get("category") == "_JSON_"), None)
+
+    if json_row:
+        # UPDATE existing JSON row in place
+        client.table("inventory_item_details") \
+            .update({"display_name": json_str, "true_qty": total_qty}) \
+            .eq("id", json_row["id"]) \
+            .execute()
+        # Delete any leftover old-format rows
+        for r in existing_rows:
+            if r["id"] != json_row["id"]:
+                try:
+                    client.table("inventory_item_details").delete().eq("id", r["id"]).execute()
+                except Exception:
+                    pass
+    else:
+        # No JSON row yet — delete old rows by id, then insert new JSON row
+        for r in existing_rows:
+            try:
+                client.table("inventory_item_details").delete().eq("id", r["id"]).execute()
+            except Exception:
+                pass
+        row = {
+            "order_num": order_num,
+            "item_name": item_name,
+            "display_name": json_str,
+            "category": "_JSON_",
+            "true_qty": total_qty,
+        }
+        try:
+            client.table("inventory_item_details").insert(row).execute()
+        except Exception:
+            # Race condition or encoding mismatch — find any row and update it
+            try:
+                resp = client.table("inventory_item_details") \
+                    .select("id") \
+                    .eq("order_num", order_num) \
+                    .eq("item_name", item_name) \
+                    .limit(1) \
+                    .execute()
+                if resp.data:
+                    rid = resp.data[0]["id"]
+                    client.table("inventory_item_details") \
+                        .update({"display_name": json_str, "category": "_JSON_", "true_qty": total_qty}) \
+                        .eq("id", rid) \
+                        .execute()
+                else:
+                    return False
+            except Exception:
+                return False
+    return True
+
+
+def save_new_order(order: dict) -> bool:
+    """Insert a new order into Supabase (inventory_orders + inventory_items).
+    Used by the receipt upload wizard to persist new orders immediately."""
+    client = _get_supabase_client()
+    if client is None:
+        return False
+    try:
+        client.table("inventory_orders").insert({
+            "order_num": order["order_num"],
+            "date": order["date"],
+            "grand_total": order["grand_total"],
+            "subtotal": order["subtotal"],
+            "tax": order["tax"],
+            "source": order.get("source", ""),
+            "file": order.get("file", ""),
+            "ship_address": order.get("ship_address", ""),
+            "payment_method": order.get("payment_method", "Unknown"),
+        }).execute()
+        for item in order.get("items", []):
+            client.table("inventory_items").insert({
+                "order_num": order["order_num"],
+                "name": item["name"],
+                "qty": item.get("qty", 1),
+                "price": item["price"],
+                "seller": item.get("seller", "Unknown"),
+                "ship_to": item.get("ship_to", ""),
+                "image_url": item.get("image_url", ""),
+            }).execute()
+        return True
+    except Exception:
+        return False
+
+
+def delete_item_details(order_num: str, item_name: str) -> bool:
+    """Delete all detail rows for (order_num, item_name)."""
+    client = _get_supabase_client()
+    if client is None:
+        return False
+    client.table("inventory_item_details") \
+        .delete() \
+        .eq("order_num", order_num) \
+        .eq("item_name", item_name) \
+        .execute()
+    return True
+
+
+# ── Inventory Usage helpers ────────────────────────────────────────────────
+
+def load_usage_log() -> list[dict]:
+    """Fetch all rows from inventory_usage, newest first."""
+    client = _get_supabase_client()
+    if client is None:
+        return []
+    try:
+        resp = client.table("inventory_usage") \
+            .select("*") \
+            .order("created_at", desc=True) \
+            .execute()
+        return resp.data or []
+    except Exception:
+        return []
+
+
+def save_usage(item_name: str, qty: int, note: str = "") -> dict | None:
+    """Insert one usage row. Returns the inserted row or None."""
+    client = _get_supabase_client()
+    if client is None:
+        return None
+    try:
+        resp = client.table("inventory_usage").insert({
+            "item_name": item_name,
+            "qty": qty,
+            "note": note,
+        }).execute()
+        return resp.data[0] if resp.data else None
+    except Exception:
+        return None
+
+
+def delete_usage(usage_id: int) -> bool:
+    """Delete a usage row by id."""
+    client = _get_supabase_client()
+    if client is None:
+        return False
+    try:
+        client.table("inventory_usage").delete().eq("id", usage_id).execute()
+        return True
+    except Exception:
+        return False
+
+
+# ── Quick-Add helpers ──────────────────────────────────────────────────────
+
+def load_quick_adds() -> list[dict]:
+    """Fetch all rows from inventory_quick_add, newest first."""
+    client = _get_supabase_client()
+    if client is None:
+        return []
+    try:
+        resp = client.table("inventory_quick_add") \
+            .select("*") \
+            .order("created_at", desc=True) \
+            .execute()
+        return resp.data or []
+    except Exception:
+        return []
+
+
+def save_quick_add(data: dict) -> dict | None:
+    """Insert one quick-add row. Returns the inserted row or None."""
+    client = _get_supabase_client()
+    if client is None:
+        return None
+    try:
+        resp = client.table("inventory_quick_add").insert(data).execute()
+        return resp.data[0] if resp.data else None
+    except Exception:
+        return None
+
+
+def delete_quick_add(qa_id: int) -> bool:
+    """Delete a quick-add row by id."""
+    client = _get_supabase_client()
+    if client is None:
+        return False
+    try:
+        client.table("inventory_quick_add").delete().eq("id", qa_id).execute()
+        return True
+    except Exception:
+        return False
+
+
 # ── Local-file loaders (fallback) ──────────────────────────────────────────
 
 def _load_etsy_local() -> pd.DataFrame:
-    frames = []
+    _empty = pd.DataFrame(columns=["Date", "Type", "Title", "Info", "Currency", "Amount", "Fees & Taxes", "Net"])
     statements_dir = os.path.join(BASE_DIR, "data", "etsy_statements")
+    if not os.path.isdir(statements_dir):
+        return _empty
+    frames = []
     for f in os.listdir(statements_dir):
         if f.startswith("etsy_statement") and f.endswith(".csv"):
             frames.append(pd.read_csv(os.path.join(statements_dir, f)))
+    if not frames:
+        return _empty
     return pd.concat(frames, ignore_index=True)
 
 
 def _load_config_local() -> dict:
-    with open(os.path.join(BASE_DIR, "data", "config.json")) as f:
+    path = os.path.join(BASE_DIR, "data", "config.json")
+    if not os.path.exists(path):
+        return {
+            "etsy_balance": 0,
+            "etsy_pre_capone_deposits": 0,
+            "pre_capone_detail": [],
+            "draw_reasons": {},
+            "best_buy_cc": {"credit_limit": 0, "purchases": [], "payments": []},
+        }
+    with open(path) as f:
         return json.load(f)
 
 
 def _load_invoices_local() -> list[dict]:
     path = os.path.join(BASE_DIR, "data", "generated", "inventory_orders.json")
+    if not os.path.exists(path):
+        return []
     with open(path) as f:
         return json.load(f)
 
@@ -236,6 +626,7 @@ def load_data() -> dict:
             }
         except Exception as e:
             print(f"Supabase load failed ({e}), falling back to local files")
+            _mark_supabase_failed()  # skip Supabase for all subsequent calls
 
     # ── Fallback to local files ─────────────────────────────────────────
     data_df = _load_etsy_local()

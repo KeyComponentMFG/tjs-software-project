@@ -6,7 +6,7 @@ Open: http://127.0.0.1:8070
 
 import dash
 from dash import dcc, html, callback_context
-from dash.dependencies import Input, Output, State
+from dash.dependencies import Input, Output, State, MATCH, ALL
 import json
 import re
 import plotly.graph_objects as go
@@ -15,6 +15,9 @@ import pandas as pd
 import numpy as np
 from sklearn.linear_model import LinearRegression
 import os
+import base64
+import flask
+import urllib.parse
 
 # ── Theme ────────────────────────────────────────────────────────────────────
 
@@ -33,6 +36,8 @@ GRAY = "#aaaaaa"
 DARKGRAY = "#666666"
 CYAN = "#00d4ff"
 
+TAB_PADDING = "14px 16px"
+
 CHART_LAYOUT = dict(
     template="plotly_dark",
     paper_bgcolor="rgba(0,0,0,0)",
@@ -45,18 +50,135 @@ CHART_LAYOUT = dict(
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-from supabase_loader import load_data as _load_data
+from supabase_loader import (
+    load_data as _load_data,
+    save_image_url as _save_image_url,
+    load_location_overrides as _load_location_overrides,
+    delete_location_override as _delete_location_override,
+    load_item_details as _load_item_details,
+    save_item_details as _save_item_details,
+    delete_item_details as _delete_item_details,
+    load_usage_log as _load_usage_log,
+    save_usage as _save_usage,
+    delete_usage as _delete_usage,
+    load_quick_adds as _load_quick_adds,
+    save_quick_add as _save_quick_add,
+    delete_quick_add as _delete_quick_add,
+    load_image_overrides as _load_image_overrides,
+    save_new_order as _save_new_order,
+)
+
+
+def item_thumbnail(image_url, size=40):
+    """Return a thumbnail img element or gray placeholder."""
+    if image_url:
+        return html.Img(
+            src=image_url, referrerPolicy="no-referrer",
+            style={"width": f"{size}px", "height": f"{size}px", "objectFit": "cover",
+                   "borderRadius": "4px", "verticalAlign": "middle"})
+    return html.Div(
+        "?", style={
+            "width": f"{size}px", "height": f"{size}px", "display": "inline-flex",
+            "alignItems": "center", "justifyContent": "center",
+            "backgroundColor": "#ffffff10", "borderRadius": "4px",
+            "color": DARKGRAY, "fontSize": f"{size // 3}px", "fontWeight": "bold",
+            "verticalAlign": "middle"})
 _sb = _load_data()
-DATA = _sb["DATA"]
 CONFIG = _sb["CONFIG"]
 INVOICES = _sb["INVOICES"]
-BANK_TXNS = _sb["BANK_TXNS"]
+
+# Always re-parse Etsy data from local CSVs so new uploads are picked up immediately
+import glob as _glob_mod
+_etsy_dir = os.path.join(BASE_DIR, "data", "etsy_statements")
+_etsy_frames = []
+if os.path.isdir(_etsy_dir):
+    for _ef in sorted(_glob_mod.glob(os.path.join(_etsy_dir, "etsy_statement*.csv"))):
+        try:
+            _etsy_frames.append(pd.read_csv(_ef))
+        except Exception:
+            pass
+if _etsy_frames:
+    DATA = pd.concat(_etsy_frames, ignore_index=True)
+    # Add computed columns (same as supabase_loader._add_computed_columns)
+    def _pm(val):
+        if pd.isna(val) or val == "--" or val == "":
+            return 0.0
+        val = str(val).replace("$", "").replace(",", "").replace('"', "")
+        try:
+            return float(val)
+        except Exception:
+            return 0.0
+    DATA["Amount_Clean"] = DATA["Amount"].apply(_pm)
+    DATA["Net_Clean"] = DATA["Net"].apply(_pm)
+    DATA["Fees_Clean"] = DATA["Fees & Taxes"].apply(_pm)
+    DATA["Date_Parsed"] = pd.to_datetime(DATA["Date"], format="%B %d, %Y", errors="coerce")
+    DATA["Month"] = DATA["Date_Parsed"].dt.to_period("M").astype(str)
+    DATA["Week"] = DATA["Date_Parsed"].dt.to_period("W").apply(lambda p: p.start_time)
+    print(f"Loaded {len(DATA)} Etsy transactions from local CSVs")
+else:
+    DATA = _sb["DATA"]
+    print("Using Etsy data from Supabase (no local CSVs found)")
+
+# Auto-calculate Etsy balance from CSV deposit titles instead of stale config value
+import re as _re_mod
+_etsy_deposit_total = 0.0
+_deposit_rows = DATA[DATA["Type"] == "Deposit"]
+for _, _dr in _deposit_rows.iterrows():
+    _m = _re_mod.search(r'([\d,]+\.\d+)', str(_dr.get("Title", "")))
+    if _m:
+        _etsy_deposit_total += float(_m.group(1).replace(",", ""))
+# Etsy net = sum of all Net values (deposits have Net=0, so this is earnings minus nothing)
+_etsy_all_net = DATA["Net_Clean"].sum()
+# Auto-calculated balance = total earnings - total deposited to bank
+# Small negative values (< $50) are rounding/timing differences — clamp to 0
+_etsy_balance_auto = max(0, round(_etsy_all_net - _etsy_deposit_total, 2))
+
+# Always re-parse bank data from local files (PDFs + CSVs) so new uploads are picked up
+from _parse_bank_statements import parse_bank_pdf as _init_parse_bank
+from _parse_bank_statements import parse_bank_csv as _init_parse_csv
+from _parse_bank_statements import apply_overrides as _init_apply_overrides
+
+_init_bank_dir = os.path.join(BASE_DIR, "data", "bank_statements")
+_init_bank_txns = []
+_init_covered = set()
+if os.path.isdir(_init_bank_dir):
+    for _fn in sorted(os.listdir(_init_bank_dir)):
+        if _fn.lower().endswith(".pdf"):
+            try:
+                _txns, _cov = _init_parse_bank(os.path.join(_init_bank_dir, _fn))
+                _init_bank_txns.extend(_txns)
+                _init_covered.update(_cov)
+            except Exception:
+                pass
+    _csv_txns = []
+    _csv_cov = set()
+    for _fn in sorted(os.listdir(_init_bank_dir)):
+        if _fn.lower().endswith(".csv"):
+            try:
+                _txns, _cov = _init_parse_csv(os.path.join(_init_bank_dir, _fn))
+                _csv_txns.extend(_txns)
+                _csv_cov.update(_cov)
+            except Exception:
+                pass
+    if _csv_txns:
+        _seen = {}
+        for _t in _csv_txns:
+            _key = (_t["date"], _t["amount"], _t["type"], _t.get("raw_desc", _t["desc"]))
+            _seen[_key] = _t
+        _new_months = _csv_cov - _init_covered
+        if _new_months:
+            _init_bank_txns.extend([_t for _t in _seen.values()
+                                     if f"{_t['date'].split('/')[2]}-{_t['date'].split('/')[0]}" in _new_months])
+            _init_covered.update(_new_months)
+    _init_bank_txns = _init_apply_overrides(_init_bank_txns)
+BANK_TXNS = _init_bank_txns if _init_bank_txns else _sb["BANK_TXNS"]
 
 # ── Extract config values ───────────────────────────────────────────────────
-etsy_balance = CONFIG["etsy_balance"]
-etsy_pre_capone_deposits = CONFIG["etsy_pre_capone_deposits"]
-pre_capone_detail = [tuple(row) for row in CONFIG["pre_capone_detail"]]
-draw_reasons = CONFIG["draw_reasons"]
+# Use auto-calculated Etsy balance from CSV data (not stale config value)
+etsy_balance = _etsy_balance_auto
+etsy_pre_capone_deposits = CONFIG.get("etsy_pre_capone_deposits", 0)
+pre_capone_detail = [tuple(row) for row in CONFIG.get("pre_capone_detail", [])]
+draw_reasons = CONFIG.get("draw_reasons", {})
 
 # ── Best Buy Citi Credit Card ─────────────────────────────────────────────
 _bb_cc = CONFIG.get("best_buy_cc", {})
@@ -109,10 +231,10 @@ total_shipping_cost = abs(ship_df["Net_Clean"].sum())
 total_marketing = abs(mkt_df["Net_Clean"].sum())
 total_taxes = abs(tax_df["Net_Clean"].sum())
 
-net_profit = gross_sales - total_fees - total_shipping_cost - total_marketing - total_refunds
+etsy_net = gross_sales - total_fees - total_shipping_cost - total_marketing - total_refunds
 order_count = len(sales_df)
 avg_order = gross_sales / order_count if order_count else 0
-profit_margin = (net_profit / gross_sales * 100) if gross_sales else 0
+etsy_net_margin = (etsy_net / gross_sales * 100) if gross_sales else 0
 
 # ── Load Inventory / COGS Data ─────────────────────────────────────────────
 # INVOICES already loaded by supabase_loader
@@ -143,8 +265,15 @@ for inv in INVOICES:
         "payment_method": inv.get("payment_method", "Unknown"),
     })
 
-INV_DF = pd.DataFrame(inv_rows)
-INV_DF = INV_DF.sort_values("date_parsed")
+if inv_rows:
+    INV_DF = pd.DataFrame(inv_rows)
+    INV_DF = INV_DF.sort_values("date_parsed")
+else:
+    INV_DF = pd.DataFrame(columns=[
+        "order_num", "date", "date_parsed", "month", "grand_total",
+        "subtotal", "tax", "source", "item_count", "file",
+        "ship_address", "payment_method",
+    ])
 
 # Item-level DataFrame
 inv_item_rows = []
@@ -175,9 +304,177 @@ for inv in INVOICES:
             "seller": item.get("seller", "Unknown"),
             "ship_to": item.get("ship_to", inv.get("ship_address", "")),
             "payment_method": inv.get("payment_method", "Unknown"),
+            "image_url": item.get("image_url", ""),
         })
 
-INV_ITEMS = pd.DataFrame(inv_item_rows)
+if inv_item_rows:
+    INV_ITEMS = pd.DataFrame(inv_item_rows)
+else:
+    INV_ITEMS = pd.DataFrame(columns=[
+        "order_num", "date", "date_parsed", "month", "name", "qty",
+        "price", "total", "source", "seller", "ship_to",
+        "payment_method", "image_url",
+    ])
+
+# ── Compute tax-inclusive cost per item ────────────────────────────────────
+# Allocate each order's tax proportionally across its items
+_order_totals_map = {}  # order_num -> {subtotal, grand_total}
+for inv in INVOICES:
+    _order_totals_map[inv["order_num"]] = {
+        "subtotal": inv["subtotal"], "grand_total": inv["grand_total"]}
+if len(INV_ITEMS) > 0:
+    def _calc_with_tax(row):
+        ot = _order_totals_map.get(row["order_num"])
+        if ot and ot["subtotal"] > 0:
+            return round(row["total"] * (ot["grand_total"] / ot["subtotal"]), 2)
+        return row["total"]
+    INV_ITEMS["total_with_tax"] = INV_ITEMS.apply(_calc_with_tax, axis=1)
+else:
+    INV_ITEMS["total_with_tax"] = INV_ITEMS["total"] if len(INV_ITEMS) > 0 else []
+
+# ── Item Details (rename / categorize / true qty) ──────────────────────────
+CATEGORY_OPTIONS = [
+    "Filament", "Lighting", "Crafts", "Packaging", "Hardware",
+    "Tools", "Printer Parts", "Jewelry", "Personal/Gift", "Business Fees", "Other",
+]
+_ITEM_DETAILS: dict[tuple[str, str], list[dict]] = {}
+try:
+    _raw_details = _load_item_details()
+    for d in _raw_details:
+        key = (d["order_num"], d["item_name"])
+        if d.get("category") == "_JSON_":
+            # New format: display_name is a JSON array of detail entries
+            try:
+                entries = json.loads(d["display_name"])
+                for entry in entries:
+                    _ITEM_DETAILS.setdefault(key, []).append(entry)
+            except (json.JSONDecodeError, TypeError):
+                pass
+        else:
+            # Legacy format: one row = one entry
+            _ITEM_DETAILS.setdefault(key, []).append({
+                "display_name": d["display_name"],
+                "category": d["category"],
+                "true_qty": d["true_qty"],
+                "location": d.get("location", ""),
+            })
+except Exception:
+    pass  # table may not exist yet
+
+# ── Location Overrides ─────────────────────────────────────────────────────
+# Load overrides from Supabase (keyed by (order_num, item_name))
+_LOC_OVERRIDES: dict[tuple[str, str], list[dict]] = {}
+try:
+    _raw_overrides = _load_location_overrides()
+    for ov in _raw_overrides:
+        key = (ov["order_num"], ov["item_name"])
+        _LOC_OVERRIDES.setdefault(key, []).append({"location": ov["location"], "qty": ov["qty"]})
+except Exception:
+    pass  # table may not exist yet
+
+# Apply overrides: expand split items into separate rows
+# NOTE: Skip overrides when item details exist (details already include locations)
+if len(INV_ITEMS) > 0 and _LOC_OVERRIDES:
+    expanded_rows = []
+    for _, row in INV_ITEMS.iterrows():
+        key = (row["order_num"], row["name"])
+        if key in _LOC_OVERRIDES and key not in _ITEM_DETAILS:
+            for ov in _LOC_OVERRIDES[key]:
+                new_row = row.copy()
+                new_row["qty"] = ov["qty"]
+                new_row["total"] = row["price"] * ov["qty"]
+                new_row["_override_location"] = ov["location"]
+                expanded_rows.append(new_row)
+        else:
+            row_copy = row.copy()
+            row_copy["_override_location"] = ""
+            expanded_rows.append(row_copy)
+    INV_ITEMS = pd.DataFrame(expanded_rows)
+
+# Uploaded inventory: {("Tulsa", "Black PLA", "Filament"): qty, ...}
+# Rebuilt after detail expansion (below) from expanded INV_ITEMS
+_UPLOADED_INVENTORY: dict[tuple[str, str, str], int] = {}
+
+def _norm_loc(loc_str):
+    """Normalize location string to 'Tulsa' or 'Texas' or ''."""
+    loc_str = (loc_str or "").strip().lower()
+    if "tulsa" in loc_str or "tj" in loc_str or loc_str in ("ok", "oklahoma"):
+        return "Tulsa"
+    elif "texas" in loc_str or "braden" in loc_str or loc_str in ("tx", "celina", "prosper"):
+        return "Texas"
+    return ""
+
+# Build image_url lookup BEFORE renaming so original names keep their photos
+_IMAGE_URLS: dict[str, str] = {}
+if len(INV_ITEMS) > 0 and "image_url" in INV_ITEMS.columns:
+    for _, _r in INV_ITEMS.iterrows():
+        _n = _r["name"]
+        _u = _r.get("image_url", "") or ""
+        if _u and _n not in _IMAGE_URLS:
+            _IMAGE_URLS[_n] = _u
+
+# Apply item details: rename, recategorize, adjust qty
+# Key rule: the TOTAL cost of the original line item stays the same.
+# If true_qty differs from original qty, per-unit price adjusts accordingly.
+# If split into sub-items, the total is divided proportionally by qty.
+if len(INV_ITEMS) > 0 and _ITEM_DETAILS:
+    detail_rows = []
+    for _, row in INV_ITEMS.iterrows():
+        key = (row["order_num"], row["name"])
+        if key in _ITEM_DETAILS:
+            dets = _ITEM_DETAILS[key]
+            orig_total = row["price"] * row["qty"]  # original line-item total
+            orig_with_tax = row.get("total_with_tax", orig_total)
+            total_detail_qty = sum(d["true_qty"] for d in dets)
+            per_unit = orig_total / total_detail_qty if total_detail_qty > 0 else 0
+            per_unit_tax = orig_with_tax / total_detail_qty if total_detail_qty > 0 else 0
+            _orig_img = _IMAGE_URLS.get(row["name"], "")
+            for det in dets:
+                new_row = row.copy()
+                new_row["_orig_name"] = row["name"]  # preserve original name for overrides
+                new_row["name"] = det["display_name"]
+                new_row["category"] = det["category"] if "category" in row.index else det["category"]
+                new_row["qty"] = det["true_qty"]
+                new_row["price"] = round(per_unit, 2)
+                new_row["total"] = round(per_unit * det["true_qty"], 2)
+                new_row["total_with_tax"] = round(per_unit_tax * det["true_qty"], 2)
+                # Clear the per-row image_url so it doesn't override _IMAGE_URLS lookup
+                new_row["image_url"] = ""
+                # If detail has a location, use it as override
+                if det.get("location"):
+                    new_row["_override_location"] = det["location"]
+                detail_rows.append(new_row)
+                # Also map renamed items to the original image (fallback only)
+                if _orig_img and det["display_name"] not in _IMAGE_URLS:
+                    _IMAGE_URLS[det["display_name"]] = _orig_img
+        else:
+            rc = row.copy()
+            rc["_orig_name"] = row["name"]
+            detail_rows.append(rc)
+    INV_ITEMS = pd.DataFrame(detail_rows)
+
+# Ensure _orig_name column exists even if no details were applied
+if len(INV_ITEMS) > 0 and "_orig_name" not in INV_ITEMS.columns:
+    INV_ITEMS["_orig_name"] = INV_ITEMS["name"]
+
+# Rebuild _UPLOADED_INVENTORY from expanded INV_ITEMS (more accurate than
+# reading _ITEM_DETAILS directly — handles duplicate receipt line items)
+_UPLOADED_INVENTORY.clear()
+if len(INV_ITEMS) > 0:
+    for _, _r in INV_ITEMS.iterrows():
+        _loc = _norm_loc(_r.get("_override_location", ""))
+        if not _loc:
+            continue
+        _inv_key = (_loc, _r["name"], _r.get("category", "Other"))
+        _UPLOADED_INVENTORY[_inv_key] = _UPLOADED_INVENTORY.get(_inv_key, 0) + int(_r["qty"])
+
+# Apply persistent image overrides (for renamed items saved via Image Manager)
+try:
+    _img_overrides = _load_image_overrides()
+    if _img_overrides:
+        _IMAGE_URLS.update(_img_overrides)  # overrides take priority
+except Exception:
+    pass
 
 # Inventory aggregates
 total_inventory_cost = INV_DF["grand_total"].sum()
@@ -247,8 +544,8 @@ bank_pending = bank_by_cat.get("Pending", 0)
 # ── Etsy-side accounting (full penny trace) ──
 total_buyer_fees = abs(buyer_fee_df["Net_Clean"].sum()) if len(buyer_fee_df) else 0.0
 etsy_net_earned = gross_sales - total_fees - total_shipping_cost - total_marketing - total_refunds - total_taxes - total_buyer_fees
-net_profit = etsy_net_earned  # override earlier calc that missed tax + buyer fees
-profit_margin = (net_profit / gross_sales * 100) if gross_sales else 0
+etsy_net = etsy_net_earned  # override earlier calc that missed tax + buyer fees
+etsy_net_margin = (etsy_net / gross_sales * 100) if gross_sales else 0
 # etsy_pre_capone_deposits and etsy_balance loaded from config.json above
 etsy_total_deposited = etsy_pre_capone_deposits + bank_total_deposits
 etsy_balance_calculated = etsy_net_earned - etsy_total_deposited
@@ -263,6 +560,7 @@ bank_cash_on_hand = bank_net_cash + etsy_balance
 bank_owner_draw_total = sum(bank_by_cat.get(c, 0) for c in bank_by_cat if c.startswith("Owner Draw"))
 real_profit = bank_cash_on_hand + bank_owner_draw_total  # Cash you HAVE + cash you TOOK = real profit
 real_profit_margin = (real_profit / gross_sales * 100) if gross_sales else 0
+
 # ── Old bank: match non-Discover-4570 invoices to pre-CapOne deposits ──
 old_bank_receipted = INV_DF.loc[INV_DF["payment_method"] != "Discover ending in 4570", "grand_total"].sum()
 old_bank_receipted = min(old_bank_receipted, etsy_pre_capone_deposits)  # can't exceed deposits
@@ -311,8 +609,675 @@ for t in bank_txns_sorted:
         _bal -= t["amount"]
     bank_running.append({**t, "_balance": round(_bal, 2)})
 
+# ── Hot-Reload Functions (Data Hub) ──────────────────────────────────────────
+
+_RECENT_UPLOADS: set = set()  # Order numbers uploaded this session via Data Hub
+
+
+def _reload_etsy_data():
+    """Re-read all Etsy CSVs from local files and rebuild every Etsy-derived metric.
+
+    Returns dict with summary stats for the UI status message.
+    """
+    global DATA, sales_df, fee_df, ship_df, mkt_df, refund_df, tax_df
+    global deposit_df, buyer_fee_df
+    global gross_sales, total_refunds, net_sales, total_fees
+    global total_shipping_cost, total_marketing, total_taxes
+    global etsy_net, order_count, avg_order, etsy_net_margin
+    global total_buyer_fees, etsy_net_earned, etsy_total_deposited
+    global etsy_balance_calculated, etsy_csv_gap, real_profit, real_profit_margin
+    global bank_all_expenses, bank_cash_on_hand, etsy_balance
+    global monthly_sales, monthly_fees, monthly_shipping, monthly_marketing
+    global monthly_refunds, monthly_taxes, monthly_raw_fees, monthly_raw_shipping
+    global monthly_raw_marketing, monthly_raw_refunds, monthly_net_revenue
+    global daily_sales, daily_orders, daily_df, weekly_aov
+    global monthly_order_counts, monthly_aov, monthly_profit_per_order
+    global months_sorted, days_active
+    global listing_fees, transaction_fees_product, transaction_fees_shipping
+    global processing_fees, credit_transaction, credit_listing, credit_processing
+    global share_save, total_credits
+    global etsy_ads, offsite_ads_fees, offsite_ads_credits
+    global usps_outbound, usps_outbound_count, usps_return, usps_return_count
+    global asendia_labels, asendia_count, ship_adjustments, ship_adjust_count
+    global ship_credits, ship_credit_count, ship_insurance, ship_insurance_count
+    global buyer_paid_shipping, shipping_profit, shipping_margin
+    global paid_ship_count, free_ship_count, avg_outbound_label
+    global product_fee_totals, product_revenue_est
+
+    # Always read from local CSV files (not stale Supabase)
+    import glob as _gl
+    _ed = os.path.join(BASE_DIR, "data", "etsy_statements")
+    _frames = []
+    for _f in sorted(_gl.glob(os.path.join(_ed, "etsy_statement*.csv"))):
+        try:
+            _frames.append(pd.read_csv(_f))
+        except Exception:
+            pass
+    if _frames:
+        DATA = pd.concat(_frames, ignore_index=True)
+        DATA["Amount_Clean"] = DATA["Amount"].apply(parse_money)
+        DATA["Net_Clean"] = DATA["Net"].apply(parse_money)
+        DATA["Fees_Clean"] = DATA["Fees & Taxes"].apply(parse_money)
+        DATA["Date_Parsed"] = pd.to_datetime(DATA["Date"], format="%B %d, %Y", errors="coerce")
+        DATA["Month"] = DATA["Date_Parsed"].dt.to_period("M").astype(str)
+        DATA["Week"] = DATA["Date_Parsed"].dt.to_period("W").apply(lambda p: p.start_time)
+
+    # Rebuild filtered DataFrames
+    sales_df = DATA[DATA["Type"] == "Sale"]
+    fee_df = DATA[DATA["Type"] == "Fee"]
+    ship_df = DATA[DATA["Type"] == "Shipping"]
+    mkt_df = DATA[DATA["Type"] == "Marketing"]
+    refund_df = DATA[DATA["Type"] == "Refund"]
+    tax_df = DATA[DATA["Type"] == "Tax"]
+    deposit_df = DATA[DATA["Type"] == "Deposit"]
+    buyer_fee_df = DATA[DATA["Type"] == "Buyer Fee"]
+
+    # Top-level numbers
+    gross_sales = sales_df["Net_Clean"].sum()
+    total_refunds = abs(refund_df["Net_Clean"].sum())
+    net_sales = gross_sales - total_refunds
+    total_fees = abs(fee_df["Net_Clean"].sum())
+    total_shipping_cost = abs(ship_df["Net_Clean"].sum())
+    total_marketing = abs(mkt_df["Net_Clean"].sum())
+    total_taxes = abs(tax_df["Net_Clean"].sum())
+    order_count = len(sales_df)
+    avg_order = gross_sales / order_count if order_count else 0
+
+    # Full accounting
+    total_buyer_fees = abs(buyer_fee_df["Net_Clean"].sum()) if len(buyer_fee_df) else 0.0
+    etsy_net_earned = (gross_sales - total_fees - total_shipping_cost
+                       - total_marketing - total_refunds - total_taxes - total_buyer_fees)
+    etsy_net = etsy_net_earned
+    etsy_net_margin = (etsy_net / gross_sales * 100) if gross_sales else 0
+
+    # Auto-calculate Etsy balance from deposit titles
+    import re as _re
+    _dep_total = 0.0
+    for _, _dr in deposit_df.iterrows():
+        _m = _re.search(r'([\d,]+\.\d+)', str(_dr.get("Title", "")))
+        if _m:
+            _dep_total += float(_m.group(1).replace(",", ""))
+    etsy_balance = max(0, round(DATA["Net_Clean"].sum() - _dep_total, 2))
+
+    etsy_total_deposited = etsy_pre_capone_deposits + bank_total_deposits
+    etsy_balance_calculated = etsy_net_earned - etsy_total_deposited
+    etsy_csv_gap = round(etsy_balance_calculated - etsy_balance, 2)
+
+    # Recalculate cross-source metrics that depend on Etsy data
+    bank_cash_on_hand = bank_net_cash + etsy_balance
+    real_profit = bank_cash_on_hand + bank_owner_draw_total
+    real_profit_margin = (real_profit / gross_sales * 100) if gross_sales else 0
+
+    # ── Recompute all daily/monthly/fee/shipping/product metrics ──
+
+    # Fee breakdown
+    listing_fees = abs(fee_df[fee_df["Title"].str.contains("Listing fee", na=False)]["Net_Clean"].sum())
+    transaction_fees_product = abs(
+        fee_df[
+            fee_df["Title"].str.startswith("Transaction fee:", na=False)
+            & ~fee_df["Title"].str.contains("Shipping", na=False)
+        ]["Net_Clean"].sum()
+    )
+    transaction_fees_shipping = abs(
+        fee_df[fee_df["Title"].str.contains("Transaction fee: Shipping", na=False)]["Net_Clean"].sum()
+    )
+    processing_fees = abs(fee_df[fee_df["Title"].str.contains("Processing fee", na=False)]["Net_Clean"].sum())
+
+    # Fee credits
+    credit_transaction = fee_df[fee_df["Title"].str.startswith("Credit for transaction fee", na=False)]["Net_Clean"].sum()
+    credit_listing = fee_df[fee_df["Title"].str.startswith("Credit for listing fee", na=False)]["Net_Clean"].sum()
+    credit_processing = fee_df[fee_df["Title"].str.startswith("Credit for processing fee", na=False)]["Net_Clean"].sum()
+    share_save = fee_df[fee_df["Title"].str.contains("Share & Save", na=False)]["Net_Clean"].sum()
+    total_credits = credit_transaction + credit_listing + credit_processing + share_save
+
+    # Marketing breakdown
+    etsy_ads = abs(mkt_df[mkt_df["Title"].str.contains("Etsy Ads", na=False)]["Net_Clean"].sum())
+    offsite_ads_fees = abs(
+        mkt_df[
+            mkt_df["Title"].str.contains("Offsite Ads", na=False)
+            & ~mkt_df["Title"].str.contains("Credit", na=False)
+        ]["Net_Clean"].sum()
+    )
+    offsite_ads_credits = mkt_df[mkt_df["Title"].str.contains("Credit for Offsite", na=False)]["Net_Clean"].sum()
+
+    # Shipping subcategories
+    usps_outbound = abs(ship_df[ship_df["Title"] == "USPS shipping label"]["Net_Clean"].sum())
+    usps_outbound_count = len(ship_df[ship_df["Title"] == "USPS shipping label"])
+    usps_return = abs(ship_df[ship_df["Title"] == "USPS return shipping label"]["Net_Clean"].sum())
+    usps_return_count = len(ship_df[ship_df["Title"] == "USPS return shipping label"])
+    asendia_labels = abs(ship_df[ship_df["Title"].str.contains("Asendia", na=False)]["Net_Clean"].sum())
+    asendia_count = len(ship_df[ship_df["Title"].str.contains("Asendia", na=False)])
+    ship_adjustments = abs(ship_df[ship_df["Title"].str.contains("Adjustment", na=False)]["Net_Clean"].sum())
+    ship_adjust_count = len(ship_df[ship_df["Title"].str.contains("Adjustment", na=False)])
+    ship_credits = ship_df[ship_df["Title"].str.contains("Credit for", na=False)]["Net_Clean"].sum()
+    ship_credit_count = len(ship_df[ship_df["Title"].str.contains("Credit for", na=False)])
+    ship_insurance = abs(ship_df[ship_df["Title"].str.contains("insurance", case=False, na=False)]["Net_Clean"].sum())
+    ship_insurance_count = len(ship_df[ship_df["Title"].str.contains("insurance", case=False, na=False)])
+
+    # Buyer paid shipping
+    ship_fee_gross = abs(
+        fee_df[fee_df["Title"].str.contains("Transaction fee: Shipping", na=False)]["Net_Clean"].sum()
+    )
+    ship_fee_credits_amt = abs(
+        fee_df[fee_df["Title"].str.contains("Credit for transaction fee on shipping", na=False)]["Net_Clean"].sum()
+    )
+    net_ship_tx_fees = ship_fee_gross - ship_fee_credits_amt
+    buyer_paid_shipping = net_ship_tx_fees / 0.065 if net_ship_tx_fees else 0
+    shipping_profit = buyer_paid_shipping - total_shipping_cost
+    shipping_margin = (shipping_profit / buyer_paid_shipping * 100) if buyer_paid_shipping else 0
+
+    # Paid vs free shipping orders
+    ship_fee_rows = fee_df[fee_df["Title"].str.contains("Transaction fee: Shipping", na=False)].copy()
+    orders_with_paid_shipping = set(ship_fee_rows["Info"].dropna())
+    all_order_ids = set(sales_df["Title"].str.extract(r"(Order #\d+)", expand=False).dropna())
+    orders_free_shipping = all_order_ids - orders_with_paid_shipping
+    paid_ship_count = len(orders_with_paid_shipping & all_order_ids)
+    free_ship_count = len(orders_free_shipping)
+    avg_outbound_label = usps_outbound / usps_outbound_count if usps_outbound_count else 0
+
+    # Product performance
+    prod_fees = fee_df[
+        fee_df["Title"].str.startswith("Transaction fee:", na=False)
+        & ~fee_df["Title"].str.contains("Shipping", na=False)
+    ].copy()
+    prod_fees["Product"] = prod_fees["Title"].str.replace("Transaction fee: ", "", regex=False)
+    product_fee_totals = prod_fees.groupby("Product")["Net_Clean"].sum().abs().sort_values(ascending=False)
+    if len(product_fee_totals) > 0:
+        product_revenue_est = (product_fee_totals / 0.065).round(2)
+    else:
+        product_revenue_est = pd.Series(dtype=float)
+
+    # Monthly breakdown
+    months_sorted = sorted(DATA["Month"].dropna().unique())
+
+    def monthly_sum(type_name):
+        return DATA[DATA["Type"] == type_name].groupby("Month")["Net_Clean"].sum()
+
+    monthly_sales = monthly_sum("Sale")
+    monthly_fees = monthly_sum("Fee").abs()
+    monthly_shipping = monthly_sum("Shipping").abs()
+    monthly_marketing = monthly_sum("Marketing").abs()
+    monthly_refunds = monthly_sum("Refund").abs()
+    monthly_taxes = monthly_sum("Tax").abs()
+
+    monthly_raw_fees = DATA[DATA["Type"] == "Fee"].groupby("Month")["Net_Clean"].sum()
+    monthly_raw_shipping = DATA[DATA["Type"] == "Shipping"].groupby("Month")["Net_Clean"].sum()
+    monthly_raw_marketing = DATA[DATA["Type"] == "Marketing"].groupby("Month")["Net_Clean"].sum()
+    monthly_raw_refunds = DATA[DATA["Type"] == "Refund"].groupby("Month")["Net_Clean"].sum()
+
+    monthly_net_revenue = {}
+    for m in months_sorted:
+        monthly_net_revenue[m] = (
+            monthly_sales.get(m, 0)
+            + monthly_raw_fees.get(m, 0)
+            + monthly_raw_shipping.get(m, 0)
+            + monthly_raw_marketing.get(m, 0)
+            + monthly_raw_refunds.get(m, 0)
+        )
+
+    # Daily aggregations
+    daily_sales = sales_df.groupby(sales_df["Date_Parsed"].dt.date)["Net_Clean"].sum()
+    daily_orders = sales_df.groupby(sales_df["Date_Parsed"].dt.date)["Net_Clean"].count()
+    daily_fee_cost = fee_df.groupby(fee_df["Date_Parsed"].dt.date)["Net_Clean"].sum()
+    daily_ship_cost = ship_df.groupby(ship_df["Date_Parsed"].dt.date)["Net_Clean"].sum()
+    daily_mkt_cost = mkt_df.groupby(mkt_df["Date_Parsed"].dt.date)["Net_Clean"].sum()
+    daily_refund_cost = refund_df.groupby(refund_df["Date_Parsed"].dt.date)["Net_Clean"].sum()
+
+    all_dates = sorted(set(daily_sales.index) | set(daily_fee_cost.index) | set(daily_ship_cost.index))
+    daily_df = pd.DataFrame(index=all_dates)
+    daily_df["revenue"] = pd.Series(daily_sales)
+    daily_df["fees"] = pd.Series(daily_fee_cost)
+    daily_df["shipping"] = pd.Series(daily_ship_cost)
+    daily_df["marketing"] = pd.Series(daily_mkt_cost)
+    daily_df["refunds"] = pd.Series(daily_refund_cost)
+    daily_df["orders"] = pd.Series(daily_orders)
+    daily_df = daily_df.fillna(0)
+    daily_df["profit"] = daily_df["revenue"] + daily_df["fees"] + daily_df["shipping"] + daily_df["marketing"] + daily_df["refunds"]
+    daily_df["cum_revenue"] = daily_df["revenue"].cumsum()
+    daily_df["cum_profit"] = daily_df["profit"].cumsum()
+
+    # Weekly AOV
+    weekly_sales_df = sales_df.copy()
+    weekly_sales_df["WeekStart"] = weekly_sales_df["Date_Parsed"].dt.to_period("W").apply(lambda p: p.start_time)
+    weekly_aov = weekly_sales_df.groupby("WeekStart").agg(
+        total=("Net_Clean", "sum"),
+        count=("Net_Clean", "count"),
+    )
+    weekly_aov["aov"] = weekly_aov["total"] / weekly_aov["count"]
+
+    # Monthly order counts and AOV
+    monthly_order_counts = sales_df.groupby("Month")["Net_Clean"].count()
+    monthly_aov = {}
+    monthly_profit_per_order = {}
+    for m in months_sorted:
+        oc = monthly_order_counts.get(m, 0)
+        if oc > 0:
+            monthly_aov[m] = monthly_sales.get(m, 0) / oc
+            monthly_profit_per_order[m] = monthly_net_revenue.get(m, 0) / oc
+        else:
+            monthly_aov[m] = 0
+            monthly_profit_per_order[m] = 0
+
+    if len(DATA) > 0 and DATA["Date_Parsed"].notna().any():
+        days_active = max((DATA["Date_Parsed"].max() - DATA["Date_Parsed"].min()).days, 1)
+    else:
+        days_active = 1
+
+    return {
+        "transactions": len(DATA),
+        "orders": order_count,
+        "gross_sales": gross_sales,
+        "etsy_net": etsy_net,
+    }
+
+
+def _reload_bank_data():
+    """Re-parse all bank PDFs and rebuild bank-derived metrics in-place.
+
+    Returns dict with summary stats for the UI status message.
+    """
+    global BANK_TXNS, bank_deposits, bank_debits
+    global bank_total_deposits, bank_total_debits, bank_net_cash
+    global bank_by_cat, bank_monthly, bank_statement_count
+    global bank_tax_deductible, bank_personal, bank_pending
+    global bank_biz_expense_total, bank_all_expenses, bank_cash_on_hand
+    global bank_owner_draw_total, real_profit, real_profit_margin
+    global tulsa_draws, texas_draws, tulsa_draw_total, texas_draw_total
+    global draw_diff, draw_owed_to
+    global bank_txns_sorted, bank_running
+    global _bank_cat_color_map, _bank_acct_gap, _bank_no_receipt, _bank_amazon_txns
+
+    bank_dir = os.path.join(BASE_DIR, "data", "bank_statements")
+    if not os.path.isdir(bank_dir):
+        return {"transactions": 0, "statements": 0, "net_cash": 0}
+
+    from _parse_bank_statements import parse_bank_pdf as _parse_bank
+    from _parse_bank_statements import parse_bank_csv as _parse_csv
+    from _parse_bank_statements import apply_overrides as _apply_overrides
+    all_txns = []
+    all_covered_months = set()
+    source_files = []
+
+    # Parse PDFs first — official statements are the primary source
+    for fn in sorted(os.listdir(bank_dir)):
+        if fn.lower().endswith(".pdf"):
+            fpath = os.path.join(bank_dir, fn)
+            try:
+                txns, covered = _parse_bank(fpath)
+                all_txns.extend(txns)
+                all_covered_months.update(covered)
+                source_files.append(fn)
+            except Exception:
+                pass
+
+    # Parse ALL CSVs, combine and dedup (newer downloads are supersets of older ones)
+    csv_txns = []
+    csv_covered = set()
+    for fn in sorted(os.listdir(bank_dir)):
+        if fn.lower().endswith(".csv"):
+            fpath = os.path.join(bank_dir, fn)
+            try:
+                txns, covered = _parse_csv(fpath)
+                csv_txns.extend(txns)
+                csv_covered.update(covered)
+                source_files.append(fn)
+            except Exception:
+                pass
+
+    # Dedup CSV transactions by (date, amount, description) — keeps last occurrence (newest file)
+    if csv_txns:
+        seen = {}
+        for t in csv_txns:
+            key = (t["date"], t["amount"], t["type"], t.get("raw_desc", t["desc"]))
+            seen[key] = t  # last one wins (newest CSV parsed last)
+        csv_deduped = list(seen.values())
+
+        # Only use CSV data for months NOT already covered by PDFs
+        new_months = csv_covered - all_covered_months
+        if new_months:
+            filtered = [t for t in csv_deduped
+                        if f"{t['date'].split('/')[2]}-{t['date'].split('/')[0]}" in new_months]
+            all_txns.extend(filtered)
+            all_covered_months.update(new_months)
+
+    # Apply overrides (splits, recategorizations)
+    all_txns = _apply_overrides(all_txns)
+
+    # Save updated JSON locally
+    out_path = os.path.join(BASE_DIR, "data", "generated", "bank_transactions.json")
+    try:
+        with open(out_path, "w") as f:
+            json.dump({"metadata": {"source_files": source_files}, "transactions": all_txns}, f, indent=2)
+    except Exception:
+        pass
+
+    BANK_TXNS = all_txns
+    bank_statement_count = len(source_files)
+
+    # Rebuild aggregates (mirrors lines 407-474)
+    bank_deposits = [t for t in BANK_TXNS if t["type"] == "deposit"]
+    bank_debits = [t for t in BANK_TXNS if t["type"] == "debit"]
+    bank_total_deposits = sum(t["amount"] for t in bank_deposits)
+    bank_total_debits = sum(t["amount"] for t in bank_debits)
+    bank_net_cash = bank_total_deposits - bank_total_debits
+
+    bank_by_cat = {}
+    for t in bank_debits:
+        cat = t["category"]
+        bank_by_cat[cat] = bank_by_cat.get(cat, 0) + t["amount"]
+    bank_by_cat = dict(sorted(bank_by_cat.items(), key=lambda x: -x[1]))
+
+    bank_monthly = {}
+    for t in BANK_TXNS:
+        parts = t["date"].split("/")
+        month_key = f"{parts[2]}-{parts[0]}"
+        if month_key not in bank_monthly:
+            bank_monthly[month_key] = {"deposits": 0, "debits": 0}
+        if t["type"] == "deposit":
+            bank_monthly[month_key]["deposits"] += t["amount"]
+        else:
+            bank_monthly[month_key]["debits"] += t["amount"]
+
+    bank_tax_deductible = sum(amt for cat, amt in bank_by_cat.items() if cat in BANK_TAX_DEDUCTIBLE)
+    bank_personal = bank_by_cat.get("Personal", 0)
+    bank_pending = bank_by_cat.get("Pending", 0)
+
+    _biz_expense_cats = ["Shipping", "Craft Supplies", "Etsy Fees", "Subscriptions",
+                         "AliExpress Supplies", "Business Credit Card"]
+    bank_biz_expense_total = sum(bank_by_cat.get(c, 0) for c in _biz_expense_cats)
+    bank_all_expenses = bank_by_cat.get("Amazon Inventory", 0) + bank_biz_expense_total
+    bank_cash_on_hand = bank_net_cash + etsy_balance
+    bank_owner_draw_total = sum(bank_by_cat.get(c, 0) for c in bank_by_cat if c.startswith("Owner Draw"))
+    real_profit = bank_cash_on_hand + bank_owner_draw_total
+    real_profit_margin = (real_profit / gross_sales * 100) if gross_sales else 0
+
+    tulsa_draws = [t for t in bank_debits if t["category"] == "Owner Draw - Tulsa"]
+    texas_draws = [t for t in bank_debits if t["category"] == "Owner Draw - Texas"]
+    tulsa_draw_total = sum(t["amount"] for t in tulsa_draws)
+    texas_draw_total = sum(t["amount"] for t in texas_draws)
+    draw_diff = abs(tulsa_draw_total - texas_draw_total)
+    draw_owed_to = "Braden" if tulsa_draw_total > texas_draw_total else "TJ"
+
+    # Rebuild running balance
+    bank_txns_sorted = sorted(BANK_TXNS, key=lambda x: (_parse_bank_date(x["date"]),
+                              0 if x["type"] == "deposit" else 1))
+    bank_running = []
+    _bal = 0.0
+    for t in bank_txns_sorted:
+        if t["type"] == "deposit":
+            _bal += t["amount"]
+        else:
+            _bal -= t["amount"]
+        bank_running.append({**t, "_balance": round(_bal, 2)})
+
+    # Recompute derived bank variables used by Financials tab
+    _bank_cat_color_map, _bank_acct_gap, _bank_no_receipt, _bank_amazon_txns = _get_bank_computed()
+
+    return {
+        "transactions": len(BANK_TXNS),
+        "statements": bank_statement_count,
+        "net_cash": bank_net_cash,
+    }
+
+
+def _reload_inventory_data(new_order):
+    """Append a newly-parsed invoice to INVOICES and rebuild inventory DataFrames.
+
+    Parameters
+    ----------
+    new_order : dict
+        Parsed invoice dict from parse_pdf_file().
+
+    Returns dict with summary stats for the UI status message.
+    """
+    global INVOICES, INV_DF, INV_ITEMS, BIZ_INV_DF, BIZ_INV_ITEMS, STOCK_SUMMARY
+    global total_inventory_cost, total_inv_subtotal, total_inv_tax
+    global biz_inv_cost, personal_acct_cost, inv_order_count, true_inventory_cost
+    global monthly_inv_spend, biz_inv_by_category, gigi_cost, personal_inv_items
+
+    # Append to INVOICES and persist (mirrors lines 8796-8807)
+    INVOICES.append(new_order)
+    _RECENT_UPLOADS.add(new_order["order_num"])
+    try:
+        out_path = os.path.join(BASE_DIR, "data", "generated", "inventory_orders.json")
+        with open(out_path, "w") as f:
+            json.dump(INVOICES, f, indent=2)
+    except Exception:
+        pass
+    _save_new_order(new_order)
+
+    # Build new INV_ITEMS rows (mirrors lines 8809-8851)
+    try:
+        dt = pd.to_datetime(new_order["date"], format="%B %d, %Y")
+    except Exception:
+        try:
+            dt = pd.to_datetime(new_order["date"])
+        except Exception:
+            dt = pd.NaT
+    month = dt.to_period("M").strftime("%Y-%m") if pd.notna(dt) else "Unknown"
+
+    new_inv_rows = []
+    for item in new_order["items"]:
+        item_name = item["name"]
+        if item_name.startswith("Your package was left near the front door or porch."):
+            item_name = item_name.replace("Your package was left near the front door or porch.", "").strip()
+        new_inv_rows.append({
+            "order_num": new_order["order_num"],
+            "date": new_order["date"],
+            "date_parsed": dt,
+            "month": month,
+            "name": item_name,
+            "qty": item["qty"],
+            "price": item["price"],
+            "total": item["price"] * item["qty"],
+            "source": new_order["source"],
+            "seller": item.get("seller", "Unknown"),
+            "ship_to": item.get("ship_to", new_order.get("ship_address", "")),
+            "payment_method": new_order.get("payment_method", "Unknown"),
+            "image_url": item.get("image_url", ""),
+            "category": categorize_item(item_name),
+            "_orig_name": item_name,
+            "_override_location": "",
+        })
+
+    if new_inv_rows:
+        new_df = pd.DataFrame(new_inv_rows)
+        if new_order["subtotal"] > 0:
+            new_df["total_with_tax"] = (
+                new_df["total"] * (new_order["grand_total"] / new_order["subtotal"])
+            ).round(2)
+        else:
+            new_df["total_with_tax"] = new_df["total"]
+        INV_ITEMS = pd.concat([INV_ITEMS, new_df], ignore_index=True)
+
+    # Rebuild INV_DF row
+    inv_rows = []
+    for inv in INVOICES:
+        d_str = inv["date"]
+        try:
+            d = pd.to_datetime(d_str, format="%B %d, %Y")
+        except Exception:
+            try:
+                d = pd.to_datetime(d_str)
+            except Exception:
+                d = pd.NaT
+        inv_rows.append({
+            "order_num": inv["order_num"], "date": d_str, "date_parsed": d,
+            "month": d.to_period("M").strftime("%Y-%m") if pd.notna(d) else "Unknown",
+            "grand_total": inv["grand_total"], "subtotal": inv["subtotal"],
+            "tax": inv["tax"], "source": inv["source"],
+            "item_count": len(inv["items"]), "file": inv["file"],
+            "ship_address": inv.get("ship_address", ""),
+            "payment_method": inv.get("payment_method", "Unknown"),
+        })
+    INV_DF = pd.DataFrame(inv_rows).sort_values("date_parsed")
+
+    # Recompute aggregates
+    total_inventory_cost = INV_DF["grand_total"].sum()
+    total_inv_subtotal = INV_DF["subtotal"].sum()
+    total_inv_tax = INV_DF["tax"].sum()
+    biz_inv_cost = INV_DF[INV_DF["source"] == "Key Component Mfg"]["grand_total"].sum()
+    personal_acct_cost = INV_DF[INV_DF["source"] == "Personal Amazon"]["grand_total"].sum()
+    inv_order_count = len(INV_DF)
+
+    if len(INV_ITEMS) > 0:
+        personal_total = INV_ITEMS[INV_ITEMS["category"] == "Personal/Gift"]["total"].sum()
+        biz_fee_total = INV_ITEMS[INV_ITEMS["category"] == "Business Fees"]["total"].sum()
+        true_inventory_cost = total_inventory_cost - personal_total - biz_fee_total
+    else:
+        true_inventory_cost = total_inventory_cost
+
+    # Add location column to INV_DF
+    INV_DF["location"] = INV_DF["ship_address"].apply(classify_location)
+
+    # Recalculate gigi_cost
+    gigi_mask = INV_DF["file"].str.contains("Gigi", na=False)
+    gigi_cost = INV_DF[gigi_mask]["grand_total"].sum()
+
+    _personal_order_mask = (INV_DF["source"] == "Personal Amazon") | INV_DF["file"].str.contains("Gigi", na=False)
+    BIZ_INV_DF = INV_DF[~_personal_order_mask].copy()
+
+    # Recalculate business-only inventory metrics
+    if len(INV_ITEMS) > 0:
+        BIZ_INV_ITEMS = INV_ITEMS[~INV_ITEMS["category"].isin(["Personal/Gift", "Business Fees"])].copy()
+        biz_inv_by_category = BIZ_INV_ITEMS.groupby("category")["total"].sum().sort_values(ascending=False)
+        personal_inv_items = INV_ITEMS[INV_ITEMS["category"] == "Personal/Gift"].copy()
+    else:
+        BIZ_INV_ITEMS = INV_ITEMS.copy()
+        biz_inv_by_category = pd.Series(dtype=float)
+        personal_inv_items = pd.DataFrame()
+
+    # Recalculate monthly inventory spend (business-only)
+    monthly_inv_spend = BIZ_INV_DF.groupby("month")["grand_total"].sum()
+
+    _recompute_stock_summary()
+
+    return {
+        "order_num": new_order["order_num"],
+        "item_count": len(new_order["items"]),
+        "grand_total": new_order["grand_total"],
+    }
+
+
+def _cascade_reload(source="etsy"):
+    """Recalculate cross-source derived metrics after any data upload.
+
+    Call this after _reload_etsy_data, _reload_bank_data, or _reload_inventory_data
+    to ensure globals that span multiple data sources stay consistent.
+    """
+    global real_profit, real_profit_margin, bank_cash_on_hand, bank_all_expenses
+    global profit, profit_margin, receipt_cogs_outside_bank
+    global bank_amazon_inv
+
+    # bank_cash_on_hand depends on bank_net_cash + etsy_balance
+    bank_cash_on_hand = bank_net_cash + etsy_balance
+    # real_profit depends on bank_cash_on_hand + bank_owner_draw_total
+    real_profit = bank_cash_on_hand + bank_owner_draw_total
+    real_profit_margin = (real_profit / gross_sales * 100) if gross_sales else 0
+
+    # Cross-source: bank profit minus inventory the bank can't see (Discover card gap)
+    bank_amazon_inv = bank_by_cat.get("Amazon Inventory", 0)
+    receipt_cogs_outside_bank = max(0, true_inventory_cost - bank_amazon_inv)
+    profit = real_profit - receipt_cogs_outside_bank
+    profit_margin = (profit / gross_sales * 100) if gross_sales else 0
+
+
+def _validate_etsy_csv(decoded_bytes):
+    """Validate that uploaded bytes are a valid Etsy statement CSV.
+
+    Returns (is_valid, message, dataframe_or_none).
+    """
+    import io
+    try:
+        text = decoded_bytes.decode("utf-8")
+    except UnicodeDecodeError:
+        return False, "File is not valid UTF-8 text", None
+    try:
+        df = pd.read_csv(io.StringIO(text))
+    except Exception as e:
+        return False, f"Could not parse CSV: {e}", None
+    required = {"Date", "Type", "Title", "Info", "Currency", "Amount", "Fees & Taxes", "Net"}
+    missing = required - set(df.columns)
+    if missing:
+        return False, f"Missing columns: {', '.join(sorted(missing))}", None
+    return True, f"{len(df)} rows", df
+
+
+def _check_etsy_csv_overlap(new_df, new_filename):
+    """Check if an uploaded Etsy CSV overlaps with existing files by date range.
+
+    Returns (has_overlap, overlap_file, message).
+    If overlap found, the caller should replace the old file.
+    """
+    import io
+    etsy_dir = os.path.join(BASE_DIR, "data", "etsy_statements")
+    if not os.path.isdir(etsy_dir):
+        return False, None, ""
+
+    # Parse date range of new CSV
+    try:
+        new_dates = pd.to_datetime(new_df["Date"], format="%B %d, %Y", errors="coerce")
+        new_min, new_max = new_dates.min(), new_dates.max()
+    except Exception:
+        return False, None, ""
+    if pd.isna(new_min) or pd.isna(new_max):
+        return False, None, ""
+
+    for fn in os.listdir(etsy_dir):
+        if not fn.lower().endswith(".csv"):
+            continue
+        # Exact filename match
+        if fn == new_filename:
+            return True, fn, f"Replacing existing file {fn}"
+        # Date range overlap check
+        try:
+            existing_df = pd.read_csv(os.path.join(etsy_dir, fn))
+            ex_dates = pd.to_datetime(existing_df["Date"], format="%B %d, %Y", errors="coerce")
+            ex_min, ex_max = ex_dates.min(), ex_dates.max()
+            if pd.isna(ex_min) or pd.isna(ex_max):
+                continue
+            # Ranges overlap if one starts before the other ends
+            if new_min <= ex_max and ex_min <= new_max:
+                return True, fn, f"Date range overlaps with {fn} ({ex_min.strftime('%b %Y')}–{ex_max.strftime('%b %Y')})"
+        except Exception:
+            continue
+    return False, None, ""
+
+
+def _check_bank_file_duplicate(decoded_bytes, filename):
+    """Check if an uploaded bank file (PDF or CSV) is a duplicate by MD5 hash.
+
+    Returns (is_duplicate, existing_filename).
+    """
+    import hashlib
+    bank_dir = os.path.join(BASE_DIR, "data", "bank_statements")
+    if not os.path.isdir(bank_dir):
+        return False, None
+
+    new_hash = hashlib.md5(decoded_bytes).hexdigest()
+    for fn in os.listdir(bank_dir):
+        if not (fn.lower().endswith(".pdf") or fn.lower().endswith(".csv")):
+            continue
+        try:
+            with open(os.path.join(bank_dir, fn), "rb") as f:
+                existing_hash = hashlib.md5(f.read()).hexdigest()
+            if new_hash == existing_hash:
+                return True, fn
+        except Exception:
+            continue
+    return False, None
+
+
+def _ai_categorize_items(items):
+    """Stub: uses rule-based categorization. Swap for Claude API later."""
+    for item in items:
+        item["category"] = categorize_item(item.get("name", ""))
+    return items
+
+
 # Categorize items
 def categorize_item(name):
+    """Auto-categorize items. Names match CATEGORY_OPTIONS used in Inventory Editor."""
     name_l = name.lower()
     # Personal items first - NOT business inventory
     if any(w in name_l for w in ["pottery", "meat grinder", "slicer"]):
@@ -322,30 +1287,35 @@ def categorize_item(name):
     # Crafts - check before filament so clock kit doesn't get caught by "pla" in "replacement"
     if any(w in name_l for w in ["balsa", "basswood", "wood sheet", "magnet", "clock movement",
                                   "clock mechanism", "clock kit", "quartz clock"]):
-        return "Crafts Supplies"
+        return "Crafts"
     if any(w in name_l for w in ["soldering", "3d pen"]):
         return "Tools"
     if any(w in name_l for w in ["build plate", "bed plate", "print surface"]):
-        return "3D Printer Accessories"
+        return "Printer Parts"
     if any(w in name_l for w in ["earring", "jewelry"]):
-        return "Jewelry Supplies"
+        return "Jewelry"
     if any(w in name_l for w in ["pla", "filament", "3d printer filament"]):
-        return "3D Filament"
+        return "Filament"
     if any(w in name_l for w in ["gift box", "box", "mailer", "bubble", "wrapping", "packing", "packaging",
                                   "shipping label", "label printer", "fragile sticker"]):
-        return "Packaging & Shipping"
+        return "Packaging"
     if any(w in name_l for w in ["led", "lamp", "light", "bulb", "socket", "pendant", "lantern", " cord"]):
-        return "Lighting Components"
+        return "Lighting"
     if any(w in name_l for w in ["screw", "bolt", "glue", "adhesive", "wire", "hook", "ring"]):
-        return "Hardware & Fasteners"
+        return "Hardware"
     if any(w in name_l for w in ["crafts", "craft"]):
-        return "Crafts Supplies"
+        return "Crafts"
     if any(w in name_l for w in ["tape", "heavy duty"]):
-        return "Packaging & Shipping"
+        return "Packaging"
     return "Other"
 
 if len(INV_ITEMS) > 0:
-    INV_ITEMS["category"] = INV_ITEMS["name"].apply(categorize_item)
+    # Only auto-categorize items that don't already have a category from item_details
+    if "category" in INV_ITEMS.columns:
+        _cat_mask = INV_ITEMS["category"].isna() | (INV_ITEMS["category"] == "")
+        INV_ITEMS.loc[_cat_mask, "category"] = INV_ITEMS.loc[_cat_mask, "name"].apply(categorize_item)
+    else:
+        INV_ITEMS["category"] = INV_ITEMS["name"].apply(categorize_item)
     inv_by_category = INV_ITEMS.groupby("category")["total"].sum().sort_values(ascending=False)
 else:
     inv_by_category = pd.Series(dtype=float)
@@ -360,6 +1330,17 @@ else:
     biz_fee_total = 0.0
     true_inventory_cost = total_inventory_cost
 
+# ── Cross-Source Profit (Etsy + Receipts + Bank all connected) ──
+# The bank already captures most expenses as debits. Receipts and bank OVERLAP —
+# they show the same spending from different angles. The only thing receipts reveal
+# that the bank CAN'T see is Discover card spending (separate card, not in bank).
+#
+# So: profit = bank_reconciled_profit - inventory_expenses_bank_cant_see
+bank_amazon_inv = bank_by_cat.get("Amazon Inventory", 0)
+receipt_cogs_outside_bank = max(0, true_inventory_cost - bank_amazon_inv)  # Discover card gap
+profit = real_profit - receipt_cogs_outside_bank
+profit_margin = (profit / gross_sales * 100) if gross_sales else 0
+
 # Classify locations (Tulsa vs Texas)
 def classify_location(addr):
     if not addr:
@@ -373,7 +1354,14 @@ def classify_location(addr):
 
 INV_DF["location"] = INV_DF["ship_address"].apply(classify_location)
 if len(INV_ITEMS) > 0:
-    INV_ITEMS["location"] = INV_ITEMS["ship_to"].apply(classify_location)
+    # Use override location if present, otherwise classify from ship_to address
+    if "_override_location" in INV_ITEMS.columns:
+        INV_ITEMS["location"] = INV_ITEMS.apply(
+            lambda r: r["_override_location"] if r["_override_location"] else classify_location(r["ship_to"]),
+            axis=1,
+        )
+    else:
+        INV_ITEMS["location"] = INV_ITEMS["ship_to"].apply(classify_location)
 
 # Business-only filtered data (Personal/Gift → Owner Draws in Bank tab)
 _personal_order_mask = (INV_DF["source"] == "Personal Amazon") | INV_DF["file"].str.contains("Gigi", na=False)
@@ -388,6 +1376,212 @@ else:
     personal_inv_items = pd.DataFrame()
 # Recompute monthly spend for business-only orders
 monthly_inv_spend = BIZ_INV_DF.groupby("month")["grand_total"].sum()
+
+# ── Load Quick-Adds and append to INV_ITEMS ──────────────────────────────
+_QUICK_ADDS: list[dict] = []
+try:
+    _QUICK_ADDS = _load_quick_adds()
+except Exception:
+    pass
+
+if _QUICK_ADDS and len(INV_ITEMS) > 0:
+    qa_rows = []
+    for qa in _QUICK_ADDS:
+        qa_rows.append({
+            "order_num": f"QA-{qa['id']}",
+            "date": qa.get("date", "") or "",
+            "date_parsed": pd.NaT,
+            "month": "Manual",
+            "name": qa["item_name"],
+            "qty": qa.get("qty", 1),
+            "price": float(qa.get("unit_price", 0)),
+            "total": float(qa.get("unit_price", 0)) * qa.get("qty", 1),
+            "source": qa.get("source", "Manual"),
+            "seller": qa.get("source", "Manual"),
+            "ship_to": qa.get("location", ""),
+            "payment_method": "Manual",
+            "image_url": qa.get("image_url", ""),
+            "category": qa.get("category", "Other"),
+            "location": qa.get("location", ""),
+        })
+    if qa_rows:
+        qa_df = pd.DataFrame(qa_rows)
+        # Ensure matching columns
+        for col in INV_ITEMS.columns:
+            if col not in qa_df.columns:
+                qa_df[col] = ""
+        INV_ITEMS = pd.concat([INV_ITEMS, qa_df[INV_ITEMS.columns]], ignore_index=True)
+
+# ── Load Usage Log & Build Stock Summary ─────────────────────────────────
+_USAGE_LOG: list[dict] = []
+try:
+    _USAGE_LOG = _load_usage_log()
+except Exception:
+    pass
+
+# Aggregate usage by item_name
+_usage_by_item: dict[str, int] = {}
+for u in _USAGE_LOG:
+    _usage_by_item[u["item_name"]] = _usage_by_item.get(u["item_name"], 0) + u.get("qty", 1)
+
+# Build STOCK_SUMMARY — aggregated per unique item name (business items only)
+STOCK_SUMMARY = pd.DataFrame()
+if len(INV_ITEMS) > 0:
+    _biz_mask = ~INV_ITEMS["category"].isin(["Personal/Gift", "Business Fees"])
+    _biz_items = INV_ITEMS[_biz_mask].copy()
+    if len(_biz_items) > 0:
+        _agg_dict = {
+            "category": ("category", "first"),
+            "total_purchased": ("qty", "sum"),
+            "total_cost": ("total", "sum"),
+            "location": ("location", "first"),
+            "image_url": ("image_url", "first"),
+        }
+        if "total_with_tax" in _biz_items.columns:
+            _agg_dict["total_cost_with_tax"] = ("total_with_tax", "sum")
+        _stock_agg = _biz_items.groupby("name").agg(**_agg_dict).reset_index()
+        _stock_agg = _stock_agg.rename(columns={"name": "display_name"})
+        _stock_agg["total_used"] = _stock_agg["display_name"].map(
+            lambda n: _usage_by_item.get(n, 0))
+        _stock_agg["in_stock"] = _stock_agg["total_purchased"] - _stock_agg["total_used"]
+        _stock_agg["unit_cost"] = (_stock_agg["total_cost"] / _stock_agg["total_purchased"]).round(2)
+        if "total_cost_with_tax" in _stock_agg.columns:
+            _stock_agg["unit_cost_with_tax"] = (_stock_agg["total_cost_with_tax"] / _stock_agg["total_purchased"]).round(2)
+        else:
+            _stock_agg["total_cost_with_tax"] = _stock_agg["total_cost"]
+            _stock_agg["unit_cost_with_tax"] = _stock_agg["unit_cost"]
+        # Use image_url from _IMAGE_URLS lookup (more reliable than groupby first)
+        _stock_agg["image_url"] = _stock_agg["display_name"].map(
+            lambda n: _IMAGE_URLS.get(n, ""))
+        STOCK_SUMMARY = _stock_agg.sort_values(["category", "display_name"]).reset_index(drop=True)
+
+def _recompute_stock_summary():
+    """Rebuild STOCK_SUMMARY from current INV_ITEMS + _ITEM_DETAILS + usage.
+
+    Call this after editor saves so the stock table / KPIs reflect changes
+    without a full page reload.
+    """
+    global STOCK_SUMMARY
+    if len(INV_ITEMS) == 0:
+        STOCK_SUMMARY = pd.DataFrame()
+        return STOCK_SUMMARY
+    _biz_mask = ~INV_ITEMS["category"].isin(["Personal/Gift", "Business Fees"])
+    _biz = INV_ITEMS[_biz_mask].copy()
+    if len(_biz) == 0:
+        STOCK_SUMMARY = pd.DataFrame()
+        return STOCK_SUMMARY
+    _agg = {
+        "category": ("category", "first"),
+        "total_purchased": ("qty", "sum"),
+        "total_cost": ("total", "sum"),
+        "location": ("location", "first") if "location" in _biz.columns else ("ship_to", "first"),
+        "image_url": ("image_url", "first"),
+    }
+    if "total_with_tax" in _biz.columns:
+        _agg["total_cost_with_tax"] = ("total_with_tax", "sum")
+    _sa = _biz.groupby("name").agg(**_agg).reset_index().rename(columns={"name": "display_name"})
+    _sa["total_used"] = _sa["display_name"].map(lambda n: _usage_by_item.get(n, 0))
+    _sa["in_stock"] = _sa["total_purchased"] - _sa["total_used"]
+    _sa["unit_cost"] = (_sa["total_cost"] / _sa["total_purchased"]).round(2)
+    if "total_cost_with_tax" in _sa.columns:
+        _sa["unit_cost_with_tax"] = (_sa["total_cost_with_tax"] / _sa["total_purchased"]).round(2)
+    else:
+        _sa["total_cost_with_tax"] = _sa["total_cost"]
+        _sa["unit_cost_with_tax"] = _sa["unit_cost"]
+    _sa["image_url"] = _sa["display_name"].map(lambda n: _IMAGE_URLS.get(n, ""))
+    STOCK_SUMMARY = _sa.sort_values(["category", "display_name"]).reset_index(drop=True)
+    return STOCK_SUMMARY
+
+
+def _compute_stock_kpis(stock_df=None):
+    """Return dict of KPI values from current STOCK_SUMMARY."""
+    if stock_df is None:
+        stock_df = STOCK_SUMMARY
+    if len(stock_df) == 0:
+        return {"in_stock": 0, "value": 0, "low": 0, "oos": 0, "unique": 0}
+    return {
+        "in_stock": int(stock_df["in_stock"].sum()),
+        "value": stock_df["total_cost"].sum(),
+        "low": int((stock_df["in_stock"].between(1, 2)).sum()),
+        "oos": int((stock_df["in_stock"] <= 0).sum()),
+        "unique": len(stock_df),
+    }
+
+
+def _icon_badge(text, color):
+    """Colored 36px icon circle with gradient bg for KPI pills."""
+    return html.Div(text, style={
+        "width": "36px", "height": "36px", "borderRadius": "50%",
+        "background": f"linear-gradient(135deg, {color}, {color}88)",
+        "color": "#ffffff",
+        "display": "inline-flex", "alignItems": "center", "justifyContent": "center",
+        "fontSize": "15px", "fontWeight": "bold", "flexShrink": "0",
+        "boxShadow": f"0 3px 10px {color}44",
+    })
+
+
+def _build_kpi_pill(icon, label, value, color, subtitle="", detail=""):
+    """Premium KPI pill with gradient icon, bold value, depth shadows, and optional expandable detail."""
+    text_children = [
+        html.Div(label, style={"color": GRAY, "fontSize": "11px", "fontWeight": "600",
+                                "letterSpacing": "1.2px", "textTransform": "uppercase",
+                                "lineHeight": "1"}),
+        html.Div(value, style={"color": WHITE, "fontSize": "28px", "fontWeight": "bold",
+                                "fontFamily": "monospace", "lineHeight": "1.1",
+                                "marginTop": "3px",
+                                "textShadow": f"0 0 12px {color}33"}),
+    ]
+    if subtitle:
+        text_children.append(html.Div(subtitle, style={"color": DARKGRAY, "fontSize": "11px",
+                                                         "marginTop": "2px"}))
+    if detail:
+        text_children.append(html.Details([
+            html.Summary("details", style={
+                "color": f"{CYAN}88", "fontSize": "10px", "cursor": "pointer",
+                "marginTop": "5px", "listStyle": "none", "userSelect": "none",
+            }),
+            html.P(detail, style={
+                "color": GRAY, "fontSize": "11px", "margin": "4px 0 0 0",
+                "lineHeight": "1.4", "padding": "6px",
+                "backgroundColor": f"{CARD}dd", "borderRadius": "4px",
+                "borderTop": f"1px solid {color}33",
+            }),
+        ]))
+    children = [
+        _icon_badge(icon, color),
+        html.Div(text_children, style={"marginLeft": "12px", "minWidth": "0"}),
+    ]
+    return html.Div(children,
+                     className="kpi-pill",
+                     style={"display": "flex", "alignItems": "center",
+                            "padding": "14px 18px", "backgroundColor": CARD2,
+                            "borderRadius": "10px", "borderLeft": f"4px solid {color}",
+                            "flex": "1", "minWidth": "130px",
+                            "boxShadow": "0 4px 15px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.05)"})
+
+
+def _stock_level_bar(in_stock, total_purchased):
+    """Visual stock gauge bar for table rows — 8px height, gradient fill."""
+    if total_purchased <= 0:
+        return html.Div(style={"width": "80px", "display": "inline-block"})
+    pct = max(0, min(100, (in_stock / total_purchased) * 100))
+    color = GREEN if pct > 50 else (ORANGE if pct > 20 else RED)
+    return html.Div([
+        html.Div(style={"width": f"{max(pct, 4)}%", "height": "8px",
+                         "background": f"linear-gradient(90deg, {color}88, {color})",
+                         "borderRadius": "4px",
+                         "transition": "width 0.3s ease"}),
+    ], style={"width": "80px", "height": "8px", "backgroundColor": "#0d0d1a",
+              "borderRadius": "4px", "display": "inline-block", "verticalAlign": "middle",
+              "overflow": "hidden"})
+
+
+# Stock KPI vars (initial computation)
+total_in_stock = int(STOCK_SUMMARY["in_stock"].sum()) if len(STOCK_SUMMARY) > 0 else 0
+total_stock_value = STOCK_SUMMARY["total_cost"].sum() if len(STOCK_SUMMARY) > 0 else 0
+low_stock_count = int((STOCK_SUMMARY["in_stock"].between(1, 2)).sum()) if len(STOCK_SUMMARY) > 0 else 0
+out_of_stock_count = int((STOCK_SUMMARY["in_stock"] <= 0).sum()) if len(STOCK_SUMMARY) > 0 else 0
+unique_item_count = len(STOCK_SUMMARY) if len(STOCK_SUMMARY) > 0 else 0
 
 # Payment method aggregates
 payment_summary = {}
@@ -439,8 +1633,8 @@ else:
     texas_monthly = pd.Series(dtype=float)
 
 # True profit including inventory/COGS
-true_net_profit = net_profit - total_inventory_cost
-true_profit_margin = (true_net_profit / gross_sales * 100) if gross_sales else 0
+
+
 
 # Fee breakdown
 listing_fees = abs(fee_df[fee_df["Title"].str.contains("Listing fee", na=False)]["Net_Clean"].sum())
@@ -565,7 +1759,10 @@ prod_fees = fee_df[
 ].copy()
 prod_fees["Product"] = prod_fees["Title"].str.replace("Transaction fee: ", "", regex=False)
 product_fee_totals = prod_fees.groupby("Product")["Net_Clean"].sum().abs().sort_values(ascending=False)
-product_revenue_est = (product_fee_totals / 0.065).round(2)
+if len(product_fee_totals) > 0:
+    product_revenue_est = (product_fee_totals / 0.065).round(2)
+else:
+    product_revenue_est = pd.Series(dtype=float)
 
 # Monthly breakdown
 months_sorted = sorted(DATA["Month"].dropna().unique())
@@ -643,7 +1840,10 @@ for m in months_sorted:
         monthly_aov[m] = 0
         monthly_profit_per_order[m] = 0
 
-days_active = max((DATA["Date_Parsed"].max() - DATA["Date_Parsed"].min()).days, 1)
+if len(DATA) > 0 and DATA["Date_Parsed"].notna().any():
+    days_active = max((DATA["Date_Parsed"].max() - DATA["Date_Parsed"].min()).days, 1)
+else:
+    days_active = 1
 
 # ── Analytics Engine ─────────────────────────────────────────────────────────
 
@@ -854,7 +2054,7 @@ def run_analytics():
             "good"))
 
     # 4. MARKETING DEEP DIVE
-    if total_marketing > 0:
+    if total_marketing > 0 and gross_sales > 0:
         marketing_pct = total_marketing / gross_sales * 100
         mkt_by_month = {m: monthly_marketing.get(m, 0) for m in months_sorted if monthly_sales.get(m, 0) > 0}
         mkt_pcts = {m: (v / monthly_sales.get(m, 1) * 100) for m, v in mkt_by_month.items()}
@@ -981,7 +2181,7 @@ def run_analytics():
         insights.append((7, "INTERNATIONAL",
             f"International: {asendia_count} orders, ${asendia_labels:,.0f} in labels ({intl_pct:.0f}% of all shipping)",
             f"Avg international label: ${intl_avg:.2f} vs domestic avg ${avg_outbound_label:.2f} ({intl_multiplier:.1f}x more expensive). "
-            f"International orders are {asendia_count}/{order_count} = {asendia_count / order_count * 100:.0f}% of orders but "
+            f"International orders are {asendia_count}/{order_count} = {asendia_count / order_count * 100:.0f}% of orders but " if order_count else f"International orders: {asendia_count} but "
             f"{intl_pct:.0f}% of shipping costs. "
             f"ACTION: Set international shipping rates to at least ${intl_avg:.0f}/order. "
             f"Consider flat international rate of ${intl_avg + 5:.0f} to build in margin. "
@@ -1046,25 +2246,25 @@ def run_analytics():
         "good" if fee_rate < 12 else "info" if fee_rate < 15 else "warning"))
 
     # 10. GOALS & TARGETS
-    daily_profit_avg = net_profit / days_active
+    daily_profit_avg = etsy_net / days_active
     daily_revenue_avg = gross_sales / days_active
     orders_per_day = order_count / days_active
 
-    current_margin_rate = net_profit / gross_sales if gross_sales else 0
-    revenue_to_double = (net_profit * 2) / current_margin_rate if current_margin_rate > 0 else 0
+    current_margin_rate = etsy_net / gross_sales if gross_sales else 0
+    revenue_to_double = (etsy_net * 2) / current_margin_rate if current_margin_rate > 0 else 0
     extra_orders_needed = (revenue_to_double - gross_sales) / avg_order if avg_order else 0
     extra_per_day = extra_orders_needed / days_active
 
     insights.append((10, "GOALS & TARGETS",
         f"${daily_profit_avg:,.0f}/day profit | ${daily_revenue_avg:,.0f}/day revenue | {orders_per_day:.1f} orders/day",
         f"Current monthly run rate: ${daily_revenue_avg * 30:,.0f} revenue, ${daily_profit_avg * 30:,.0f} profit. "
-        f"To double profit to ${net_profit * 2:,.0f}, you'd need ~${revenue_to_double:,.0f} in total sales "
+        f"To double profit to ${etsy_net * 2:,.0f}, you'd need ~${revenue_to_double:,.0f} in total sales "
         f"(~{extra_per_day:.1f} more orders/day at current avg order of ${avg_order:.0f}). "
         f"FASTEST PATHS: 1) Raise prices 10% = instant ~${gross_sales * 0.10:,.0f} more revenue with same orders. "
         f"2) Cut free shipping = save ~${free_ship_count * avg_outbound_label:,.0f}. "
         f"3) Reduce refunds by 50% = save ~${total_refunds / 2:,.0f}. "
         f"Combined that's ~${gross_sales * 0.10 + free_ship_count * avg_outbound_label + total_refunds / 2:,.0f} extra -- "
-        f"roughly {((gross_sales * 0.10 + free_ship_count * avg_outbound_label + total_refunds / 2) / net_profit * 100):.0f}% profit increase without a single extra sale." if net_profit > 0 else
+        f"roughly {((gross_sales * 0.10 + free_ship_count * avg_outbound_label + total_refunds / 2) / etsy_net * 100):.0f}% profit increase without a single extra sale." if etsy_net > 0 else
         f"Focus on reducing costs first -- shipping and refunds are the biggest levers.",
         "info"))
 
@@ -1075,9 +2275,9 @@ def run_analytics():
     biggest_cat_pct = biggest_cat_amt / INV_ITEMS["total"].sum() * 100 if len(INV_ITEMS) > 0 and INV_ITEMS["total"].sum() > 0 else 0
 
     inv_detail = (
-        f"Total inventory/COGS: ${total_inventory_cost:,.2f} ({inv_order_count} Amazon orders). "
-        f"COGS is {cogs_pct:.1f}% of gross revenue. "
-        f"Real profit (bank-reconciled): ${real_profit:,.2f} ({real_profit_margin:.1f}% margin). "
+        f"Total supplies: ${total_inventory_cost:,.2f} ({inv_order_count} Amazon orders). "
+        f"Supply costs are {cogs_pct:.1f}% of gross revenue. "
+        f"Profit: ${profit:,.2f} ({profit_margin:.1f}% margin). "
         f"BIGGEST COST DRIVER: {biggest_cat} at ${biggest_cat_amt:,.2f} ({biggest_cat_pct:.0f}% of item spend). "
         f"Business inventory (Key Component Mfg): ${biz_inv_cost:,.2f}. "
         f"Personal/gift purchases: ${personal_total:,.2f} "
@@ -1085,22 +2285,22 @@ def run_analytics():
     )
     if cogs_pct > 40:
         inv_detail += (
-            f"WARNING: COGS at {cogs_pct:.0f}% of revenue is high. "
+            f"WARNING: Supply costs at {cogs_pct:.0f}% of revenue is high. "
             f"ACTION: Look for bulk pricing on {biggest_cat}, negotiate supplier discounts, or raise product prices."
         )
     elif cogs_pct > 25:
         inv_detail += (
-            f"COGS at {cogs_pct:.0f}% is moderate. Monitor monthly trends -- "
+            f"Supply costs at {cogs_pct:.0f}% is moderate. Monitor monthly trends -- "
             f"if this keeps growing faster than revenue, margins will erode."
         )
     else:
         inv_detail += (
-            f"COGS at {cogs_pct:.0f}% of revenue is healthy. "
+            f"Supply costs at {cogs_pct:.0f}% of revenue is healthy. "
             f"Good materials cost control -- keep tracking to maintain this ratio."
         )
 
-    insights.append((11, "INVENTORY / COGS",
-        f"${total_inventory_cost:,.2f} in supplies ({cogs_pct:.1f}% of revenue) -- Real profit: ${real_profit:,.2f}",
+    insights.append((11, "SUPPLIES & MATERIALS",
+        f"${total_inventory_cost:,.2f} in supplies ({cogs_pct:.1f}% of revenue) -- Profit: ${profit:,.2f}",
         inv_detail,
         "good" if cogs_pct < 25 else "warning" if cogs_pct < 40 else "bad"))
 
@@ -1115,6 +2315,13 @@ analytics_insights, analytics_projections = run_analytics()
 
 def chatbot_answer(question):
     """Self-contained chatbot that answers ANY question about the Etsy data."""
+    try:
+        return _chatbot_answer_inner(question)
+    except Exception as e:
+        return f"Sorry, I hit an error processing that question: {str(e)}"
+
+
+def _chatbot_answer_inner(question):
     q = question.lower().strip()
 
     # ── Revenue / Sales questions ──
@@ -1122,8 +2329,8 @@ def chatbot_answer(question):
                              "how much did i make", "how much we made", "how much have we made", "total income"]):
         return (
             f"**Total Gross Sales:** ${gross_sales:,.2f} across {order_count} orders.\n\n"
-            f"After Etsy deductions: **Etsy Net** ${net_profit:,.2f}\n"
-            f"After ALL expenses: **Real Profit** ${real_profit:,.2f} ({real_profit_margin:.1f}%)\n\n"
+            f"After Etsy deductions: **After Etsy Fees** ${etsy_net:,.2f}\n"
+            f"After ALL expenses: **Profit** ${profit:,.2f} ({profit_margin:.1f}%)\n\n"
             f"**Monthly breakdown:**\n" +
             "\n".join(f"- {m}: ${monthly_sales.get(m, 0):,.2f} sales / ${monthly_net_revenue.get(m, 0):,.2f} net"
                       for m in months_sorted)
@@ -1132,18 +2339,16 @@ def chatbot_answer(question):
     if any(w in q for w in ["net profit", "net income", "bottom line", "take home", "profit margin", "how much profit",
                              "real profit", "actual profit"]):
         return (
-            f"**Real Profit: ${real_profit:,.2f}** ({real_profit_margin:.1f}% margin)\n\n"
-            f"= Cash On Hand ${bank_cash_on_hand:,.2f} + Owner Draws ${bank_owner_draw_total:,.2f}\n\n"
+            f"**Profit: ${profit:,.2f}** ({profit_margin:.1f}% margin)\n\n"
+            f"= Cash On Hand ${bank_cash_on_hand:,.2f} + Owner Draws ${bank_owner_draw_total:,.2f} - Credit Card Supplies ${receipt_cogs_outside_bank:,.2f}\n\n"
             f"**How we get there:**\n"
             f"- Gross Sales: ${gross_sales:,.2f}\n"
             f"- Etsy takes (fees/ship/ads/refunds): -${total_fees + total_shipping_cost + total_marketing + total_refunds:,.2f}\n"
-            f"- = Etsy Net: ${net_profit:,.2f}\n"
+            f"- = After Etsy Fees: ${etsy_net:,.2f}\n"
             f"- Bank Expenses (inventory, supplies, etc): -${bank_all_expenses:,.2f}\n"
             f"- Owner Draws: -${bank_owner_draw_total:,.2f}\n"
-            f"- Old bank inventory (receipted): -${old_bank_receipted:,.2f}\n"
-            f"- Untracked (prior bank + Etsy gap): -${bank_unaccounted + etsy_csv_gap:,.2f}\n"
             f"- **= Cash On Hand: ${bank_cash_on_hand:,.2f}**\n\n"
-            f"Profit/day: ${real_profit / days_active:,.2f}"
+            f"Profit/day: ${profit / days_active:,.2f}"
         )
 
     if any(w in q for w in ["average order", "avg order", "aov", "order value", "order size"]):
@@ -1287,7 +2492,7 @@ def chatbot_answer(question):
             f"- Etsy Ads: ${etsy_ads:,.2f}\n"
             f"- Offsite Ads fees: ${offsite_ads_fees:,.2f}\n"
             f"- Offsite Ads credits: ${abs(offsite_ads_credits):,.2f}\n\n"
-            f"Marketing as % of sales: {total_marketing / gross_sales * 100:.1f}%\n\n"
+            f"Marketing as % of sales: {total_marketing / gross_sales * 100:.1f}%\n\n" if gross_sales else "Marketing as % of sales: 0%\n\n"
             f"**Monthly ad spend:**\n" +
             "\n".join(f"- {m}: ${monthly_marketing.get(m, 0):,.2f}" for m in months_sorted)
         )
@@ -1487,9 +2692,10 @@ def chatbot_answer(question):
 
     # ── Full summary fallback ──
     if any(w in q for w in ["summary", "overview", "everything", "full report", "all data", "tell me everything"]):
+        _top_prod = f"{product_revenue_est.index[0][:40]} (~${product_revenue_est.values[0]:,.2f})" if len(product_revenue_est) > 0 else "N/A"
         return (
             f"**FULL STORE SUMMARY (Oct 2025 - Feb 2026)**\n\n"
-            f"**Real Profit: ${real_profit:,.2f}** ({real_profit_margin:.1f}%) = Cash ${bank_cash_on_hand:,.2f} + Draws ${bank_owner_draw_total:,.2f}\n\n"
+            f"**Profit: ${profit:,.2f}** ({profit_margin:.1f}%) = Cash ${bank_cash_on_hand:,.2f} + Draws ${bank_owner_draw_total:,.2f} - Credit Card Supplies ${receipt_cogs_outside_bank:,.2f}\n\n"
             f"**Revenue:** ${gross_sales:,.2f} gross | {order_count} orders | ${avg_order:,.2f} avg\n\n"
             f"**Etsy Deductions:** Fees ${total_fees:,.2f} | Shipping ${total_shipping_cost:,.2f} | "
             f"Marketing ${total_marketing:,.2f} | Refunds ${total_refunds:,.2f}\n\n"
@@ -1498,7 +2704,7 @@ def chatbot_answer(question):
             f"Other ${bank_biz_expense_total - bank_by_cat.get('AliExpress Supplies', 0):,.2f}\n\n"
             f"**Cash:** Bank ${bank_net_cash:,.2f} | Etsy ${etsy_balance:,.2f} | "
             f"Owner Draws ${bank_owner_draw_total:,.2f}\n\n"
-            f"**Top product:** {product_revenue_est.index[0][:40]} (~${product_revenue_est.values[0]:,.2f})\n\n"
+            f"**Top product:** {_top_prod}\n\n"
             f"**Trend:** {analytics_projections.get('growth_pct', 0):+.1f}% monthly growth\n\n"
             f"**Best Buy CC:** ${bb_cc_balance:,.2f} owed (${bb_cc_total_paid:,.2f} paid of ${bb_cc_total_charged:,.2f} equipment)"
         )
@@ -1545,15 +2751,15 @@ def chatbot_answer(question):
             monthly_inv_lines.append(f"- {m}: ${monthly_inv_spend.get(m, 0):,.2f}")
 
         return (
-            f"**Inventory / COGS Summary:**\n\n"
+            f"**Inventory / Supply Costs Summary:**\n\n"
             f"- **Total Inventory Spend:** ${total_inventory_cost:,.2f} across {inv_order_count} Amazon orders\n"
             f"- Subtotal: ${total_inv_subtotal:,.2f} | Tax: ${total_inv_tax:,.2f}\n"
             f"- Business orders (Key Component Mfg): ${biz_inv_cost:,.2f}\n"
             f"- Personal/Gift orders: ${personal_total:,.2f}\n\n"
-            f"**Real Profit (bank-reconciled):** ${real_profit:,.2f} ({real_profit_margin:.1f}%)\n"
-            f"- Etsy net: ${net_profit:,.2f}\n"
+            f"**Profit:** ${profit:,.2f} ({profit_margin:.1f}%)\n"
+            f"- Etsy net: ${etsy_net:,.2f}\n"
             f"- Minus ALL expenses: -${bank_all_expenses:,.2f}\n\n"
-            f"**COGS as % of Revenue:** {total_inventory_cost / gross_sales * 100:.1f}%\n\n"
+            f"**Supply Costs as % of Revenue:** {total_inventory_cost / gross_sales * 100:.1f}%\n\n" if gross_sales else "**Supply Costs as % of Revenue:** 0%\n\n"
             f"**Spending by Category:**\n" + "\n".join(cat_lines) +
             f"\n\n**Monthly Inventory Spend:**\n" + "\n".join(monthly_inv_lines)
         )
@@ -1567,7 +2773,7 @@ def chatbot_answer(question):
             f"- Shipping: -${_unit_ship:,.2f}\n"
             f"- Ads: -${_unit_ads:,.2f}\n"
             f"- Refunds: -${_unit_refund:,.2f}\n"
-            f"- COGS: -${_unit_cogs:,.2f}\n"
+            f"- Supplies: -${_unit_cogs:,.2f}\n"
             f"- **= Profit/Order: ${_unit_profit:,.2f} ({_unit_margin:.1f}% margin)**\n\n"
             f"**Break-Even Analysis:**\n"
             f"- Monthly fixed costs: ${_monthly_fixed:,.2f}\n"
@@ -1632,6 +2838,7 @@ def chatbot_answer(question):
 
     # ── Debt questions ──
     if any(w in q for w in ["debt", "credit card", "best buy", "owe", "liabilit"]):
+        _dte = f"\n**Debt-to-equity ratio:** {bb_cc_balance / val_equity:.2f}x" if val_equity > 0 else ""
         return (
             f"**Debt Summary:**\n\n"
             f"The business has one debt: **Best Buy Citi Credit Card**\n\n"
@@ -1640,8 +2847,8 @@ def chatbot_answer(question):
             f"- Total paid: ${bb_cc_total_paid:,.2f}\n"
             f"- **Remaining balance: ${bb_cc_balance:,.2f}**\n"
             f"- Available credit: ${bb_cc_available:,.2f}\n\n"
-            f"The equipment purchased is counted as a business asset worth ${bb_cc_asset_value:,.2f}.\n"
-            f"**Debt-to-equity ratio:** {bb_cc_balance / val_equity:.2f}x" if val_equity > 0 else ""
+            f"The equipment purchased is counted as a business asset worth ${bb_cc_asset_value:,.2f}."
+            f"{_dte}"
         )
 
     # ── Fallback: Try to find keywords in data ──
@@ -1741,8 +2948,11 @@ for _yr in (2025, 2026):
     # Bank inventory (Amazon Inventory category from bank)
     yr_bank_inv = yr_bank_by_cat.get("Amazon Inventory", 0)
 
-    # COGS = invoice-based inventory + bank-categorized inventory (deduplicated)
-    yr_cogs = yr_inventory_cost + yr_bank_inv
+    # COGS = receipts + any bank Amazon spending NOT already covered by receipts
+    # Receipts and bank overlap (same purchases seen from both sides), so we
+    # only add the bank gap — spending the bank sees that receipts don't explain.
+    yr_bank_inv_gap = max(0, yr_bank_inv - yr_inventory_cost)
+    yr_cogs = yr_inventory_cost + yr_bank_inv_gap
 
     # --- Draw splits ---
     yr_tulsa_draws = sum(t["amount"] for t in tulsa_draws if _bank_txn_year(t) == _yr)
@@ -1771,6 +2981,7 @@ for _yr in (2025, 2026):
         "cogs": yr_cogs,
         "inventory_cost": yr_inventory_cost,
         "bank_inv": yr_bank_inv,
+        "bank_inv_gap": yr_bank_inv_gap,
         "bank_by_cat": yr_bank_by_cat,
         "bank_deposits": yr_bank_deposits,
         "bank_debits": yr_bank_debits,
@@ -1790,11 +3001,11 @@ _val_annualize = 12 / _val_months_operating
 
 # Annual metrics
 val_annual_revenue = gross_sales * _val_annualize
-val_annual_net_profit = net_profit * _val_annualize
+val_annual_etsy_net = etsy_net * _val_annualize
 val_annual_real_profit = real_profit * _val_annualize
 
 # SDE = real_profit + owner_draws (owner draws are discretionary, added back)
-val_sde = real_profit + bank_owner_draw_total
+val_sde = profit + bank_owner_draw_total
 val_annual_sde = val_sde * _val_annualize
 
 # Method 1: SDE Multiple (small Etsy biz = 1.0x-2.5x)
@@ -1819,7 +3030,7 @@ val_blended_high = val_sde_high * 0.50 + val_rev_high * 0.25 + val_asset_val * 0
 
 # Monthly run rate
 val_monthly_run_rate = gross_sales / _val_months_operating
-val_monthly_profit_rate = real_profit / _val_months_operating
+val_monthly_profit_rate = profit / _val_months_operating
 
 # Growth
 _val_growth_pct = analytics_projections.get("growth_pct", 0)
@@ -1835,7 +3046,7 @@ val_proj_12mo_revenue = sum(
 val_equity = val_total_assets - val_total_liabilities
 
 # Health Score (0-100)
-_hs_profit = min(25, max(0, real_profit_margin / 2))  # 0-25 pts: 50%+ margin = full
+_hs_profit = min(25, max(0, profit_margin / 2))  # 0-25 pts: 50%+ margin = full
 _hs_growth = min(25, max(0, (_val_growth_pct + 10) * 1.25)) if _val_growth_pct > -10 else 0  # 0-25 pts
 _prod_count = len(product_revenue_est) if len(product_revenue_est) > 0 else 1
 _top3_conc = product_revenue_est.head(3).sum() / product_revenue_est.sum() * 100 if product_revenue_est.sum() > 0 else 100
@@ -1857,13 +3068,13 @@ if bb_cc_balance > 0:
 if shipping_profit < 0:
     val_risks.append(("Shipping Loss", f"Losing ${abs(shipping_profit):,.0f} on shipping", "MED"))
 val_risks.append(("Platform Dependency", "100% revenue from Etsy — single platform risk", "MED"))
-if total_refunds / gross_sales > 0.05:
+if gross_sales and total_refunds / gross_sales > 0.05:
     val_risks.append(("Refund Rate", f"{total_refunds / gross_sales * 100:.1f}% refund rate", "MED"))
 
 # Strengths list
 val_strengths = []
-if real_profit_margin > 20:
-    val_strengths.append(("Strong Margins", f"{real_profit_margin:.1f}% real profit margin"))
+if profit_margin > 20:
+    val_strengths.append(("Strong Margins", f"{profit_margin:.1f}% profit margin"))
 if _val_growth_pct > 5:
     val_strengths.append(("Growing Revenue", f"{_val_growth_pct:+.1f}% monthly growth"))
 if bank_cash_on_hand > val_monthly_run_rate:
@@ -2257,12 +3468,12 @@ ppo_fig.update_layout(
 _last_ppo_m = ppo_months[-1] if ppo_months else "N/A"
 _last_ppo_val = ppo_vals[-1] if ppo_vals else 0
 _last_aov_val = aov_vals[-1] if aov_vals else 0
-_daily_profit_avg = net_profit / days_active if days_active else 0
+_daily_profit_avg = etsy_net / days_active if days_active else 0
 _daily_rev_avg = gross_sales / days_active if days_active else 0
 _daily_orders_avg = order_count / days_active if days_active else 0
 _best_day_rev = daily_df["revenue"].max() if len(daily_df) else 0
 _peak_orders_day = daily_df["orders"].max() if len(daily_df) else 0
-_total_costs = gross_sales - net_profit
+_total_costs = gross_sales - etsy_net
 _current_14d_profit_avg = daily_df["profit"].rolling(14, min_periods=1).mean().iloc[-1] if len(daily_df) >= 1 else 0
 _aov_best_week = weekly_aov["aov"].max() if len(weekly_aov) else 0
 _aov_worst_week = weekly_aov["aov"].min() if len(weekly_aov) else 0
@@ -2270,7 +3481,7 @@ _growth_pct = analytics_projections.get("growth_pct", 0)
 _r2_sales = analytics_projections.get("r2_sales", 0)
 _latest_month_rev = monthly_sales.get(months_sorted[-1], 0) if months_sorted else 0
 _latest_month_net = monthly_net_revenue.get(months_sorted[-1], 0) if months_sorted else 0
-_net_margin_overall = (net_profit / gross_sales * 100) if gross_sales else 0
+_net_margin_overall = (etsy_net / gross_sales * 100) if gross_sales else 0
 
 # --- TAB 2: DEEP DIVE ADVANCED ANALYTICS ---
 
@@ -2310,14 +3521,14 @@ rev_inv_fig.add_trace(go.Bar(name="Monthly Revenue", x=_inv_months, y=_inv_rev_v
     marker_color=GREEN, opacity=0.6))
 rev_inv_fig.add_trace(go.Bar(name="Inventory Spend", x=_inv_months, y=_inv_spend_vals,
     marker_color=PURPLE, opacity=0.8))
-rev_inv_fig.add_trace(go.Scatter(name="COGS Ratio %", x=_inv_months, y=_inv_cogs_ratio,
+rev_inv_fig.add_trace(go.Scatter(name="Supply Cost Ratio %", x=_inv_months, y=_inv_cogs_ratio,
     mode="lines+markers+text", text=[f"{v:.1f}%" for v in _inv_cogs_ratio],
     textposition="top center", textfont=dict(color=ORANGE, size=10),
     line=dict(color=ORANGE, width=3), marker=dict(size=8)), secondary_y=True)
 make_chart(rev_inv_fig, 360)
 rev_inv_fig.update_layout(title="Revenue vs Inventory Spend by Month", barmode="group")
 rev_inv_fig.update_yaxes(title_text="Amount ($)", secondary_y=False)
-rev_inv_fig.update_yaxes(title_text="COGS Ratio (%)", secondary_y=True, showgrid=False)
+rev_inv_fig.update_yaxes(title_text="Supply Cost Ratio (%)", secondary_y=True, showgrid=False)
 
 # 10) Inventory category breakdown (what you're spending on)
 inv_cat_bar = go.Figure()
@@ -2441,7 +3652,7 @@ _unit_margin = (_unit_profit / _unit_rev * 100) if _unit_rev else 0
 unit_wf = go.Figure(go.Waterfall(
     orientation="v",
     measure=["absolute", "relative", "relative", "relative", "relative", "relative", "total"],
-    x=["Revenue", "Fees", "Shipping", "Ads", "Refunds", "COGS", "Profit"],
+    x=["Revenue", "Fees", "Shipping", "Ads", "Refunds", "Supplies", "Profit"],
     y=[_unit_rev, -_unit_fees, -_unit_ship, -_unit_ads, -_unit_refund, -_unit_cogs, 0],
     connector={"line": {"color": GRAY, "width": 1, "dash": "dot"}},
     increasing={"marker": {"color": GREEN}},
@@ -2659,7 +3870,7 @@ inv_monthly_fig.add_trace(go.Bar(
     textposition="outside",
 ))
 make_chart(inv_monthly_fig, 360)
-inv_monthly_fig.update_layout(title="Monthly Inventory / COGS Spend", yaxis_title="Amount ($)")
+inv_monthly_fig.update_layout(title="Monthly Supply Costs", yaxis_title="Amount ($)")
 
 # Category breakdown donut
 inv_cat_fig = go.Figure()
@@ -2684,7 +3895,7 @@ rev_cogs_fig.add_trace(go.Bar(
     marker_color=GREEN,
 ))
 rev_cogs_fig.add_trace(go.Bar(
-    name="COGS / Inventory", x=all_inv_months,
+    name="Supplies", x=all_inv_months,
     y=[monthly_inv_spend.get(m, 0) for m in all_inv_months],
     marker_color=PURPLE,
 ))
@@ -2707,7 +3918,7 @@ rev_cogs_fig.add_trace(go.Scatter(
     line=dict(color=ORANGE, width=3), marker=dict(size=10),
 ))
 make_chart(rev_cogs_fig, 400)
-rev_cogs_fig.update_layout(title="Revenue vs COGS vs Expenses vs True Profit", barmode="group", yaxis_title="Amount ($)")
+rev_cogs_fig.update_layout(title="Revenue vs Supplies vs Expenses vs Profit", barmode="group", yaxis_title="Amount ($)")
 
 # --- LOCATION CHARTS ---
 
@@ -2900,7 +4111,8 @@ def _build_payment_sections():
             name = it["name"][:80]
             cat = it.get("category", "Other")
             if name not in item_agg:
-                item_agg[name] = {"qty": 0, "total": 0.0, "category": cat}
+                item_agg[name] = {"qty": 0, "total": 0.0, "category": cat,
+                                  "image_url": _IMAGE_URLS.get(it["name"], "")}
             item_agg[name]["qty"] += it["qty"]
             item_agg[name]["total"] += it["total"]
         item_rows = sorted(item_agg.items(), key=lambda x: -x[1]["total"])
@@ -2908,9 +4120,11 @@ def _build_payment_sections():
         item_table_rows = []
         for item_name, info in item_rows[:20]:  # Top 20 items
             item_table_rows.append(html.Tr([
+                html.Td(item_thumbnail(info.get("image_url", ""), 24),
+                         style={"padding": "2px 4px", "textAlign": "center", "width": "30px"}),
                 html.Td(str(info["qty"]), style={"textAlign": "center", "color": WHITE,
                                                    "padding": "2px 6px", "fontSize": "11px"}),
-                html.Td(item_name[:65], style={"color": WHITE, "padding": "2px 6px", "fontSize": "11px",
+                html.Td(item_name, title=item_name, style={"color": WHITE, "padding": "2px 6px", "fontSize": "11px",
                                                 "maxWidth": "350px", "overflow": "hidden",
                                                 "textOverflow": "ellipsis", "whiteSpace": "nowrap"}),
                 html.Td(info["category"], style={"color": TEAL, "padding": "2px 6px", "fontSize": "10px"}),
@@ -2921,7 +4135,7 @@ def _build_payment_sections():
 
         if len(item_rows) > 20:
             item_table_rows.append(html.Tr([
-                html.Td(f"... and {len(item_rows) - 20} more items", colSpan="4",
+                html.Td(f"... and {len(item_rows) - 20} more items", colSpan="5",
                          style={"color": GRAY, "padding": "4px 6px", "fontSize": "11px", "fontStyle": "italic"})
             ]))
 
@@ -2962,6 +4176,7 @@ def _build_payment_sections():
             html.Div([
                 html.Table([
                     html.Thead(html.Tr([
+                        html.Th("", style={"padding": "3px 4px", "width": "30px"}),
                         html.Th("Qty", style={"textAlign": "center", "padding": "3px 6px", "fontSize": "10px"}),
                         html.Th("Item", style={"textAlign": "left", "padding": "3px 6px", "fontSize": "10px"}),
                         html.Th("Category", style={"textAlign": "left", "padding": "3px 6px", "fontSize": "10px"}),
@@ -2978,105 +4193,1690 @@ def _build_payment_sections():
     return cards
 
 
-def _build_location_item_section(title, color, location_value):
-    """Build a detailed item table for a specific location (Tulsa or Texas)."""
-    if len(BIZ_INV_ITEMS) == 0:
-        return [html.P("No item data available.", style={"color": GRAY})]
+def _build_image_manager():
+    """Build the Image Manager card grid for assigning product images."""
+    import urllib.parse
 
-    loc_items = BIZ_INV_ITEMS[BIZ_INV_ITEMS["location"] == location_value].copy()
-    if len(loc_items) == 0:
-        return [html.P(f"No items shipped to {title}.", style={"color": GRAY})]
+    # Deduplicate items by name — one card per unique item
+    seen = {}
+    if len(INV_ITEMS) > 0:
+        for _, r in INV_ITEMS.iterrows():
+            name = r["name"]
+            if name not in seen:
+                seen[name] = {
+                    "name": name,
+                    "price": r["price"],
+                    "image_url": _IMAGE_URLS.get(name, ""),
+                    "order_num": r.get("order_num", ""),
+                }
+    unique_items = sorted(seen.values(), key=lambda x: x["name"].lower())
+    total_items = len(unique_items)
+    with_images = sum(1 for it in unique_items if it["image_url"])
 
-    loc_items = loc_items.sort_values(["category", "total"], ascending=[True, False])
-    total_spend = loc_items["total"].sum()
-    total_qty = loc_items["qty"].sum()
-    unique_items = loc_items["name"].nunique()
+    # Build item cards
+    cards = []
+    for i, it in enumerate(unique_items):
+        safe_idx = str(i)
+        img_url = it["image_url"]
+        search_q = urllib.parse.quote_plus(it["name"][:80])
 
-    rows = []
-    current_cat = None
-    for _, r in loc_items.iterrows():
-        cat = r.get("category", "Other")
-        # Category header row
-        if cat != current_cat:
-            current_cat = cat
-            cat_total = loc_items[loc_items["category"] == cat]["total"].sum()
-            cat_qty = loc_items[loc_items["category"] == cat]["qty"].sum()
-            rows.append(html.Tr([
-                html.Td(f"{cat}", colSpan="2",
-                         style={"color": color, "fontWeight": "bold", "padding": "10px 8px 4px 8px",
-                                "fontSize": "13px", "borderBottom": f"1px solid {color}44"}),
-                html.Td(f"{cat_qty} units", colSpan="1",
-                         style={"color": GRAY, "padding": "10px 8px 4px 8px", "fontSize": "12px",
-                                "borderBottom": f"1px solid {color}44", "textAlign": "center"}),
-                html.Td(f"${cat_total:,.2f}", colSpan="1",
-                         style={"color": color, "fontWeight": "bold", "padding": "10px 8px 4px 8px",
-                                "fontSize": "13px", "borderBottom": f"1px solid {color}44", "textAlign": "right"}),
-            ]))
-        # Item name - clean up delivery message prefix
-        item_name = r["name"]
-        if item_name.startswith("Your package was left near the front door or porch."):
-            item_name = item_name.replace("Your package was left near the front door or porch.", "").strip()
-        name_children = [html.Span(item_name[:85], style={"color": WHITE})]
-        rows.append(html.Tr([
-            html.Td(str(r["qty"]), style={"color": WHITE, "textAlign": "center",
-                                           "padding": "3px 8px", "fontSize": "12px", "width": "40px"}),
-            html.Td(name_children, style={"padding": "3px 8px", "fontSize": "11px",
-                                           "maxWidth": "450px", "overflow": "hidden",
-                                           "textOverflow": "ellipsis", "whiteSpace": "nowrap"}),
-            html.Td(f"${r['price']:,.2f}", style={"color": GRAY, "textAlign": "right",
-                                                    "padding": "3px 8px", "fontSize": "11px"}),
-            html.Td(f"${r['total']:,.2f}", style={"color": color, "textAlign": "right",
-                                                    "fontWeight": "bold", "padding": "3px 8px", "fontSize": "12px"}),
-        ], style={"borderBottom": "1px solid #ffffff08"}))
+        card = html.Div([
+            # Preview image
+            html.Div([
+                item_thumbnail(img_url, 100),
+            ], id={"type": "img-preview", "index": safe_idx},
+               style={"textAlign": "center", "marginBottom": "6px"}),
+            # Item name
+            html.Div(it["name"][:50], title=it["name"],
+                     style={"color": WHITE, "fontSize": "11px", "fontWeight": "600",
+                            "overflow": "hidden", "textOverflow": "ellipsis",
+                            "whiteSpace": "nowrap", "marginBottom": "2px"}),
+            # Price
+            html.Div(f"${it['price']:,.2f}", style={"color": GRAY, "fontSize": "11px", "marginBottom": "6px"}),
+            # URL input
+            dcc.Input(
+                id={"type": "img-url-input", "index": safe_idx},
+                type="text", placeholder="Paste image URL...",
+                value=img_url,
+                style={"width": "100%", "backgroundColor": "#0f0f1a", "color": WHITE,
+                       "border": f"1px solid {DARKGRAY}", "borderRadius": "4px",
+                       "padding": "4px 6px", "fontSize": "10px", "marginBottom": "4px",
+                       "boxSizing": "border-box"}),
+            # Hidden store for item name
+            dcc.Store(id={"type": "img-item-name", "index": safe_idx}, data=it["name"]),
+            # Order ID
+            html.Div(it.get("order_num", ""), title=it.get("order_num", ""),
+                     style={"color": DARKGRAY, "fontSize": "9px", "marginBottom": "4px",
+                            "overflow": "hidden", "textOverflow": "ellipsis", "whiteSpace": "nowrap"}),
+            # Buttons row
+            html.Div([
+                html.Button("Save", id={"type": "img-save-btn", "index": safe_idx},
+                            n_clicks=0,
+                            style={"backgroundColor": TEAL, "color": WHITE, "border": "none",
+                                   "borderRadius": "4px", "padding": "3px 10px", "fontSize": "10px",
+                                   "cursor": "pointer", "fontWeight": "600", "marginRight": "4px"}),
+                html.A("Amazon", href=f"https://www.amazon.com/s?k={search_q}",
+                       target="_blank",
+                       style={"color": CYAN, "fontSize": "10px", "textDecoration": "none",
+                              "padding": "3px 6px", "border": f"1px solid {CYAN}44",
+                              "borderRadius": "4px"}),
+            ], style={"display": "flex", "alignItems": "center", "gap": "4px"}),
+            # Status message
+            html.Div("", id={"type": "img-status", "index": safe_idx},
+                     style={"color": GREEN, "fontSize": "10px", "marginTop": "2px", "minHeight": "14px"}),
+        ], className="img-mgr-card",
+           style={"backgroundColor": CARD2, "padding": "10px", "borderRadius": "8px",
+                  "border": f"1px solid {'#ffffff15' if not img_url else TEAL + '44'}",
+                  "width": "160px", "minWidth": "160px"})
+        cards.append(card)
 
-    return [
+    return html.Div([
+        # Header bar
         html.Div([
             html.Div([
-                html.Span(title, style={"color": color, "fontSize": "16px", "fontWeight": "bold"}),
-                html.Span(f"  {unique_items} items, {int(total_qty)} units, ${total_spend:,.2f}",
-                           style={"color": GRAY, "fontSize": "13px", "marginLeft": "10px"}),
-            ], style={"marginBottom": "8px"}),
+                html.H3("IMAGE MANAGER", style={"color": CYAN, "margin": "0", "fontSize": "16px",
+                                                  "display": "inline"}),
+                html.Span(f"  {with_images}/{total_items} items have images",
+                           style={"color": GRAY, "fontSize": "12px", "marginLeft": "12px"}),
+            ]),
             html.Div([
-                html.Table([
-                    html.Thead(html.Tr([
-                        html.Th("Qty", style={"textAlign": "center", "padding": "4px 8px", "width": "40px"}),
-                        html.Th("Item", style={"textAlign": "left", "padding": "4px 8px"}),
-                        html.Th("Unit $", style={"textAlign": "right", "padding": "4px 8px"}),
-                        html.Th("Total", style={"textAlign": "right", "padding": "4px 8px"}),
-                    ], style={"borderBottom": f"2px solid {color}"})),
-                    html.Tbody(rows),
-                ], style={"width": "100%", "borderCollapse": "collapse", "color": WHITE}),
-            ], style={"maxHeight": "500px", "overflowY": "auto"}),
-        ], style={"backgroundColor": CARD, "padding": "14px", "borderRadius": "10px",
-                   "border": f"1px solid {color}33", "marginBottom": "14px"}),
-    ]
+                dcc.Input(
+                    id="img-filter-input", type="text", placeholder="Filter by name...",
+                    style={"backgroundColor": "#0f0f1a", "color": WHITE,
+                           "border": f"1px solid {DARKGRAY}", "borderRadius": "4px",
+                           "padding": "6px 10px", "fontSize": "12px", "width": "200px"}),
+                dcc.RadioItems(
+                    id="img-filter-show",
+                    options=[{"label": "All", "value": "all"},
+                             {"label": "Missing", "value": "missing"},
+                             {"label": "Has Image", "value": "has"}],
+                    value="all",
+                    inline=True,
+                    style={"color": GRAY, "fontSize": "12px", "marginLeft": "10px"},
+                    labelStyle={"marginRight": "8px"},
+                ),
+            ], style={"display": "flex", "alignItems": "center"}),
+        ], style={"display": "flex", "justifyContent": "space-between", "alignItems": "center",
+                   "marginBottom": "12px", "flexWrap": "wrap", "gap": "8px"}),
+
+        # Card grid
+        html.Div(cards, id="img-mgr-grid",
+                 style={"display": "flex", "flexWrap": "wrap", "gap": "10px",
+                        "maxHeight": "600px", "overflowY": "auto", "padding": "4px"}),
+    ], style={"backgroundColor": CARD, "padding": "16px", "borderRadius": "10px",
+              "marginBottom": "14px", "border": f"1px solid {CYAN}33"})
+
+
+def _render_split_rows(data):
+    """Render split item data as styled display rows."""
+    if not data:
+        return [html.P("No sub-items yet. Use the form below to add items from this pack.",
+                        style={"color": GRAY, "fontSize": "11px", "fontStyle": "italic"})]
+    # Column header
+    rows = [html.Div([
+        html.Span("#", style={"color": DARKGRAY, "fontSize": "10px", "width": "18px",
+                               "textAlign": "right", "marginRight": "6px"}),
+        html.Span("Name", style={"color": DARKGRAY, "fontSize": "10px", "flex": "3"}),
+        html.Span("Qty", style={"color": DARKGRAY, "fontSize": "10px", "width": "35px", "textAlign": "center"}),
+        html.Span("Location", style={"color": DARKGRAY, "fontSize": "10px", "width": "80px"}),
+        html.Span("Category", style={"color": DARKGRAY, "fontSize": "10px", "width": "80px"}),
+    ], style={"display": "flex", "alignItems": "center", "gap": "4px",
+              "padding": "2px 4px", "borderBottom": f"1px solid {TEAL}33"})]
+
+    for i, d in enumerate(data):
+        loc = d.get("location", "")
+        loc_color = TEAL if "Tulsa" in loc else (ORANGE if "Texas" in loc else GRAY)
+        rows.append(html.Div([
+            html.Span(f"{i + 1}.", style={"color": DARKGRAY, "fontSize": "11px", "width": "18px",
+                                           "textAlign": "right", "marginRight": "6px"}),
+            html.Span(d.get("name", ""), title=d.get("name", ""),
+                      style={"color": WHITE, "fontSize": "12px", "flex": "3",
+                             "fontWeight": "600", "overflow": "hidden",
+                             "textOverflow": "ellipsis", "whiteSpace": "nowrap"}),
+            html.Span(f"x{d.get('qty', 1)}", style={"color": GRAY, "fontSize": "11px",
+                                                       "width": "35px", "textAlign": "center"}),
+            html.Span(loc or "—", style={"color": loc_color, "fontSize": "11px", "width": "80px"}),
+            html.Span(d.get("category", ""), style={"color": DARKGRAY, "fontSize": "10px", "width": "80px"}),
+        ], style={"display": "flex", "alignItems": "center", "gap": "4px",
+                  "padding": "3px 4px", "borderBottom": "1px solid #ffffff08"}))
+
+    # Summary
+    total_qty = sum(d.get("qty", 1) for d in data)
+    tulsa_n = sum(1 for d in data if "Tulsa" in d.get("location", ""))
+    texas_n = sum(1 for d in data if "Texas" in d.get("location", ""))
+    summary_parts = [f"{len(data)} items, {total_qty} total qty"]
+    if tulsa_n:
+        summary_parts.append(f"{tulsa_n} Tulsa")
+    if texas_n:
+        summary_parts.append(f"{texas_n} Texas")
+    rows.append(html.Div(" | ".join(summary_parts),
+                style={"color": TEAL, "fontSize": "10px", "fontWeight": "bold",
+                       "padding": "4px 4px 0 4px"}))
+    return rows
+
+
+def _build_split_container(idx, existing, det_name, det_cat, det_qty, det_loc, _inp, item_name="", orig_total=0):
+    """Build the split container — a guided wizard for breaking down multi-pack items."""
+    loc_options = [{"label": "Tulsa, OK", "value": "Tulsa, OK"},
+                   {"label": "Texas", "value": "Texas"},
+                   {"label": "Other", "value": "Other"}]
+    cat_options = [{"label": c, "value": c} for c in CATEGORY_OPTIONS]
+    _hidden = {"display": "none"}
+
+    # Pre-fill split data from existing saved details
+    is_split = len(existing) > 1
+    split_data = []
+    if is_split:
+        split_data = [{"name": d["display_name"], "qty": d["true_qty"],
+                        "category": d["category"],
+                        "location": d.get("location", "")} for d in existing]
+
+    # Wizard state: starts at "done" if data exists, else step 0
+    if split_data:
+        wiz_init = {"step": "done", "category": det_cat, "total_qty": len(split_data)}
+        q_text = f"All {len(split_data)} items allocated! Click Save above when ready."
+        s0 = s1 = s2 = s3a = s3b = s3c = _hidden
+        btn_row_style = _hidden
+        btn_text = ""
+    else:
+        wiz_init = {"step": 0, "category": "", "total_qty": 0}
+        q_text = "What type of item is this?"
+        s0 = {"display": "block"}
+        s1 = s2 = s3a = s3b = s3c = _hidden
+        btn_row_style = {"display": "block", "marginTop": "8px"}
+        btn_text = "Next \u2192"
+
+    return html.Div(
+        id={"type": "det-split-container", "index": idx},
+        children=[
+            dcc.Store(id={"type": "det-split-data", "index": idx}, data=split_data),
+            dcc.Store(id={"type": "wiz-state", "index": idx}, data=wiz_init),
+
+            # ── Header ──
+            html.Div([
+                html.Div("PACK BREAKDOWN", style={"color": TEAL, "fontSize": "14px",
+                                                    "fontWeight": "bold", "marginBottom": "4px"}),
+                html.Div([
+                    html.Span("Receipt item: ", style={"color": GRAY, "fontSize": "11px"}),
+                    html.Span(item_name or det_name, style={"color": WHITE, "fontSize": "11px",
+                                                              "fontWeight": "600"}),
+                ]),
+                html.Div([
+                    html.Span(f"Qty on receipt: {det_qty}", style={"color": GRAY, "fontSize": "11px",
+                                                                     "marginRight": "12px"}),
+                    html.Span(f"Total: ${orig_total:.2f}" if orig_total else "",
+                              style={"color": GRAY, "fontSize": "11px"}),
+                ], style={"marginTop": "2px"}),
+            ], style={"marginBottom": "10px", "paddingBottom": "8px",
+                      "borderBottom": f"1px solid {TEAL}33"}),
+
+            # ── Wizard question text ──
+            html.Div(q_text,
+                     id={"type": "wiz-question", "index": idx},
+                     style={"color": ORANGE, "fontSize": "13px", "fontWeight": "600",
+                            "marginBottom": "8px"}),
+
+            # ── Step 0: Category selection ──
+            html.Div(
+                dcc.Dropdown(id={"type": "wiz-cat", "index": idx},
+                             options=cat_options, value=det_cat or "", clearable=False,
+                             placeholder="Select category...",
+                             style={"width": "200px", "fontSize": "12px",
+                                    "backgroundColor": "#1a1a2e", "color": WHITE}),
+                id={"type": "wiz-step0", "index": idx}, style=s0,
+            ),
+
+            # ── Step 1: How many items ──
+            html.Div(
+                dcc.Input(id={"type": "wiz-qty", "index": idx}, type="number",
+                          min=1, value=det_qty or 1,
+                          style={**_inp, "width": "100px"}),
+                id={"type": "wiz-step1", "index": idx}, style=s1,
+            ),
+
+            # ── Step 2: Same or different? ──
+            html.Div(
+                dcc.RadioItems(
+                    id={"type": "wiz-same-diff", "index": idx},
+                    options=[
+                        {"label": "  All the same item (just split between locations)", "value": "same"},
+                        {"label": "  Each one is different (different colors, types, etc.)", "value": "different"},
+                    ],
+                    value="same",
+                    style={"color": WHITE, "fontSize": "12px"},
+                    labelStyle={"display": "block", "padding": "6px 0", "cursor": "pointer"},
+                    inputStyle={"marginRight": "6px"},
+                ),
+                id={"type": "wiz-step2", "index": idx}, style=s2,
+            ),
+
+            # ── Step 3a: Common name (for "all same" path) ──
+            html.Div([
+                html.Div("What is this item?", style={"color": GRAY, "fontSize": "11px", "marginBottom": "2px"}),
+                dcc.Input(id={"type": "wiz-same-name", "index": idx}, type="text",
+                          placeholder="e.g. Brown Wrapping Paper, Black PLA 1kg...",
+                          value="",
+                          style={**_inp, "width": "100%"}),
+            ], id={"type": "wiz-step3a", "index": idx}, style=s3a),
+
+            # ── Step 3b: Location allocation (for "all same" path) ──
+            html.Div([
+                html.Div([
+                    html.Span("Tulsa, OK:", style={"color": TEAL, "fontSize": "12px",
+                                                     "fontWeight": "600", "width": "80px",
+                                                     "display": "inline-block"}),
+                    dcc.Input(id={"type": "wiz-tulsa-qty", "index": idx}, type="number",
+                              min=0, value=0, style={**_inp, "width": "60px"}),
+                ], style={"marginBottom": "6px", "display": "flex", "alignItems": "center", "gap": "8px"}),
+                html.Div([
+                    html.Span("Texas:", style={"color": ORANGE, "fontSize": "12px",
+                                                 "fontWeight": "600", "width": "80px",
+                                                 "display": "inline-block"}),
+                    dcc.Input(id={"type": "wiz-texas-qty", "index": idx}, type="number",
+                              min=0, value=0, style={**_inp, "width": "60px"}),
+                ], style={"display": "flex", "alignItems": "center", "gap": "8px"}),
+            ], id={"type": "wiz-step3b", "index": idx}, style=s3b),
+
+            # ── Step 3c: Per-item name + location (for "different" path) ──
+            html.Div([
+                html.Div([
+                    html.Div("Name / Color:", style={"color": GRAY, "fontSize": "11px", "marginBottom": "2px"}),
+                    dcc.Input(id={"type": "wiz-item-name", "index": idx}, type="text",
+                              placeholder="e.g. Black PLA, Red PETG...",
+                              value="",
+                              style={**_inp, "width": "100%"}),
+                ], style={"marginBottom": "6px"}),
+                html.Div([
+                    html.Div("Where did it go?", style={"color": GRAY, "fontSize": "11px", "marginBottom": "2px"}),
+                    dcc.Dropdown(id={"type": "wiz-item-loc", "index": idx},
+                                 options=loc_options, value=det_loc or "", clearable=False,
+                                 style={"width": "160px", "fontSize": "12px",
+                                        "backgroundColor": "#1a1a2e", "color": WHITE}),
+                ]),
+            ], id={"type": "wiz-step3c", "index": idx}, style=s3c),
+
+            # ── Next / Add button row ──
+            html.Div(
+                html.Button(btn_text, id={"type": "wiz-next", "index": idx},
+                            style={"fontSize": "12px", "padding": "6px 20px",
+                                   "backgroundColor": TEAL, "color": WHITE,
+                                   "border": "none", "borderRadius": "6px",
+                                   "cursor": "pointer", "fontWeight": "bold"}),
+                id={"type": "wiz-btn-row", "index": idx},
+                style=btn_row_style,
+            ),
+
+            # ── Items display ──
+            html.Div(
+                _render_split_rows(split_data),
+                id={"type": "det-split-display", "index": idx},
+                style={"marginTop": "10px", "maxHeight": "300px", "overflowY": "auto"},
+            ),
+
+            # ── Clear all ──
+            html.Button("Clear All & Start Over", id={"type": "split-clear-btn", "index": idx},
+                        style={"fontSize": "10px", "padding": "4px 12px", "backgroundColor": "transparent",
+                               "color": DARKGRAY, "border": f"1px solid {DARKGRAY}44", "borderRadius": "4px",
+                               "cursor": "pointer", "marginTop": "8px"}),
+        ],
+        style={"display": "block" if is_split else "none",
+               "marginTop": "6px", "padding": "12px 14px",
+               "backgroundColor": "#0a0a1a", "borderRadius": "8px",
+               "border": f"1px solid {TEAL}44"},
+    )
+
+
+def _build_item_card(idx, item_name, img_url, det_name, det_cat, det_qty, det_loc,
+                     has_details, orig_qty, orig_total, is_split, existing, onum):
+    """Build a single inventory item card (compact row + expandable form).
+
+    Shared by _build_inventory_editor() and filter_editor().
+    """
+    _label = {"color": GRAY, "fontSize": "12px", "marginRight": "6px", "whiteSpace": "nowrap", "fontWeight": "500"}
+    _inp = {"fontSize": "13px", "backgroundColor": "#0d0d1a", "color": WHITE,
+            "border": f"1px solid {DARKGRAY}55", "borderRadius": "6px", "padding": "7px 12px"}
+    cat_options = [{"label": c, "value": c} for c in CATEGORY_OPTIONS]
+    loc_options = [{"label": "Tulsa, OK", "value": "Tulsa, OK"},
+                   {"label": "Texas", "value": "Texas"},
+                   {"label": "Other", "value": "Other"}]
+
+    per_unit = orig_total / det_qty if det_qty > 0 else (orig_total / orig_qty if orig_qty > 0 else 0)
+    _card_border = GREEN if has_details else ORANGE
+    _status_color = GREEN if has_details else ORANGE
+    _loc_color = TEAL if "Tulsa" in det_loc else (ORANGE if "Texas" in det_loc else GRAY)
+
+    # ── COMPACT ROW (two-line layout) ──
+    # Line 1: name + price + qty
+    # Line 2: category · location + status pill
+    compact_row = html.Div([
+        html.Div(
+            item_thumbnail(img_url, 40),
+            style={"flexShrink": "0"},
+        ),
+        html.Div([
+            # Line 1
+            html.Div([
+                html.Span(det_name[:60], title=det_name,
+                          style={"color": WHITE, "fontSize": "15px", "fontWeight": "bold",
+                                 "flex": "1", "overflow": "hidden", "textOverflow": "ellipsis",
+                                 "whiteSpace": "nowrap", "minWidth": "100px"}),
+                html.Span(f"${orig_total:.2f}", style={
+                    "color": ORANGE, "fontSize": "13px", "fontWeight": "bold",
+                    "marginLeft": "auto", "flexShrink": "0"}),
+                html.Span(f"x{det_qty}", style={
+                    "color": WHITE, "fontSize": "13px", "fontWeight": "bold",
+                    "marginLeft": "12px", "flexShrink": "0"}),
+            ], style={"display": "flex", "alignItems": "center", "gap": "8px"}),
+            # Line 2
+            html.Div([
+                html.Span(det_cat, style={
+                    "fontSize": "12px", "color": TEAL, "fontWeight": "500"}),
+                html.Span("\u00b7", style={"color": f"{DARKGRAY}88", "margin": "0 6px",
+                                            "fontSize": "14px"}),
+                html.Span(det_loc if det_loc else "\u2014", style={
+                    "fontSize": "12px", "color": _loc_color, "fontWeight": "500"}),
+                html.Span(
+                    "\u2713 SAVED" if has_details else "UNSAVED",
+                    className="status-pill-saved" if has_details else "status-pill-unsaved",
+                    style={"fontSize": "12px", "fontWeight": "bold", "padding": "3px 12px",
+                           "borderRadius": "10px", "whiteSpace": "nowrap",
+                           "backgroundColor": f"{_status_color}18", "color": _status_color,
+                           "border": f"1px solid {_status_color}33",
+                           "marginLeft": "auto", "flexShrink": "0"}),
+                html.Span(
+                    "NEW", className="new-badge",
+                    style={"fontSize": "10px", "fontWeight": "bold", "padding": "2px 8px",
+                           "borderRadius": "8px", "backgroundColor": f"{CYAN}22",
+                           "color": CYAN, "border": f"1px solid {CYAN}55",
+                           "marginLeft": "6px", "flexShrink": "0",
+                           "letterSpacing": "0.5px"}
+                ) if (onum in _RECENT_UPLOADS and not has_details) else None,
+            ], style={"display": "flex", "alignItems": "center", "marginTop": "2px"}),
+        ], style={"flex": "1", "minWidth": "0", "marginLeft": "12px"}),
+    ], style={"display": "flex", "alignItems": "center",
+              "cursor": "pointer", "padding": "4px 0"})
+
+    # ── EXPANDED FORM ──
+    # Original name + price info header
+    show_orig = (det_name != item_name)
+    orig_label = html.Div([
+        html.Div(
+            item_thumbnail(img_url, 56),
+            style={"flexShrink": "0", "borderRadius": "6px", "overflow": "hidden"},
+        ),
+        html.Div([
+            html.Div([
+                html.Span("ORIGINAL: ", style={"color": GRAY, "fontSize": "11px", "fontWeight": "bold"}),
+                html.Span(f'"{item_name[:90]}"',
+                          style={"color": f"{WHITE}bb", "fontSize": "11px", "fontStyle": "italic"}),
+            ] if show_orig else [
+                html.Span(item_name[:90],
+                          style={"color": WHITE, "fontSize": "13px", "fontWeight": "600",
+                                 "wordBreak": "break-word"}),
+            ], style={"marginBottom": "4px"}),
+            html.Span(
+                id={"type": "det-price-display", "index": idx},
+                children=f"qty {det_qty}  \u00b7  ${per_unit:.2f}/ea  \u00b7  ${orig_total:.2f} total",
+                style={"color": GRAY, "fontSize": "12px"}),
+        ], style={"marginLeft": "14px", "flex": "1"}),
+    ], style={"display": "flex", "alignItems": "flex-start", "marginBottom": "16px"})
+
+    # Form fields — stacked rows with aligned labels
+    form_rows = html.Div([
+        html.Div([
+            html.Span("Name", style={**_label, "width": "70px", "textAlign": "right"}),
+            dcc.Input(id={"type": "det-name", "index": idx}, type="text",
+                      value=det_name,
+                      style={**_inp, "flex": "1", "minWidth": "180px"}),
+        ], style={"display": "flex", "alignItems": "center", "marginBottom": "8px"}),
+        html.Div([
+            html.Span("Category", style={**_label, "width": "70px", "textAlign": "right"}),
+            dcc.Dropdown(id={"type": "det-cat", "index": idx},
+                         options=cat_options, value=det_cat, clearable=False,
+                         style={"width": "180px", "fontSize": "13px",
+                                "backgroundColor": "#0d0d1a", "color": WHITE}),
+        ], style={"display": "flex", "alignItems": "center", "marginBottom": "8px"}),
+        html.Div([
+            html.Span("Qty", style={**_label, "width": "70px", "textAlign": "right"}),
+            dcc.Input(id={"type": "det-qty", "index": idx}, type="number",
+                      min=1, value=det_qty, debounce=False,
+                      style={**_inp, "width": "65px"}),
+        ], style={"display": "flex", "alignItems": "center", "marginBottom": "8px"}),
+        html.Div([
+            html.Span("Location", style={**_label, "width": "70px", "textAlign": "right"}),
+            dcc.Dropdown(id={"type": "loc-dropdown", "index": idx},
+                         options=loc_options, value=det_loc, clearable=False,
+                         style={"width": "180px", "fontSize": "13px",
+                                "backgroundColor": "#0d0d1a", "color": WHITE}),
+        ], style={"display": "flex", "alignItems": "center", "marginBottom": "10px"}),
+        # Split checkbox on its own row
+        dcc.Checklist(
+            id={"type": "loc-split-check", "index": idx},
+            options=[{"label": " Split into multiple items", "value": "split"}],
+            value=["split"] if is_split else [],
+            style={"fontSize": "12px", "color": GRAY, "marginBottom": "12px", "marginLeft": "76px"},
+            labelStyle={"cursor": "pointer"},
+        ),
+    ])
+
+    # Action buttons — Save + Reset only
+    action_row = html.Div([
+        html.Button("Save", id={"type": "det-save-btn", "index": idx},
+                    style={"fontSize": "12px", "padding": "8px 24px", "backgroundColor": TEAL,
+                           "color": WHITE, "border": "none", "borderRadius": "6px",
+                           "cursor": "pointer", "fontWeight": "bold",
+                           "boxShadow": f"0 2px 6px {TEAL}55",
+                           "transition": "all 0.15s ease"}),
+        html.Button("Reset", id={"type": "det-reset-btn", "index": idx},
+                    style={"fontSize": "12px", "padding": "7px 18px", "backgroundColor": "transparent",
+                           "color": GRAY, "border": f"1px solid {DARKGRAY}55", "borderRadius": "6px",
+                           "cursor": "pointer"}),
+        html.Span(id={"type": "det-status", "index": idx}, children="",
+                  style={"fontSize": "12px", "color": GREEN, "fontWeight": "bold", "marginLeft": "8px"}),
+    ], style={"display": "flex", "gap": "12px", "alignItems": "center"})
+
+    # Split container
+    split_container = _build_split_container(idx, existing, det_name, det_cat, det_qty, det_loc, _inp,
+                                               item_name=item_name, orig_total=orig_total)
+
+    # Hidden stores
+    hidden = html.Div([
+        dcc.Store(id={"type": "det-order-num", "index": idx}, data=onum),
+        dcc.Store(id={"type": "det-item-name", "index": idx}, data=item_name),
+        dcc.Store(id={"type": "det-orig-qty", "index": idx}, data=orig_qty),
+        dcc.Store(id={"type": "det-orig-name", "index": idx}, data=item_name),
+        dcc.Store(id={"type": "det-orig-total", "index": idx}, data=orig_total),
+    ])
+
+    _item_shadow = f"0 2px 8px rgba(0,0,0,0.3), -4px 0 12px {GREEN}11" if has_details else "0 2px 8px rgba(0,0,0,0.3)"
+    return html.Details([
+        html.Summary(compact_row, style={
+            "listStyle": "none", "outline": "none", "userSelect": "none",
+            "WebkitAppearance": "none"}),
+        html.Div([orig_label, form_rows, split_container, action_row, hidden],
+                 style={"paddingTop": "12px", "borderTop": f"1px solid {DARKGRAY}22",
+                        "marginTop": "8px"}),
+    ], open=not has_details,
+       className="item-card",
+       style={"padding": "12px 16px", "marginBottom": "8px",
+               "backgroundColor": "#0f1225", "borderRadius": "8px",
+               "borderLeft": f"4px solid {_card_border}",
+               "boxShadow": _item_shadow,
+               "transition": "all 0.15s ease"})
+
+
+def _build_category_manager():
+    """Build the Category Manager — flat table with inline dropdowns for fast categorization."""
+    if len(INV_ITEMS) == 0:
+        return html.P("No inventory items loaded.", style={"color": GRAY, "fontSize": "12px"})
+
+    cat_options = [{"label": c, "value": c} for c in CATEGORY_OPTIONS]
+    loc_options = [{"label": "Tulsa, OK", "value": "Tulsa, OK"},
+                   {"label": "Texas", "value": "Texas"},
+                   {"label": "Other", "value": "Other"}]
+
+    # Build unique item rows from INV_ITEMS, grouped by (order_num, orig_name)
+    seen = set()
+    rows = []
+    items_sorted = INV_ITEMS.sort_values(["category", "name"])
+    for _, r in items_sorted.iterrows():
+        order_num = r.get("order_num", "")
+        orig_name = r.get("_orig_name", r["name"])
+        item_key = f"{order_num}||{orig_name}"
+        if item_key in seen:
+            continue
+        seen.add(item_key)
+
+        cat = r.get("category", "Other")
+        loc = r.get("location", "") or r.get("_override_location", "")
+        display = r.get("name", orig_name)
+        img_url = _IMAGE_URLS.get(display, "") or r.get("image_url", "")
+        is_personal = cat in ("Personal/Gift", "Business Fees")
+        row_opacity = "0.5" if is_personal else "1"
+
+        rows.append(html.Tr([
+            # Thumbnail
+            html.Td(item_thumbnail(img_url, 32),
+                     style={"padding": "6px 6px", "textAlign": "center", "width": "40px"}),
+            # Item name
+            html.Td(html.Span(display[:55], title=display,
+                               style={"color": WHITE, "fontSize": "12px"}),
+                     style={"padding": "6px 8px", "maxWidth": "280px", "overflow": "hidden",
+                            "textOverflow": "ellipsis", "whiteSpace": "nowrap"}),
+            # Qty x Price
+            html.Td(f"{int(r['qty'])} × ${r['price']:,.2f}",
+                     style={"color": GRAY, "fontSize": "11px", "padding": "6px 8px",
+                            "whiteSpace": "nowrap"}),
+            # Total
+            html.Td(f"${r['total']:,.2f}",
+                     style={"color": ORANGE, "fontFamily": "monospace", "fontWeight": "bold",
+                            "fontSize": "12px", "padding": "6px 8px", "textAlign": "right"}),
+            # Category dropdown
+            html.Td(
+                dcc.Dropdown(
+                    id={"type": "catmgr-cat", "index": item_key},
+                    options=cat_options, value=cat, clearable=False,
+                    style={"width": "140px", "fontSize": "11px",
+                           "backgroundColor": "#1a1a2e", "color": WHITE},
+                ),
+                style={"padding": "4px 6px"}),
+            # Location dropdown
+            html.Td(
+                dcc.Dropdown(
+                    id={"type": "catmgr-loc", "index": item_key},
+                    options=loc_options, value=loc if loc in ("Tulsa, OK", "Texas", "Other") else "",
+                    clearable=True, placeholder="—",
+                    style={"width": "120px", "fontSize": "11px",
+                           "backgroundColor": "#1a1a2e", "color": WHITE},
+                ),
+                style={"padding": "4px 6px"}),
+            # Status indicator
+            html.Td("", id={"type": "catmgr-status", "index": item_key},
+                     style={"color": GREEN, "fontSize": "11px", "padding": "6px 4px",
+                            "minWidth": "30px", "textAlign": "center"}),
+        ], style={"borderBottom": "1px solid #ffffff08", "opacity": row_opacity}))
+
+    # Category summary strip
+    cat_counts = INV_ITEMS.groupby("category").agg(
+        items=("name", "count"), cost=("total", "sum")).sort_values("cost", ascending=False)
+    summary_pills = []
+    for cat_name, row in cat_counts.iterrows():
+        pill_color = TEAL if cat_name not in ("Personal/Gift", "Business Fees", "Other") else DARKGRAY
+        summary_pills.append(html.Span(
+            f"{cat_name} ({int(row['items'])}) ${row['cost']:,.0f}",
+            style={"backgroundColor": f"{pill_color}22", "color": pill_color,
+                   "padding": "3px 10px", "borderRadius": "12px", "fontSize": "11px",
+                   "border": f"1px solid {pill_color}44", "whiteSpace": "nowrap"}))
+
+    return html.Div([
+        # Summary pills
+        html.Div(summary_pills, style={"display": "flex", "flexWrap": "wrap", "gap": "6px",
+                                         "marginBottom": "12px"}),
+        # Table
+        html.Div([
+            html.Table([
+                html.Thead(html.Tr([
+                    html.Th("", style={"width": "40px", "padding": "6px"}),
+                    html.Th("Item", style={"textAlign": "left", "padding": "6px 8px", "fontSize": "11px",
+                                            "color": GRAY, "fontWeight": "700"}),
+                    html.Th("Qty", style={"textAlign": "left", "padding": "6px 8px", "fontSize": "11px",
+                                           "color": GRAY, "fontWeight": "700"}),
+                    html.Th("Cost", style={"textAlign": "right", "padding": "6px 8px", "fontSize": "11px",
+                                            "color": GRAY, "fontWeight": "700"}),
+                    html.Th("Category", style={"textAlign": "left", "padding": "6px 8px", "fontSize": "11px",
+                                                "color": GRAY, "fontWeight": "700"}),
+                    html.Th("Location", style={"textAlign": "left", "padding": "6px 8px", "fontSize": "11px",
+                                                "color": GRAY, "fontWeight": "700"}),
+                    html.Th("", style={"width": "30px"}),
+                ], style={"borderBottom": f"2px solid {PURPLE}44"})),
+                html.Tbody(rows),
+            ], style={"width": "100%", "borderCollapse": "collapse", "color": WHITE}),
+        ], style={"maxHeight": "500px", "overflowY": "auto"}),
+    ])
+
+
+def _build_inventory_editor():
+    """Build the Inventory Editor — clean per-item form for naming, categorizing, and locating."""
+    if len(INV_ITEMS) == 0:
+        return html.Div(id="editor-items-container")
+
+    # Sort: recent uploads first, then by date descending
+    _recent = [o for o in INVOICES if o["order_num"] in _RECENT_UPLOADS]
+    _rest = [o for o in INVOICES if o["order_num"] not in _RECENT_UPLOADS]
+    _recent.sort(key=lambda o: o.get("date", ""), reverse=True)
+    _rest.sort(key=lambda o: o.get("date", ""), reverse=True)
+    sorted_orders = _recent + _rest
+    order_cards = []
+    saved_count = 0
+    total_items = 0
+
+    for inv in sorted_orders:
+        onum = inv["order_num"]
+        is_personal = inv["source"] == "Personal Amazon" or ("file" in inv and isinstance(inv.get("file"), str) and "Gigi" in inv.get("file", ""))
+
+        source_label = "Personal Amazon" if is_personal else ("Amazon" if inv["source"] in ("Key Component Mfg",) else inv["source"])
+        ship_addr = inv.get("ship_address", "")
+        orig_location = classify_location(ship_addr)
+
+        item_cards = []
+        _seen_names = {}
+        order_saved = 0
+        order_total_items = 0
+        for item in inv["items"]:
+            item_name = item["name"]
+            if item_name.startswith("Your package was left near the front door or porch."):
+                item_name = item_name.replace("Your package was left near the front door or porch.", "").strip()
+            auto_cat = categorize_item(item_name)
+
+            total_items += 1
+            order_total_items += 1
+            orig_qty = item["qty"]
+            price = item["price"]
+            orig_total = round(price * orig_qty, 2)
+
+            _seen_names[item_name] = _seen_names.get(item_name, 0) + 1
+            if _seen_names[item_name] > 1:
+                idx = f"{onum}__{item_name}__{_seen_names[item_name]}"
+            else:
+                idx = f"{onum}__{item_name}"
+
+            img_url = _IMAGE_URLS.get(item_name, "")
+
+            # Load existing saved details
+            detail_key = (onum, item_name)
+            existing = _ITEM_DETAILS.get(detail_key, [])
+            has_details = bool(existing)
+            if has_details:
+                saved_count += 1
+                order_saved += 1
+
+            # Values for form fields
+            if existing:
+                det0 = existing[0]
+                det_name = det0["display_name"]
+                det_cat = det0["category"]
+                det_qty = sum(d.get("true_qty", 1) for d in existing)
+                det_loc = det0.get("location", "") or orig_location
+            else:
+                det_name = item_name
+                det_cat = auto_cat
+                det_qty = orig_qty
+                det_loc = orig_location
+
+            is_split = len(existing) > 1
+
+            item_cards.append(_build_item_card(
+                idx, item_name, img_url, det_name, det_cat, det_qty, det_loc,
+                has_details, orig_qty, orig_total, is_split, existing, onum))
+
+        if not item_cards:
+            continue
+
+        order_total = sum(it["price"] * it["qty"] for it in inv["items"])
+        _loc_color = TEAL if "Tulsa" in orig_location else (ORANGE if "Texas" in orig_location else GRAY)
+        _prog_color = GREEN if order_saved == order_total_items else ORANGE
+        _order_all_done = order_saved == order_total_items and order_total_items > 0
+        _order_pct = round(order_saved / order_total_items * 100) if order_total_items > 0 else 0
+
+        # Order progress bar (6px, 120px wide, gradient)
+        mini_progress = html.Div([
+            html.Div(style={"width": f"{max(_order_pct, 3)}%", "height": "6px",
+                            "background": f"linear-gradient(90deg, {_prog_color}88, {_prog_color})",
+                            "borderRadius": "3px",
+                            "transition": "width 0.3s ease"}),
+        ], style={"width": "120px", "height": "6px", "backgroundColor": "#0d0d1a",
+                  "borderRadius": "3px", "display": "inline-block", "verticalAlign": "middle",
+                  "marginLeft": "10px", "overflow": "hidden"})
+
+        # ALL DONE pill (larger, with checkmark, pulsing glow)
+        done_pill = html.Span("\u2713 ALL DONE", className="pulse-complete", style={
+            "fontSize": "12px", "fontWeight": "bold", "padding": "4px 14px",
+            "borderRadius": "12px", "backgroundColor": f"{GREEN}22", "color": GREEN,
+            "border": f"1px solid {GREEN}44", "marginLeft": "10px",
+            "letterSpacing": "0.5px",
+            "textShadow": "0 0 8px #2ecc7144"}) if _order_all_done else None
+
+        _is_recent_upload = onum in _RECENT_UPLOADS
+        _new_upload_pill = html.Span(
+            "NEW UPLOAD", className="new-badge",
+            style={"fontSize": "10px", "fontWeight": "bold", "padding": "3px 10px",
+                   "borderRadius": "10px", "backgroundColor": f"{CYAN}22",
+                   "color": CYAN, "border": f"1px solid {CYAN}55",
+                   "marginLeft": "10px", "letterSpacing": "0.5px"}
+        ) if _is_recent_upload else None
+        _header_gradient = f"linear-gradient(180deg, {CYAN}08, transparent)" if not _order_all_done else f"linear-gradient(180deg, {GREEN}08, transparent)"
+        order_card = html.Div([
+            html.Div([
+                html.Div([c for c in [
+                    html.Span(f"ORDER #{onum}", style={"color": CYAN, "fontWeight": "bold", "fontSize": "18px",
+                                                        "letterSpacing": "0.5px"}),
+                    html.Span(orig_location,
+                              style={"fontSize": "11px", "padding": "3px 12px", "borderRadius": "12px",
+                                     "backgroundColor": f"{_loc_color}22", "color": _loc_color,
+                                     "border": f"1px solid {_loc_color}33", "marginLeft": "12px",
+                                     "fontWeight": "bold", "whiteSpace": "nowrap"}),
+                    _new_upload_pill,
+                    done_pill,
+                ] if c is not None], style={"display": "flex", "alignItems": "center", "marginBottom": "6px"}),
+                html.Div([
+                    html.Span(f"{inv['date']}", style={"color": GRAY, "fontSize": "12px"}),
+                    html.Span(" \u00b7 ", style={"color": f"{DARKGRAY}66", "margin": "0 6px"}),
+                    html.Span(f"{source_label}", style={"color": GRAY, "fontSize": "12px"}),
+                    html.Span(" \u00b7 ", style={"color": f"{DARKGRAY}66", "margin": "0 6px"}),
+                    html.Span(f"${order_total:.2f}", style={"color": WHITE, "fontSize": "14px", "fontWeight": "700"}),
+                    html.Span([
+                        html.Span(f"{order_saved}/{order_total_items} saved",
+                                  style={"color": _prog_color, "fontSize": "13px", "fontWeight": "bold"}),
+                        mini_progress,
+                    ], style={"marginLeft": "auto", "display": "flex", "alignItems": "center"}),
+                ], style={"display": "flex", "alignItems": "center"}),
+            ], style={"marginBottom": "12px", "paddingBottom": "12px",
+                      "borderBottom": f"1px solid {CYAN}18",
+                      "background": _header_gradient,
+                      "margin": "-18px -20px 12px -20px", "padding": "18px 20px 12px 20px",
+                      "borderRadius": "10px 10px 0 0"}),
+            html.Div(item_cards),
+        ], className="order-card order-card-saved" if _order_all_done else "order-card",
+           style={"backgroundColor": f"#2ecc7108" if _order_all_done else CARD2,
+                  "padding": "18px 20px", "borderRadius": "10px",
+                  "marginBottom": "14px",
+                  "border": f"1px solid {GREEN}55" if _order_all_done else f"1px solid {CYAN}18",
+                  "boxShadow": ("0 0 16px #2ecc7122, 0 4px 16px rgba(0,0,0,0.3)" if _order_all_done
+                                else "0 2px 12px rgba(0,0,0,0.25)")})
+        order_cards.append(order_card)
+
+    # Progress bar
+    pct = round(saved_count / total_items * 100) if total_items > 0 else 0
+    _bar_color = GREEN if pct > 75 else (ORANGE if pct > 40 else TEAL)
+    progress_bar = html.Div([
+        html.Div([
+            html.Span(f"{saved_count}", style={"color": WHITE, "fontSize": "22px", "fontWeight": "bold"}),
+            html.Span(f" / {total_items} items organized", style={"color": GRAY, "fontSize": "14px",
+                       "marginLeft": "4px"}),
+            html.Span(f"  {pct}%", style={"color": _bar_color, "fontSize": "14px", "fontWeight": "bold",
+                       "marginLeft": "10px"}),
+        ], style={"marginBottom": "8px"}),
+        html.Div([
+            html.Div(
+                f"{pct}%" if pct > 15 else "",
+                style={"width": f"{max(pct, 2)}%", "height": "18px",
+                        "backgroundColor": _bar_color,
+                        "borderRadius": "9px", "transition": "width 0.3s",
+                        "fontSize": "10px", "color": WHITE, "fontWeight": "bold",
+                        "lineHeight": "18px", "textAlign": "center", "overflow": "hidden"}),
+        ], style={"width": "100%", "height": "18px", "backgroundColor": "#0d0d1a",
+                  "borderRadius": "9px", "overflow": "hidden",
+                  "boxShadow": f"inset 0 1px 3px rgba(0,0,0,0.4)"}),
+    ], style={"marginBottom": "18px", "padding": "14px 16px", "backgroundColor": "#0f1225",
+              "borderRadius": "8px", "boxShadow": "0 1px 4px rgba(0,0,0,0.2)"})
+
+    # Filter bar
+    editor_cats = ["All"] + sorted(set(
+        categorize_item(it["name"])
+        for inv in INVOICES if inv["source"] != "Personal Amazon"
+        for it in inv["items"]
+        if categorize_item(it["name"]) not in ("Personal/Gift", "Business Fees")
+    ))
+    filter_bar = html.Div([
+        html.Div([
+            html.Span("\U0001f50d", style={"fontSize": "14px", "marginRight": "6px"}),
+            dcc.Input(id="editor-search", type="text", placeholder="Search items...",
+                      style={"backgroundColor": "#0d0d1a", "color": WHITE,
+                             "border": f"1px solid {DARKGRAY}44", "borderRadius": "6px",
+                             "padding": "8px 14px", "fontSize": "13px", "width": "240px"}),
+        ], style={"display": "flex", "alignItems": "center"}),
+        html.Div(style={"width": "1px", "height": "24px", "backgroundColor": f"{DARKGRAY}33"}),
+        html.Div([
+            html.Span("Category:", style={"color": GRAY, "fontSize": "12px", "marginRight": "6px",
+                                           "fontWeight": "500"}),
+            dcc.Dropdown(id="editor-cat-filter",
+                         options=[{"label": c, "value": c} for c in editor_cats],
+                         value="All", clearable=False,
+                         style={"width": "170px", "fontSize": "13px",
+                                "backgroundColor": "#0d0d1a", "color": WHITE}),
+        ], style={"display": "flex", "alignItems": "center"}),
+        html.Div(style={"width": "1px", "height": "24px", "backgroundColor": f"{DARKGRAY}33"}),
+        html.Div([
+            html.Span("Show:", style={"color": GRAY, "fontSize": "12px", "marginRight": "6px",
+                                       "fontWeight": "500"}),
+            dcc.Dropdown(id="editor-status-filter",
+                         options=[{"label": s, "value": s} for s in ["All", "Saved", "Unsaved"]],
+                         value="All", clearable=False,
+                         style={"width": "130px", "fontSize": "13px",
+                                "backgroundColor": "#0d0d1a", "color": WHITE}),
+        ], style={"display": "flex", "alignItems": "center"}),
+        html.Div(style={"flex": "1"}),
+        html.Button("\u2193 Jump to Next Unsaved", id="editor-jump-unsaved", n_clicks=0,
+                    style={"fontSize": "12px", "padding": "8px 18px",
+                           "background": f"linear-gradient(135deg, {ORANGE}, #e67e22)",
+                           "color": WHITE, "border": "none", "borderRadius": "6px",
+                           "cursor": "pointer", "fontWeight": "bold", "whiteSpace": "nowrap",
+                           "boxShadow": f"0 2px 8px {ORANGE}44"}),
+    ], style={"display": "flex", "alignItems": "center", "flexWrap": "wrap",
+              "gap": "16px", "marginBottom": "16px", "padding": "12px 16px",
+              "backgroundColor": "#0f1225", "borderRadius": "8px",
+              "boxShadow": "0 1px 4px rgba(0,0,0,0.2)"})
+
+    return html.Div([
+        html.Div([
+            html.H4("INVENTORY EDITOR",
+                     style={"color": ORANGE, "margin": "0", "fontSize": "20px", "fontWeight": "700",
+                            "letterSpacing": "1px"}),
+            html.P("Name each item, pick a category, set qty & location, then Save.",
+                   style={"color": GRAY, "fontSize": "13px", "margin": "4px 0 0 0"}),
+        ], style={"marginBottom": "16px"}),
+        progress_bar,
+        filter_bar,
+        html.Div(order_cards, id="editor-items-container",
+                 style={"maxHeight": "800px", "overflowY": "auto", "padding": "4px",
+                        "scrollbarWidth": "thin"}),
+    ], style={"backgroundColor": CARD, "padding": "24px", "borderRadius": "12px",
+              "marginBottom": "18px", "border": f"1px solid {ORANGE}22",
+              "borderTop": f"5px solid {ORANGE}",
+              "boxShadow": "0 4px 20px rgba(0,0,0,0.3)"})
+
+
+def _build_stock_table_html(stock_df, search="", cat_filter="All", status_filter="All", show_with_tax=False, sort_by="Category"):
+    """Build the stock table HTML from a filtered STOCK_SUMMARY DataFrame."""
+    if len(stock_df) == 0:
+        return html.P("No inventory items found.", style={"color": GRAY, "padding": "20px"})
+
+    filtered = stock_df.copy()
+
+    # Apply filters
+    if search:
+        search_l = search.lower()
+        filtered = filtered[filtered["display_name"].str.lower().str.contains(search_l, na=False)]
+    if cat_filter and cat_filter != "All":
+        filtered = filtered[filtered["category"] == cat_filter]
+    if status_filter == "In Stock":
+        filtered = filtered[filtered["in_stock"] > 2]
+    elif status_filter == "Low Stock":
+        filtered = filtered[filtered["in_stock"].between(1, 2)]
+    elif status_filter == "Out of Stock":
+        filtered = filtered[filtered["in_stock"] <= 0]
+
+    if len(filtered) == 0:
+        return html.P("No items match filters.", style={"color": GRAY, "padding": "20px"})
+
+    # Apply sort
+    if sort_by == "Name":
+        filtered = filtered.sort_values("display_name")
+    elif sort_by == "Stock Low\u2192High":
+        filtered = filtered.sort_values("in_stock", ascending=True)
+    elif sort_by == "Stock High\u2192Low":
+        filtered = filtered.sort_values("in_stock", ascending=False)
+    elif sort_by == "Value High\u2192Low":
+        filtered = filtered.sort_values("total_cost", ascending=False)
+    else:
+        filtered = filtered.sort_values(["category", "display_name"])
+
+    # Summary strip
+    total_items = len(filtered)
+    total_units = int(filtered["in_stock"].sum())
+    total_value = filtered["total_cost"].sum()
+    summary_strip = html.Div([
+        html.Span("\u2022 ", style={"color": WHITE, "fontSize": "16px"}),
+        html.Span(f"{total_items} items", style={"color": WHITE, "fontSize": "14px", "fontWeight": "700"}),
+        html.Span(" | ", style={"color": f"{DARKGRAY}66", "margin": "0 10px"}),
+        html.Span("\u2022 ", style={"color": TEAL, "fontSize": "16px"}),
+        html.Span(f"{total_units} total units", style={"color": TEAL, "fontSize": "14px", "fontWeight": "700"}),
+        html.Span(" | ", style={"color": f"{DARKGRAY}66", "margin": "0 10px"}),
+        html.Span("\u2022 ", style={"color": ORANGE, "fontSize": "16px"}),
+        html.Span(f"${total_value:,.2f} value", style={"color": ORANGE, "fontSize": "14px", "fontWeight": "700"}),
+    ], className="summary-strip",
+       style={"padding": "10px 14px", "backgroundColor": "#0d0d1a", "borderRadius": "8px",
+              "marginBottom": "10px"})
+
+    show_cat_headers = sort_by in ("Category", None, "")
+    rows = []
+    current_cat = None
+    for _, r in filtered.iterrows():
+        cat = r["category"]
+        # Category header (only when sorted by category)
+        if show_cat_headers and cat != current_cat:
+            current_cat = cat
+            cat_items = filtered[filtered["category"] == cat]
+            cat_stock = int(cat_items["in_stock"].sum())
+            rows.append(html.Tr([
+                html.Td([
+                    html.Span("\u25cf ", style={"color": CYAN, "fontSize": "10px", "marginRight": "6px"}),
+                    html.Span(f"{cat}"),
+                ], colSpan="5",
+                         style={"color": CYAN, "fontWeight": "bold", "padding": "14px 8px 8px 12px",
+                                "fontSize": "16px", "borderBottom": f"2px solid {CYAN}44",
+                                "borderLeft": f"4px solid {CYAN}", "letterSpacing": "0.5px"}),
+                html.Td(f"{cat_stock} in stock", colSpan="5",
+                         style={"color": GRAY, "padding": "14px 8px 8px 8px", "fontSize": "13px",
+                                "borderBottom": f"2px solid {CYAN}44", "textAlign": "right",
+                                "fontWeight": "600"}),
+            ]))
+
+        stock = int(r["in_stock"])
+        if stock <= 0:
+            stock_color = RED
+            stock_bg = f"{RED}15"
+        elif stock <= 2:
+            stock_color = ORANGE
+            stock_bg = f"{ORANGE}15"
+        else:
+            stock_color = GREEN
+            stock_bg = "transparent"
+
+        img_url = r.get("image_url", "") or _IMAGE_URLS.get(r["display_name"], "")
+
+        _unit = r.get("unit_cost_with_tax", r["unit_cost"]) if show_with_tax else r["unit_cost"]
+        _total = r.get("total_cost_with_tax", r["total_cost"]) if show_with_tax else r["total_cost"]
+
+        _row_idx = len(rows)
+        _stripe_bg = "#ffffff04" if _row_idx % 2 == 0 else "transparent"
+        _row_bg = stock_bg if stock <= 0 else _stripe_bg
+
+        rows.append(html.Tr([
+            html.Td(item_thumbnail(img_url, 40), style={"padding": "8px 6px", "textAlign": "center", "width": "48px"}),
+            html.Td(r["display_name"][:50], title=r["display_name"],
+                     style={"color": WHITE, "padding": "8px 8px", "fontSize": "14px",
+                            "maxWidth": "300px", "overflow": "hidden",
+                            "textOverflow": "ellipsis", "whiteSpace": "nowrap"}),
+            html.Td(str(int(r["total_purchased"])), style={"textAlign": "center", "color": WHITE,
+                                                             "padding": "8px 6px", "fontSize": "13px"}),
+            html.Td(str(int(r["total_used"])), style={"textAlign": "center", "color": GRAY,
+                                                        "padding": "8px 6px", "fontSize": "13px"}),
+            html.Td(html.Div([
+                html.Span(str(stock), style={"color": stock_color, "fontWeight": "bold",
+                                              "fontSize": "16px", "marginRight": "8px"}),
+                _stock_level_bar(stock, int(r["total_purchased"])),
+            ], style={"display": "flex", "alignItems": "center", "justifyContent": "center"}),
+                     style={"textAlign": "center", "padding": "8px 6px",
+                            "backgroundColor": stock_bg, "borderRadius": "4px"}),
+            html.Td(f"${_unit:,.2f}", style={"textAlign": "right", "color": GRAY,
+                                              "padding": "8px 6px", "fontSize": "12px"}),
+            html.Td(f"${_total:,.2f}", style={"textAlign": "right", "color": ORANGE,
+                                               "fontWeight": "bold", "padding": "8px 6px", "fontSize": "13px"}),
+            html.Td(
+                html.Div([
+                    dcc.Input(id={"type": "use-stock-qty", "index": r["display_name"]},
+                              type="number", min=1, value=1,
+                              style={"width": "42px", "fontSize": "13px", "padding": "4px 4px",
+                                     "backgroundColor": "#0d0d1a", "color": WHITE,
+                                     "border": f"1px solid {DARKGRAY}55", "borderRadius": "4px",
+                                     "textAlign": "center"}),
+                    html.Button("Use", id={"type": "use-stock-btn", "index": r["display_name"]},
+                                n_clicks=0,
+                                style={"backgroundColor": f"{RED}22", "color": RED,
+                                       "border": f"1px solid {RED}55",
+                                       "borderRadius": "6px", "padding": "5px 12px", "fontSize": "12px",
+                                       "cursor": "pointer", "fontWeight": "bold",
+                                       "transition": "all 0.15s ease"}),
+                ], style={"display": "flex", "gap": "4px", "alignItems": "center",
+                           "justifyContent": "center"}),
+                style={"padding": "8px 4px", "textAlign": "center"}),
+            html.Td("", id={"type": "use-stock-status", "index": r["display_name"]},
+                     style={"color": GREEN, "fontSize": "11px", "padding": "8px 4px", "minWidth": "40px"}),
+        ], className="stock-row",
+           style={"borderBottom": "1px solid #ffffff08",
+                  "backgroundColor": _row_bg,
+                  "transition": "all 0.15s ease"}))
+
+    _unit_label = "Unit (receipt)" if show_with_tax else "Unit $"
+    _total_label = "Total (receipt)" if show_with_tax else "Total $"
+    return html.Div([
+        summary_strip,
+        html.Table([
+            html.Thead(html.Tr([
+                html.Th("", style={"padding": "8px 6px", "width": "48px"}),
+                html.Th("Item", style={"textAlign": "left", "padding": "8px 8px", "fontSize": "12px",
+                                        "fontWeight": "700", "letterSpacing": "0.5px", "color": GRAY}),
+                html.Th("Bought", style={"textAlign": "center", "padding": "8px 6px", "fontSize": "12px",
+                                          "fontWeight": "700", "color": GRAY}),
+                html.Th("Used", style={"textAlign": "center", "padding": "8px 6px", "fontSize": "12px",
+                                        "fontWeight": "700", "color": GRAY}),
+                html.Th("In Stock", style={"textAlign": "center", "padding": "8px 6px", "minWidth": "120px",
+                                            "fontSize": "12px", "fontWeight": "700", "color": GRAY}),
+                html.Th(_unit_label, style={"textAlign": "right", "padding": "8px 6px", "fontSize": "12px",
+                                             "fontWeight": "700", "color": GRAY}),
+                html.Th(_total_label, style={"textAlign": "right", "padding": "8px 6px", "fontSize": "12px",
+                                              "fontWeight": "700", "color": GRAY}),
+                html.Th("", style={"textAlign": "center", "padding": "8px 4px", "width": "75px"}),
+                html.Th("", style={"width": "40px"}),
+            ], className="stock-table-header",
+               style={"borderBottom": f"2px solid {TEAL}", "backgroundColor": "#ffffff06"})),
+            html.Tbody(rows),
+        ], style={"width": "100%", "borderCollapse": "collapse", "color": WHITE}),
+    ])
+
+
+def _build_usage_log_html():
+    """Build the usage log section content."""
+    if not _USAGE_LOG:
+        return html.P("No usage recorded yet. Use the [-1] buttons above to track consumption.",
+                       style={"color": GRAY, "fontSize": "12px", "padding": "8px"})
+
+    rows = []
+    for u in _USAGE_LOG[:50]:
+        created = u.get("created_at", "")[:16].replace("T", " ") if u.get("created_at") else ""
+        rows.append(html.Tr([
+            html.Td(created, style={"color": GRAY, "padding": "3px 8px", "fontSize": "11px"}),
+            html.Td(u.get("item_name", ""), style={"color": WHITE, "padding": "3px 8px", "fontSize": "12px"}),
+            html.Td(str(u.get("qty", 1)), style={"textAlign": "center", "color": ORANGE,
+                                                    "padding": "3px 6px", "fontSize": "12px"}),
+            html.Td(u.get("note", ""), style={"color": DARKGRAY, "padding": "3px 8px", "fontSize": "11px"}),
+            html.Td(
+                html.Button("Undo", id={"type": "undo-usage-btn", "index": str(u["id"])},
+                            n_clicks=0,
+                            style={"backgroundColor": "transparent", "color": CYAN, "border": f"1px solid {CYAN}44",
+                                   "borderRadius": "4px", "padding": "2px 8px", "fontSize": "10px",
+                                   "cursor": "pointer"}),
+                style={"padding": "3px 4px"}),
+        ], style={"borderBottom": "1px solid #ffffff08"}))
+
+    return html.Div([
+        html.Table([
+            html.Thead(html.Tr([
+                html.Th("Date", style={"textAlign": "left", "padding": "4px 8px"}),
+                html.Th("Item", style={"textAlign": "left", "padding": "4px 8px"}),
+                html.Th("Qty", style={"textAlign": "center", "padding": "4px 6px"}),
+                html.Th("Note", style={"textAlign": "left", "padding": "4px 8px"}),
+                html.Th("", style={"width": "60px"}),
+            ], style={"borderBottom": f"1px solid {CYAN}44"})),
+            html.Tbody(rows),
+        ], style={"width": "100%", "borderCollapse": "collapse", "color": WHITE}),
+    ], id="usage-log-table", style={"maxHeight": "300px", "overflowY": "auto"})
+
+
+def _build_quick_add_form():
+    """Build the Quick-Add form for manual inventory entries."""
+    cat_options = [{"label": c, "value": c} for c in CATEGORY_OPTIONS]
+    loc_options = [{"label": "Tulsa, OK", "value": "Tulsa, OK"},
+                   {"label": "Texas", "value": "Texas"},
+                   {"label": "Other", "value": "Other"}]
+    _inp = {"fontSize": "12px", "backgroundColor": "#1a1a2e", "color": WHITE,
+            "border": f"1px solid {DARKGRAY}", "borderRadius": "4px", "padding": "5px 8px"}
+
+    # Recent quick-adds list
+    qa_rows = []
+    for qa in _QUICK_ADDS[:20]:
+        created = qa.get("created_at", "")[:10] if qa.get("created_at") else ""
+        qa_rows.append(html.Tr([
+            html.Td(created, style={"color": GRAY, "padding": "3px 6px", "fontSize": "11px"}),
+            html.Td(qa.get("item_name", ""), style={"color": WHITE, "padding": "3px 8px", "fontSize": "12px"}),
+            html.Td(qa.get("category", ""), style={"color": TEAL, "padding": "3px 6px", "fontSize": "11px"}),
+            html.Td(str(qa.get("qty", 1)), style={"textAlign": "center", "color": WHITE, "padding": "3px 6px", "fontSize": "11px"}),
+            html.Td(f"${float(qa.get('unit_price', 0)):,.2f}", style={"textAlign": "right", "color": ORANGE, "padding": "3px 6px", "fontSize": "11px"}),
+            html.Td(qa.get("location", ""), style={"color": GRAY, "padding": "3px 6px", "fontSize": "11px"}),
+            html.Td(
+                html.Button("Del", id={"type": "del-qa-btn", "index": str(qa["id"])},
+                            n_clicks=0,
+                            style={"backgroundColor": "transparent", "color": RED, "border": f"1px solid {RED}44",
+                                   "borderRadius": "4px", "padding": "2px 6px", "fontSize": "10px",
+                                   "cursor": "pointer"}),
+                style={"padding": "3px 4px"}),
+        ], style={"borderBottom": "1px solid #ffffff08"}))
+
+    return html.Div([
+        # Form row
+        html.Div([
+            html.Div([
+                html.Span("Name:", style={"color": GRAY, "fontSize": "11px", "marginRight": "4px"}),
+                dcc.Input(id="qa-name", type="text", placeholder="Item name...",
+                          style={**_inp, "width": "180px"}),
+            ], style={"display": "flex", "alignItems": "center", "marginRight": "8px"}),
+            html.Div([
+                html.Span("Category:", style={"color": GRAY, "fontSize": "11px", "marginRight": "4px"}),
+                dcc.Dropdown(id="qa-category", options=cat_options, value="Other", clearable=False,
+                             style={"width": "140px", "fontSize": "12px",
+                                    "backgroundColor": "#1a1a2e", "color": WHITE}),
+            ], style={"display": "flex", "alignItems": "center", "marginRight": "8px"}),
+            html.Div([
+                html.Span("Qty:", style={"color": GRAY, "fontSize": "11px", "marginRight": "4px"}),
+                dcc.Input(id="qa-qty", type="number", min=1, value=1,
+                          style={**_inp, "width": "55px"}),
+            ], style={"display": "flex", "alignItems": "center", "marginRight": "8px"}),
+            html.Div([
+                html.Span("Price:", style={"color": GRAY, "fontSize": "11px", "marginRight": "4px"}),
+                dcc.Input(id="qa-price", type="number", min=0, step=0.01, value=0,
+                          style={**_inp, "width": "70px"}),
+            ], style={"display": "flex", "alignItems": "center", "marginRight": "8px"}),
+            html.Div([
+                html.Span("Location:", style={"color": GRAY, "fontSize": "11px", "marginRight": "4px"}),
+                dcc.Dropdown(id="qa-location", options=loc_options, value="Tulsa, OK", clearable=False,
+                             style={"width": "110px", "fontSize": "12px",
+                                    "backgroundColor": "#1a1a2e", "color": WHITE}),
+            ], style={"display": "flex", "alignItems": "center", "marginRight": "8px"}),
+            html.Button("Add Item", id="qa-add-btn", n_clicks=0,
+                        style={"backgroundColor": GREEN, "color": WHITE, "border": "none",
+                               "borderRadius": "4px", "padding": "6px 16px", "fontSize": "12px",
+                               "cursor": "pointer", "fontWeight": "bold"}),
+            html.Span("", id="qa-status",
+                       style={"color": GREEN, "fontSize": "11px", "marginLeft": "8px"}),
+        ], style={"display": "flex", "alignItems": "center", "flexWrap": "wrap",
+                  "gap": "4px", "marginBottom": "12px"}),
+
+        # Recent quick-adds
+        html.Div([
+            html.Table([
+                html.Thead(html.Tr([
+                    html.Th("Date", style={"textAlign": "left", "padding": "4px 6px"}),
+                    html.Th("Item", style={"textAlign": "left", "padding": "4px 8px"}),
+                    html.Th("Category", style={"textAlign": "left", "padding": "4px 6px"}),
+                    html.Th("Qty", style={"textAlign": "center", "padding": "4px 6px"}),
+                    html.Th("Price", style={"textAlign": "right", "padding": "4px 6px"}),
+                    html.Th("Location", style={"textAlign": "left", "padding": "4px 6px"}),
+                    html.Th("", style={"width": "50px"}),
+                ], style={"borderBottom": f"1px solid {GREEN}44"})),
+                html.Tbody(qa_rows),
+            ], style={"width": "100%", "borderCollapse": "collapse", "color": WHITE}),
+        ], id="qa-list", style={"maxHeight": "200px", "overflowY": "auto"}) if qa_rows else html.Div(id="qa-list"),
+    ])
+
+
+def _build_location_inventory():
+    """Build side-by-side Tulsa / Texas inventory boxes from _UPLOADED_INVENTORY."""
+
+    def _build_box(title, location_key, color):
+        """Build one location box from uploaded items."""
+        # Collect items for this location: {(name, category): qty}
+        items = {}
+        for (loc, name, cat), qty in _UPLOADED_INVENTORY.items():
+            if loc == location_key:
+                items[(name, cat)] = qty
+
+        if not items:
+            return html.Div([
+                html.H4(title, style={"color": color, "margin": "0 0 8px 0", "fontSize": "15px"}),
+                html.P("No items uploaded yet.", style={"color": GRAY, "fontSize": "12px", "fontStyle": "italic"}),
+            ], style={"backgroundColor": CARD, "padding": "16px", "borderRadius": "10px",
+                       "flex": "1", "border": f"1px solid {color}44", "minHeight": "150px"})
+
+        # Group by category
+        by_cat = {}
+        for (name, cat), qty in items.items():
+            by_cat.setdefault(cat, []).append((name, qty))
+
+        sections = []
+        total_qty = 0
+        for cat in sorted(by_cat.keys()):
+            cat_items = by_cat[cat]
+            sections.append(html.Div(cat, style={"color": color, "fontSize": "12px", "fontWeight": "bold",
+                                                  "padding": "6px 0 2px 0", "borderBottom": f"1px solid {color}33"}))
+            for name, qty in sorted(cat_items, key=lambda x: x[0]):
+                total_qty += qty
+                idx_key = f"{location_key}__{name}"
+                thumb_url = _IMAGE_URLS.get(name, "")
+                thumb = html.Img(
+                    src=thumb_url, style={"width": "30px", "height": "30px", "objectFit": "cover",
+                                          "borderRadius": "4px", "marginRight": "6px",
+                                          "backgroundColor": CARD2}
+                ) if thumb_url else html.Div(style={"width": "30px", "height": "30px",
+                                                     "borderRadius": "4px", "marginRight": "6px",
+                                                     "backgroundColor": CARD2, "border": f"1px dashed {GRAY}44"})
+                sections.append(html.Div([
+                    html.Div([
+                        thumb,
+                        html.Span(name, style={"color": WHITE, "fontSize": "12px", "flex": "1"}),
+                        html.Span(f"x{qty}", style={"color": GRAY, "fontSize": "12px", "fontFamily": "monospace",
+                                                      "minWidth": "30px", "textAlign": "right"}),
+                    ], style={"display": "flex", "alignItems": "center", "width": "100%"}),
+                    html.Details([
+                        html.Summary("Set photo", style={"color": CYAN, "fontSize": "10px", "cursor": "pointer",
+                                                          "marginTop": "2px"}),
+                        html.Div([
+                            dcc.Input(id={"type": "loc-img-url", "index": idx_key},
+                                      placeholder="Paste image URL…", type="text",
+                                      style={"flex": "1", "fontSize": "11px", "padding": "3px 6px",
+                                             "backgroundColor": CARD, "color": WHITE, "border": f"1px solid {GRAY}44",
+                                             "borderRadius": "4px"}),
+                            html.Button("Set", id={"type": "loc-img-set", "index": idx_key},
+                                        style={"fontSize": "11px", "padding": "3px 10px", "marginLeft": "4px",
+                                               "backgroundColor": CYAN, "color": WHITE, "border": "none",
+                                               "borderRadius": "4px", "cursor": "pointer"}),
+                            dcc.Store(id={"type": "loc-img-name", "index": idx_key}, data=name),
+                            html.Span(id={"type": "loc-img-status", "index": idx_key},
+                                      style={"color": GREEN, "fontSize": "10px", "marginLeft": "6px"}),
+                        ], style={"display": "flex", "alignItems": "center", "marginTop": "3px"}),
+                    ], style={"paddingLeft": "36px"}),
+                ], style={"padding": "2px 8px"}))
+
+        header = html.Div([
+            html.H4(title, style={"color": color, "margin": "0", "fontSize": "15px", "flex": "1"}),
+            html.Span(f"{total_qty} items", style={"color": GRAY, "fontSize": "12px"}),
+        ], style={"display": "flex", "alignItems": "center", "marginBottom": "8px"})
+
+        return html.Div([header] + sections,
+                        style={"backgroundColor": CARD, "padding": "16px", "borderRadius": "10px",
+                               "flex": "1", "border": f"1px solid {color}44", "minHeight": "150px",
+                               "maxHeight": "500px", "overflowY": "auto"})
+
+    return html.Div([
+        html.Div([
+            html.H4("INVENTORY BY LOCATION", style={"color": CYAN, "margin": "0", "fontSize": "15px", "flex": "1"}),
+            html.Button("Refresh", id="loc-inv-refresh-btn",
+                        style={"fontSize": "12px", "padding": "4px 16px", "backgroundColor": CYAN,
+                               "color": WHITE, "border": "none", "borderRadius": "4px",
+                               "cursor": "pointer", "fontWeight": "bold"}),
+        ], style={"display": "flex", "alignItems": "center", "marginBottom": "6px"}),
+        html.P("Click Upload on items above, then Refresh to see them here. Same-name items combine quantities.",
+               style={"color": GRAY, "margin": "0 0 10px 0", "fontSize": "12px"}),
+        html.Div([
+            _build_box("TJ (Tulsa, OK)", "Tulsa", TEAL),
+            _build_box("BRADEN (Texas)", "Texas", ORANGE),
+        ], style={"display": "flex", "gap": "12px"}),
+    ], style={"backgroundColor": CARD2, "padding": "16px", "borderRadius": "10px",
+              "marginBottom": "14px", "border": f"1px solid {CYAN}33"})
+
+
+def _build_inventory_health_panel():
+    """Build 4 health-gauge cards: organized, photos, locations, balance check."""
+    # 1. Items organized (same logic as editor's saved_count)
+    total_items = 0
+    saved_count = 0
+    for inv in INVOICES:
+        is_personal = inv["source"] == "Personal Amazon" or (
+            "file" in inv and isinstance(inv.get("file"), str) and "Gigi" in inv.get("file", ""))
+        if is_personal:
+            continue
+        for item in inv["items"]:
+            total_items += 1
+            detail_key = (inv["order_num"], item["name"])
+            if _ITEM_DETAILS.get(detail_key):
+                saved_count += 1
+
+    # 2. Items with photos — unique biz item names that have an image
+    biz_item_names = set()
+    for inv in INVOICES:
+        is_personal = inv["source"] == "Personal Amazon" or (
+            "file" in inv and isinstance(inv.get("file"), str) and "Gigi" in inv.get("file", ""))
+        if is_personal:
+            continue
+        for item in inv["items"]:
+            biz_item_names.add(item["name"])
+    items_with_photos = sum(1 for n in biz_item_names if _IMAGE_URLS.get(n))
+    total_unique = len(biz_item_names) or 1
+
+    # 3. Items at locations
+    items_at_locations = len(_UPLOADED_INVENTORY)
+
+    # 4. Balance check: receipt totals vs item totals
+    item_total = INV_ITEMS["total"].sum() if len(INV_ITEMS) > 0 else 0
+    balance_diff = abs(total_inv_subtotal - item_total)
+    # Tolerance: $10 or 0.5% of total, whichever is larger (rounding across 100+ items)
+    balance_tolerance = max(10.0, total_inv_subtotal * 0.005) if total_inv_subtotal else 10.0
+    balance_ok = balance_diff < balance_tolerance
+
+    def _gauge(title, numerator, denominator, subtitle, action_text=""):
+        pct = round(numerator / denominator * 100) if denominator > 0 else 0
+        color = GREEN if pct >= 75 else (ORANGE if pct >= 40 else RED)
+        is_complete = (pct >= 100)
+        status_text = html.Div("\u2713 COMPLETE!", style={
+            "color": GREEN, "fontSize": "14px", "fontWeight": "bold",
+            "marginTop": "6px", "letterSpacing": "0.5px",
+            "textShadow": "0 0 10px #2ecc7144"
+        }) if is_complete else (html.Div(action_text, style={
+            "color": f"{color}cc", "fontSize": "12px", "marginTop": "6px",
+            "fontStyle": "italic", "fontWeight": "500"
+        }) if action_text else None)
+        # Percentage badge
+        pct_badge = html.Span(f"{pct}%", style={
+            "display": "inline-flex", "alignItems": "center", "justifyContent": "center",
+            "width": "42px", "height": "42px", "borderRadius": "50%",
+            "backgroundColor": f"{color}18", "color": color, "fontSize": "13px",
+            "fontWeight": "bold", "border": f"2px solid {color}44",
+            "marginLeft": "8px", "flexShrink": "0"})
+        children = [
+            html.Div(title, style={"color": GRAY, "fontSize": "11px", "fontWeight": "600",
+                                   "letterSpacing": "0.5px", "marginBottom": "8px",
+                                   "textTransform": "uppercase"}),
+            html.Div([
+                html.Span(f"{numerator}/{denominator}", style={"color": WHITE, "fontSize": "28px",
+                                                                "fontWeight": "bold", "fontFamily": "monospace"}),
+                pct_badge,
+            ], style={"display": "flex", "alignItems": "center", "justifyContent": "center"}),
+            html.Div([
+                html.Div(style={"width": f"{max(pct, 2)}%", "height": "14px",
+                                "background": f"linear-gradient(90deg, {color}88, {color})",
+                                "borderRadius": "7px",
+                                "transition": "width 0.4s ease"}),
+            ], style={"width": "100%", "height": "14px", "backgroundColor": "#0d0d1a",
+                       "borderRadius": "7px", "margin": "10px 0 8px 0",
+                       "overflow": "hidden"}),
+            html.Div(subtitle, style={"color": DARKGRAY, "fontSize": "11px"}),
+        ]
+        if status_text is not None:
+            children.append(status_text)
+        _extra_class = "gauge-card pulse-complete" if is_complete else "gauge-card"
+        return html.Div(children,
+                         className=_extra_class,
+                         style={"backgroundColor": CARD2, "padding": "16px 18px", "borderRadius": "10px",
+                                "flex": "1", "textAlign": "center", "border": f"1px solid {color}33",
+                                "minWidth": "150px", "minHeight": "160px",
+                                "boxShadow": "0 4px 12px rgba(0,0,0,0.25)"}), pct
+
+    balance_color = GREEN if balance_ok else RED
+    balance_label = "\u2713 BALANCED" if balance_ok else "\u2717 MISMATCH"
+    _bal_class = "gauge-card pulse-complete" if balance_ok else "gauge-card"
+    balance_card = html.Div([
+        html.Div("BALANCE CHECK", style={"color": GRAY, "fontSize": "11px", "fontWeight": "600",
+                                          "letterSpacing": "0.5px", "marginBottom": "8px",
+                                          "textTransform": "uppercase"}),
+        html.Div(balance_label,
+                 style={"color": balance_color, "fontSize": "20px", "fontWeight": "bold",
+                        "textShadow": f"0 0 10px {balance_color}33"}),
+        html.Div(f"${balance_diff:,.2f} diff",
+                 style={"color": balance_color if not balance_ok else DARKGRAY,
+                        "fontSize": "14px", "fontWeight": "600", "margin": "6px 0"}),
+        html.Div([
+            html.Div(style={"width": "100%", "height": "14px",
+                            "background": f"linear-gradient(90deg, {balance_color}88, {balance_color})",
+                            "borderRadius": "7px"}),
+        ], style={"width": "100%", "height": "14px", "backgroundColor": "#0d0d1a",
+                   "borderRadius": "7px", "margin": "4px 0 8px 0", "overflow": "hidden"}),
+        html.Div(f"Orders ${total_inv_subtotal:,.2f} vs Items ${item_total:,.2f}",
+                 style={"color": DARKGRAY, "fontSize": "11px"}),
+    ], className=_bal_class,
+       style={"backgroundColor": CARD2, "padding": "16px 18px", "borderRadius": "10px",
+              "flex": "1", "textAlign": "center", "border": f"1px solid {balance_color}33",
+              "minWidth": "150px", "minHeight": "160px",
+              "boxShadow": "0 4px 12px rgba(0,0,0,0.25)"})
+
+    unnamed_count = total_items - saved_count
+    no_photo_count = total_unique - items_with_photos
+    gauge1, pct1 = _gauge("ITEMS ORGANIZED", saved_count, total_items, "named & categorized",
+                           f"Open Editor to name {unnamed_count} items" if unnamed_count > 0 else "")
+    gauge2, pct2 = _gauge("ITEMS WITH PHOTOS", items_with_photos, total_unique, "have images set",
+                           f"Set photos for {no_photo_count} items" if no_photo_count > 0 else "")
+    gauge3, pct3 = _gauge("ITEMS AT LOCATIONS", items_at_locations, total_items, "uploaded to locations",
+                           f"Upload {total_items - items_at_locations} items to locations" if items_at_locations < total_items else "")
+
+    # Overall inventory health bar (weighted average)
+    overall_pct = round((pct1 * 0.5 + pct2 * 0.25 + pct3 * 0.25)) if total_items > 0 else 0
+    overall_color = GREEN if overall_pct >= 75 else (ORANGE if overall_pct >= 40 else RED)
+    overall_bar = html.Div([
+        html.Div([
+            html.Span("INVENTORY HEALTH", style={"color": GRAY, "fontSize": "12px", "fontWeight": "700",
+                                                   "letterSpacing": "1.5px"}),
+            html.Span(f"{overall_pct}%", style={"color": overall_color, "fontSize": "16px", "fontWeight": "bold",
+                                                  "marginLeft": "auto",
+                                                  "textShadow": f"0 0 10px {overall_color}44"}),
+        ], style={"display": "flex", "alignItems": "center", "marginBottom": "8px"}),
+        html.Div([
+            html.Div(
+                f"{overall_pct}%" if overall_pct > 30 else "",
+                style={"width": f"{max(overall_pct, 2)}%", "height": "12px",
+                        "background": f"linear-gradient(90deg, {overall_color}88, {overall_color})",
+                        "borderRadius": "6px",
+                        "transition": "width 0.4s ease",
+                        "fontSize": "9px", "color": WHITE, "fontWeight": "bold",
+                        "lineHeight": "12px", "textAlign": "center"}),
+        ], style={"width": "100%", "height": "12px", "backgroundColor": "#0d0d1a",
+                   "borderRadius": "6px", "overflow": "hidden"}),
+    ], style={"padding": "12px 16px", "backgroundColor": CARD2, "borderRadius": "10px",
+              "marginBottom": "10px", "border": f"1px solid {overall_color}33",
+              "boxShadow": "0 2px 10px rgba(0,0,0,0.2)"})
+
+    return html.Div([
+        overall_bar,
+        html.Div([gauge1, gauge2, gauge3, balance_card],
+                 style={"display": "flex", "gap": "10px", "flexWrap": "wrap"}),
+    ], style={"marginBottom": "18px"})
+
+
+def _build_warehouse_card(title, location_key, color, spend, orders, subtotal, tax, pct_of_total):
+    """Build a single warehouse card with spend + category breakdown + items."""
+    # Collect items for this location
+    loc_items = {}
+    for (loc, name, cat), qty in _UPLOADED_INVENTORY.items():
+        if loc == location_key:
+            loc_items.setdefault(cat, []).append((name, qty))
+    total_items = sum(sum(q for _, q in items) for items in loc_items.values())
+
+    # Category breakdown dots
+    cat_dots = []
+    cat_colors = {"Filament": TEAL, "Lighting": ORANGE, "Crafts": PINK, "Packaging": BLUE,
+                  "Hardware": GRAY, "Tools": CYAN, "Printer Parts": PURPLE, "Jewelry": "#f1c40f",
+                  "Other": DARKGRAY}
+    for cat in sorted(loc_items.keys()):
+        cat_count = sum(q for _, q in loc_items[cat])
+        c = cat_colors.get(cat, GRAY)
+        cat_dots.append(html.Div([
+            html.Div(style={"width": "12px", "height": "12px", "borderRadius": "50%",
+                            "backgroundColor": c, "flexShrink": "0",
+                            "boxShadow": f"0 0 6px {c}44"}),
+            html.Span(f"{cat}", style={"color": WHITE, "fontSize": "12px", "marginLeft": "8px",
+                                        "fontWeight": "500"}),
+            html.Span(f"{cat_count}", style={"color": WHITE, "fontSize": "11px", "marginLeft": "auto",
+                                              "fontFamily": "monospace", "fontWeight": "bold",
+                                              "backgroundColor": f"{c}22", "padding": "1px 8px",
+                                              "borderRadius": "8px", "border": f"1px solid {c}33"}),
+        ], style={"display": "flex", "alignItems": "center", "padding": "3px 0"}))
+
+    # Item list (compact)
+    item_rows = []
+    for cat in sorted(loc_items.keys()):
+        for name, qty in sorted(loc_items[cat], key=lambda x: x[0]):
+            thumb_url = _IMAGE_URLS.get(name, "")
+            item_rows.append(html.Div([
+                item_thumbnail(thumb_url, 36) if thumb_url else html.Div(style={
+                    "width": "36px", "height": "36px", "borderRadius": "6px",
+                    "backgroundColor": f"{CARD2}", "border": f"1px dashed {GRAY}33",
+                    "flexShrink": "0"}),
+                html.Span(name[:40], title=name, style={"color": WHITE, "fontSize": "12px",
+                          "marginLeft": "10px", "flex": "1", "overflow": "hidden",
+                          "textOverflow": "ellipsis", "whiteSpace": "nowrap"}),
+                html.Span(f"x{qty}", style={"color": GRAY, "fontSize": "12px",
+                          "fontFamily": "monospace", "marginLeft": "8px", "fontWeight": "600"}),
+            ], style={"display": "flex", "alignItems": "center", "padding": "4px 0",
+                      "borderBottom": "1px solid #ffffff06",
+                      "transition": "background-color 0.15s ease"}))
+
+    _pct_pill = html.Span(f"{pct_of_total:.1f}%", style={
+        "fontSize": "12px", "fontWeight": "bold", "padding": "3px 12px",
+        "borderRadius": "10px", "backgroundColor": f"{color}18", "color": color,
+        "border": f"1px solid {color}33"})
+    return html.Div([
+        # 5px colored top border accent with gradient
+        html.Div(style={"height": "5px",
+                         "background": f"linear-gradient(90deg, {color}, {color}66)",
+                         "borderRadius": "10px 10px 0 0",
+                         "margin": "-16px -16px 14px -16px"}),
+        # Header
+        html.Div([
+            html.Div([
+                html.Span(title, style={"color": color, "fontSize": "17px", "fontWeight": "bold"}),
+            ]),
+            html.Div(f"${spend:,.2f}", style={"color": WHITE, "fontSize": "30px",
+                                                "fontWeight": "bold", "fontFamily": "monospace",
+                                                "margin": "6px 0",
+                                                "textShadow": f"0 0 15px {color}22"}),
+            html.Div([
+                html.Span(f"{orders} orders", style={"color": GRAY, "fontSize": "12px"}),
+                html.Span(" \u00b7 ", style={"color": f"{DARKGRAY}66", "margin": "0 6px"}),
+                html.Span(f"{total_items} items", style={"color": GRAY, "fontSize": "12px"}),
+                html.Span(" \u00b7 ", style={"color": f"{DARKGRAY}66", "margin": "0 6px"}),
+                _pct_pill,
+            ], style={"display": "flex", "alignItems": "center"}),
+        ], style={"marginBottom": "14px", "paddingBottom": "12px",
+                  "borderBottom": f"1px solid {color}22"}),
+        # Category breakdown
+        html.Div(cat_dots, style={"marginBottom": "12px"}) if cat_dots else None,
+        # Items (scrollable)
+        (html.Div(item_rows, style={"maxHeight": "250px", "overflowY": "auto"}) if item_rows
+         else html.P("No items uploaded yet.", style={"color": GRAY, "fontSize": "12px", "fontStyle": "italic"})),
+    ], className="warehouse-card",
+       style={"backgroundColor": CARD, "padding": "16px", "borderRadius": "10px",
+              "flex": "1", "border": f"1px solid {color}33", "minHeight": "200px",
+              "boxShadow": "0 4px 16px rgba(0,0,0,0.3)"})
+
+
+def _build_enhanced_location_section():
+    """Build the WHO HAS WHAT section: warehouse cards with spend + items merged."""
+    tulsa_pct = (tulsa_spend / true_inventory_cost * 100) if true_inventory_cost else 0
+    texas_pct = (texas_spend / true_inventory_cost * 100) if true_inventory_cost else 0
+
+    return html.Div([
+        html.Div([
+            html.H3("WAREHOUSES", style={"color": CYAN, "margin": "0", "fontSize": "18px",
+                                          "fontWeight": "700", "letterSpacing": "1px"}),
+            html.Button("Refresh", id="loc-inv-refresh-btn",
+                        style={"fontSize": "11px", "padding": "5px 14px", "backgroundColor": f"{CYAN}22",
+                               "color": CYAN, "border": f"1px solid {CYAN}44", "borderRadius": "6px",
+                               "cursor": "pointer", "fontWeight": "bold", "marginLeft": "auto"}),
+        ], style={"display": "flex", "alignItems": "center", "marginBottom": "12px"}),
+        html.Div([
+            _build_warehouse_card("TJ (Tulsa, OK)", "Tulsa", TEAL,
+                                   tulsa_spend, tulsa_orders, tulsa_subtotal, tulsa_tax, tulsa_pct),
+            _build_warehouse_card("BRADEN (Texas)", "Texas", ORANGE,
+                                   texas_spend, texas_orders, texas_subtotal, texas_tax, texas_pct),
+        ], id="location-inventory-display",
+           style={"display": "flex", "gap": "12px"}),
+    ], style={"backgroundColor": CARD2, "padding": "22px", "borderRadius": "12px",
+              "marginBottom": "18px", "border": f"1px solid {CYAN}33",
+              "borderTop": f"5px solid {CYAN}",
+              "boxShadow": "0 4px 20px rgba(0,0,0,0.3)"})
+
+
+def _build_inv_kpi_row():
+    """Build premium KPI pill strip from current STOCK_SUMMARY."""
+    k = _compute_stock_kpis()
+    biz_count = len(BIZ_INV_DF)
+    cogs_pct = f"{true_inventory_cost / gross_sales * 100:.1f}%" if gross_sales else "N/A"
+    cogs_label = "healthy" if gross_sales and (true_inventory_cost / gross_sales * 100) < 25 else "moderate"
+    return html.Div([
+        _build_kpi_pill("#", "IN STOCK", str(k["in_stock"]), GREEN,
+                        f"{k['unique']} unique"),
+        _build_kpi_pill("$", "VALUE", f"${k['value']:,.2f}", TEAL,
+                        "total spend"),
+        _build_kpi_pill("!", "LOW STOCK", str(k["low"]), ORANGE,
+                        "need reorder"),
+        _build_kpi_pill("\u2716", "OUT OF STOCK", str(k["oos"]), RED,
+                        "empty"),
+        _build_kpi_pill("%", "SUPPLY COSTS", cogs_pct, PURPLE,
+                        cogs_label),
+        _build_kpi_pill("=", "ORDERS", str(biz_count), BLUE,
+                        f"T:{tulsa_orders}/TX:{texas_orders}"),
+    ], style={"display": "flex", "gap": "10px", "marginBottom": "18px", "flexWrap": "wrap"})
+
+
+def _build_receipt_upload_section():
+    """Build the receipt upload zone + item-by-item onboarding wizard."""
+    _label = {"color": GRAY, "fontSize": "12px", "marginRight": "6px",
+              "whiteSpace": "nowrap", "fontWeight": "500"}
+    _inp = {"fontSize": "13px", "backgroundColor": "#0d0d1a", "color": WHITE,
+            "border": f"1px solid {DARKGRAY}55", "borderRadius": "6px", "padding": "7px 12px"}
+    cat_options = [{"label": c, "value": c} for c in CATEGORY_OPTIONS]
+    loc_options = [{"label": "Tulsa, OK", "value": "Tulsa, OK"},
+                   {"label": "Texas", "value": "Texas"},
+                   {"label": "Other", "value": "Other"}]
+
+    return html.Div([
+        html.H4("UPLOAD NEW RECEIPT", style={
+            "color": PURPLE, "margin": "0 0 10px 0", "fontSize": "15px"}),
+
+        # Upload zone
+        dcc.Upload(
+            id="receipt-upload",
+            children=html.Div([
+                html.Span("Drop PDF here or ", style={"color": GRAY, "fontSize": "13px"}),
+                html.A("browse files", style={
+                    "color": CYAN, "textDecoration": "underline",
+                    "cursor": "pointer", "fontSize": "13px"}),
+            ], style={"textAlign": "center", "padding": "16px"}),
+            accept=".pdf",
+            style={
+                "borderWidth": "2px", "borderStyle": "dashed",
+                "borderColor": f"{PURPLE}55", "borderRadius": "8px",
+                "backgroundColor": f"{PURPLE}08", "cursor": "pointer",
+                "marginBottom": "10px", "transition": "all 0.15s ease",
+            },
+        ),
+
+        # Upload status message
+        html.Div(id="receipt-upload-status", style={"marginBottom": "8px"}),
+
+        # Wizard state store
+        dcc.Store(id="receipt-wizard-state", data=None),
+
+        # Wizard panel (hidden until a PDF is uploaded)
+        html.Div([
+            # Header: order info + item counter
+            html.Div(id="receipt-wizard-header", style={"marginBottom": "10px"}),
+
+            # Original item info (name, qty, price, seller, ship_to)
+            html.Div(id="receipt-wizard-orig", style={
+                "backgroundColor": "#0f0f1a", "padding": "10px 14px",
+                "borderRadius": "6px", "marginBottom": "12px",
+                "borderLeft": f"3px solid {CYAN}",
+            }),
+
+            # Form fields row
+            html.Div([
+                html.Div([
+                    html.Span("Display Name:", style=_label),
+                    dcc.Input(id="wizard-name", type="text", value="",
+                              style={**_inp, "flex": "1", "minWidth": "200px"}),
+                ], style={"display": "flex", "alignItems": "center", "flex": "2"}),
+                html.Div([
+                    html.Span("Category:", style=_label),
+                    dcc.Dropdown(id="wizard-cat", options=cat_options, value="Other",
+                                 clearable=False,
+                                 style={"width": "150px", "fontSize": "13px",
+                                        "backgroundColor": "#0d0d1a", "color": WHITE}),
+                ], style={"display": "flex", "alignItems": "center"}),
+                html.Div([
+                    html.Span("Qty:", style=_label),
+                    dcc.Input(id="wizard-qty", type="number", min=1, value=1,
+                              style={**_inp, "width": "65px"}),
+                ], style={"display": "flex", "alignItems": "center"}),
+                html.Div([
+                    html.Span("Location:", style=_label),
+                    dcc.Dropdown(id="wizard-loc", options=loc_options, value="Tulsa, OK",
+                                 clearable=False,
+                                 style={"width": "140px", "fontSize": "13px",
+                                        "backgroundColor": "#0d0d1a", "color": WHITE}),
+                ], style={"display": "flex", "alignItems": "center"}),
+            ], id="wizard-form-row",
+               style={"display": "flex", "alignItems": "center", "flexWrap": "wrap",
+                       "gap": "12px", "marginBottom": "12px"}),
+
+            # Navigation buttons
+            html.Div([
+                html.Button("\u2190 Back", id="wizard-back-btn", n_clicks=0,
+                            disabled=True,
+                            style={"fontSize": "12px", "padding": "8px 16px",
+                                   "backgroundColor": "transparent", "color": DARKGRAY,
+                                   "border": f"1px solid {DARKGRAY}44", "borderRadius": "6px",
+                                   "cursor": "pointer"}),
+                html.Button("Skip", id="wizard-skip-btn", n_clicks=0,
+                            style={"fontSize": "12px", "padding": "8px 20px",
+                                   "backgroundColor": "transparent", "color": GRAY,
+                                   "border": f"1px solid {DARKGRAY}55", "borderRadius": "6px",
+                                   "cursor": "pointer"}),
+                html.Button("Save & Next \u2192", id="wizard-save-btn", n_clicks=0,
+                            style={"fontSize": "12px", "padding": "8px 24px",
+                                   "backgroundColor": TEAL, "color": WHITE,
+                                   "border": "none", "borderRadius": "6px",
+                                   "cursor": "pointer", "fontWeight": "bold",
+                                   "boxShadow": f"0 2px 6px {TEAL}55"}),
+            ], id="wizard-nav-btns",
+               style={"display": "flex", "gap": "10px", "alignItems": "center",
+                       "marginBottom": "10px"}),
+
+            # Done button (hidden until wizard finishes all items)
+            html.Button("Done — Refresh Inventory", id="wizard-done-btn", n_clicks=0,
+                        style={"display": "none", "fontSize": "12px", "padding": "8px 24px",
+                               "backgroundColor": GREEN, "color": WHITE,
+                               "border": "none", "borderRadius": "6px",
+                               "cursor": "pointer", "fontWeight": "bold",
+                               "marginBottom": "10px"}),
+
+            # Progress dots
+            html.Div(id="receipt-wizard-progress",
+                     style={"textAlign": "center"}),
+
+        ], id="receipt-wizard-panel", style={"display": "none"}),
+
+    ], style={"backgroundColor": CARD, "padding": "16px", "borderRadius": "10px",
+              "marginBottom": "14px", "border": f"1px solid {PURPLE}33",
+              "borderLeft": f"4px solid {PURPLE}"})
 
 
 def build_tab4_inventory():
-    """Tab 4 - Inventory / COGS: Business inventory only (personal items under Owner Draws)"""
+    """Tab 4 - Inventory: Business inventory only (personal items under Owner Draws)"""
     biz_order_count = len(BIZ_INV_DF)
-    personal_order_count = len(INV_DF[INV_DF["source"] == "Personal Amazon"])
 
     # Build order table rows — EXCLUDE personal orders
     order_table_rows = []
     for _, r in INV_DF.iterrows():
         is_personal = r["source"] == "Personal Amazon" or (isinstance(r["file"], str) and "Gigi" in r["file"])
         if is_personal:
-            continue  # Personal items shown under Owner Draws in Financials tab
-        row_color = WHITE
-        # Show store name
+            continue
         src = r["source"]
-        if src in ("Key Component Mfg",):
-            store_label = "Amazon"
-        else:
-            store_label = src  # Hobby Lobby, Home Depot, etc.
+        store_label = "Amazon" if src in ("Key Component Mfg",) else src
         ship_addr = r.get("ship_address", "")
-        # Shorten address for display
         short_addr = ship_addr.split(",")[1].strip() + ", " + ship_addr.split(",")[2].strip().split(" ")[0] if ship_addr.count(",") >= 2 else ship_addr
         order_table_rows.append(
             html.Tr([
                 html.Td(r["date"], style={"color": GRAY, "padding": "4px 8px", "fontSize": "12px"}),
-                html.Td(r["order_num"], style={"color": row_color, "padding": "4px 8px", "fontSize": "12px"}),
+                html.Td(r["order_num"], style={"color": WHITE, "padding": "4px 8px", "fontSize": "12px"}),
                 html.Td(store_label, style={"color": TEAL, "padding": "4px 8px", "fontSize": "12px"}),
                 html.Td(short_addr, style={"color": CYAN, "padding": "4px 8px", "fontSize": "12px"}),
                 html.Td(str(r["item_count"]), style={"textAlign": "center", "color": WHITE,
@@ -3095,34 +5895,36 @@ def build_tab4_inventory():
     item_table_rows = []
     items_sorted = INV_ITEMS.sort_values("total", ascending=False)
     for _, r in items_sorted.iterrows():
-        is_personal_item = r.get("category", "") == "Personal/Gift"
-        is_biz_fee = r.get("category", "") == "Business Fees"
-        if is_personal_item or is_biz_fee:
-            continue  # Personal items → Owner Draws in Financials, Biz fees → Expenses
+        if r.get("category", "") in ("Personal/Gift", "Business Fees"):
+            continue
         item_src = r.get("source", "")
-        if item_src in ("Key Component Mfg",):
-            store_name = "Amazon"
-        else:
-            store_name = item_src
+        store_name = "Amazon" if item_src in ("Key Component Mfg",) else item_src
         ship_loc = r.get("ship_to", "")
         if ship_loc.count(",") >= 2:
             parts = ship_loc.split(",")
             short_ship = parts[1].strip() + ", " + parts[2].strip().split(" ")[0]
         else:
             short_ship = ship_loc
-        type_badge = html.Span("INVENTORY", style={
-            "backgroundColor": "#00e67622", "color": GREEN, "padding": "2px 8px",
-            "borderRadius": "10px", "fontSize": "10px", "fontWeight": "600",
-            "letterSpacing": "0.5px"})
-        row_bg = "transparent"
-        name_color = WHITE
+        _img_url = _IMAGE_URLS.get(r["name"], "") or r.get("image_url", "")
+        _item_orig = r.get("_orig_name", r["name"])
+        _item_renamed = _item_orig != r["name"]
+        _item_name_parts = [html.Span(r["name"], style={"color": WHITE})]
+        if _item_renamed:
+            _item_name_parts.append(html.Br())
+            _item_name_parts.append(html.Span(
+                _item_orig[:55], title=_item_orig,
+                style={"color": DARKGRAY, "fontSize": "9px", "fontStyle": "italic"}))
         item_table_rows.append(
             html.Tr([
-                html.Td(type_badge, style={"padding": "4px 8px", "textAlign": "center"}),
-                html.Td(r["name"][:70], style={"color": name_color,
-                                                 "padding": "4px 8px", "fontSize": "11px",
-                                                 "maxWidth": "350px", "overflow": "hidden",
-                                                 "textOverflow": "ellipsis", "whiteSpace": "nowrap"}),
+                html.Td(item_thumbnail(_img_url, 32), style={"padding": "4px 6px", "textAlign": "center", "width": "40px"}),
+                html.Td(html.Span("INVENTORY", style={
+                    "backgroundColor": "#00e67622", "color": GREEN, "padding": "2px 8px",
+                    "borderRadius": "10px", "fontSize": "10px", "fontWeight": "600",
+                    "letterSpacing": "0.5px"}), style={"padding": "4px 8px", "textAlign": "center"}),
+                html.Td(_item_name_parts, title=f"{r['name']}\nFrom: {_item_orig}" if _item_renamed else r["name"],
+                         style={"padding": "4px 8px", "fontSize": "11px",
+                                "maxWidth": "350px", "overflow": "hidden",
+                                "textOverflow": "ellipsis"}),
                 html.Td(r.get("category", "Other"), style={"color": TEAL, "padding": "4px 8px", "fontSize": "11px"}),
                 html.Td(store_name, style={"color": CYAN, "padding": "4px 8px", "fontSize": "11px"}),
                 html.Td(short_ship[:30], style={"color": GRAY, "padding": "4px 8px", "fontSize": "11px"}),
@@ -3134,224 +5936,543 @@ def build_tab4_inventory():
                                                         "fontWeight": "bold", "padding": "4px 8px",
                                                         "fontSize": "11px"}),
                 html.Td(r["date"], style={"color": GRAY, "padding": "4px 8px", "fontSize": "11px"}),
-            ], style={"borderBottom": "1px solid #ffffff10",
-                       "backgroundColor": row_bg})
+            ], style={"borderBottom": "1px solid #ffffff10"})
         )
 
+    # Get categories for filter dropdown
+    _stock_cats = ["All"] + sorted(STOCK_SUMMARY["category"].unique().tolist()) if len(STOCK_SUMMARY) > 0 else ["All"]
+
+    _sort_options = [
+        {"label": "Category", "value": "Category"},
+        {"label": "Name", "value": "Name"},
+        {"label": "Stock Low\u2192High", "value": "Stock Low\u2192High"},
+        {"label": "Stock High\u2192Low", "value": "Stock High\u2192Low"},
+        {"label": "Value High\u2192Low", "value": "Value High\u2192Low"},
+    ]
+
     return html.Div([
-        html.H3("INVENTORY (Cost of Goods)", style={"color": CYAN, "margin": "0 0 4px 0"}),
-        html.P(["Business inventory only -- supplies purchased for resale. ",
-               "Parsed from ", html.Span(f"{inv_order_count} invoice PDFs", style={"color": GREEN, "fontWeight": "bold"}),
-               ". Personal/gift items are under Owner Draws in the Financials tab.",
-               ],
-               style={"color": GRAY, "margin": "0 0 14px 0", "fontSize": "13px"}),
 
-        # KPI Row
+        # ══════════════════════════════════════════════════════════════════════
+        # 1. HEADER ROW: title + subtitle + Quick Add button (right)
+        # ══════════════════════════════════════════════════════════════════════
         html.Div([
-            kpi_card("INVENTORY COST", f"${true_inventory_cost:,.2f}", TEAL,
-                     f"Business supplies (Cost of Goods Sold)",
-                     f"Total spent on business inventory/supplies from {biz_order_count} Amazon orders. Excludes personal/gift purchases (${personal_total:,.2f}) and business fees like LLC filing (${biz_fee_total:,.2f}). Raw total was ${total_inventory_cost:,.2f}, adjusted to ${true_inventory_cost:,.2f} for business-only items."),
-            kpi_card("Cost of Goods (% of Sales)", f"{true_inventory_cost / gross_sales * 100:.1f}%" if gross_sales else "N/A", ORANGE,
-                     f"${true_inventory_cost:,.0f} of ${gross_sales:,.0f}",
-                     f"COGS ratio -- how much of each dollar of revenue goes to materials. Under 25% is healthy. 25-40% is moderate. Over 40% means materials are eating your margins. Industry avg for handmade goods is 25-35%."),
-            kpi_card("ORDERS", str(biz_order_count), BLUE,
-                     f"Business account invoices",
-                     f"{biz_order_count} Amazon Business orders from Key Component Mfg account. Shipped to Tulsa ({tulsa_orders}) and Texas ({texas_orders}). Parsed from invoice PDF files."),
-            kpi_card("TAX ON INVENTORY", f"${total_inv_tax:,.2f}", GRAY, "Sales tax on supplies",
-                     f"Sales tax paid on inventory purchases. Tulsa tax: ${tulsa_tax:,.2f}. Texas tax: ${texas_tax:,.2f}. This is tax-deductible as a business expense on Schedule C."),
-            kpi_card("Bank Inventory Spend", f"${bank_by_cat.get('Amazon Inventory', 0):,.2f}", PURPLE,
-                     f"Cap One Amazon charges",
-                     f"Amazon purchases that appear on the Capital One bank statement under 'Amazon Inventory' category. This should roughly match invoice totals. Discrepancies may mean some purchases haven't been invoiced yet."),
-            kpi_card("REAL PROFIT", f"${real_profit:,.2f}", GREEN, f"Cash + Draws ({real_profit_margin:.1f}%)",
-                     f"Bank-reconciled profit: cash on hand (${bank_cash_on_hand:,.2f}) + owner draws (${bank_owner_draw_total:,.2f}). Inventory costs are already reflected in bank expenses, so this is the true profit after ALL spending."),
-        ], style={"display": "flex", "gap": "8px", "marginBottom": "14px", "flexWrap": "wrap"}),
+            html.Div([
+                html.H3("INVENTORY MANAGEMENT", style={"color": CYAN, "margin": "0", "fontSize": "26px",
+                                                        "fontWeight": "700", "letterSpacing": "1.5px",
+                                                        "textShadow": f"0 0 20px {CYAN}22"}),
+                html.P(["Business inventory with stock tracking. ",
+                        html.Span(f"{unique_item_count} unique items", style={"color": GREEN, "fontWeight": "bold"}),
+                        f" across {biz_order_count} orders."],
+                       style={"color": GRAY, "margin": "2px 0 0 0", "fontSize": "13px"}),
+            ], style={"flex": "1"}),
+            html.Button("+ Quick Add", id="qa-toggle-btn", n_clicks=0,
+                        className="btn-gradient-green",
+                        style={"fontSize": "13px", "padding": "10px 22px",
+                               "background": f"linear-gradient(135deg, {GREEN}, #27ae60)",
+                               "color": WHITE, "border": "none", "borderRadius": "8px",
+                               "cursor": "pointer", "fontWeight": "bold", "whiteSpace": "nowrap",
+                               "alignSelf": "flex-start",
+                               "boxShadow": f"0 3px 12px {GREEN}33"}),
+        ], style={"display": "flex", "alignItems": "flex-start", "gap": "16px", "marginBottom": "14px"}),
 
-        # Charts: Monthly spend + Category donut side by side
+        # Editor-save trigger store
+        dcc.Store(id="editor-save-trigger", data=0),
+
+        # ══════════════════════════════════════════════════════════════════════
+        # 2. KPI PILL STRIP
+        # ══════════════════════════════════════════════════════════════════════
+        html.Div(id="inv-kpi-row", children=_build_inv_kpi_row()),
+
+        # ══════════════════════════════════════════════════════════════════════
+        # 3. QUICK ADD PANEL (hidden by default, toggles via button)
+        # ══════════════════════════════════════════════════════════════════════
         html.Div([
-            html.Div([dcc.Graph(figure=inv_monthly_fig, config={"displayModeBar": False})], style={"flex": "3"}),
-            html.Div([dcc.Graph(figure=inv_cat_fig, config={"displayModeBar": False})], style={"flex": "2"}),
-        ], style={"display": "flex", "gap": "8px", "marginBottom": "10px"}),
+            html.H4("QUICK ADD PURCHASE", style={"color": GREEN, "margin": "0 0 8px 0", "fontSize": "15px"}),
+            _build_quick_add_form(),
+        ], id="qa-panel",
+           style={"display": "none", "backgroundColor": CARD, "padding": "16px", "borderRadius": "10px",
+                  "marginBottom": "14px", "border": f"1px solid {GREEN}33",
+                  "borderLeft": f"4px solid {GREEN}"}),
 
-        # Revenue vs COGS chart
-        dcc.Graph(figure=rev_cogs_fig, config={"displayModeBar": False}),
+        # ══════════════════════════════════════════════════════════════════════
+        # 4. STOCK LEVELS: Health gauges + Stock table + Usage log
+        # ══════════════════════════════════════════════════════════════════════
 
-        # ── LOCATION BREAKDOWN ──
-        html.H3("INVENTORY BY LOCATION", style={"color": CYAN, "margin": "20px 0 10px 0"}),
-        html.P("Breakdown of inventory spend between the two shipping addresses.",
-               style={"color": GRAY, "margin": "0 0 10px 0", "fontSize": "13px"}),
+        # Health Panel (above stock table)
+        html.Div(id="inv-health-panel", children=[_build_inventory_health_panel()]),
 
-        # Location KPI cards
+        # Stock table with filters
         html.Div([
-            # Tulsa card
+            html.H4("STOCK LEVELS", style={"color": TEAL, "margin": "0 0 8px 0", "fontSize": "16px",
+                                             "fontWeight": "700", "letterSpacing": "0.5px"}),
+            # Filter bar with sort dropdown
             html.Div([
-                html.Div("TJ (Tulsa, OK)", style={"color": TEAL, "fontSize": "16px", "fontWeight": "bold",
-                                               "marginBottom": "4px"}),
-                html.Div("Thomas / TJ McNulty - 2725 E 47TH ST",
-                         style={"color": GRAY, "fontSize": "11px", "marginBottom": "10px"}),
-                html.Div(f"${tulsa_spend:,.2f}", style={"color": WHITE, "fontSize": "28px",
-                                                         "fontWeight": "bold", "fontFamily": "monospace"}),
-                html.Div([
-                    html.Span(f"{tulsa_orders} orders", style={"color": GRAY, "fontSize": "12px"}),
-                    html.Span(" | ", style={"color": DARKGRAY}),
-                    html.Span(f"Subtotal ${tulsa_subtotal:,.2f}", style={"color": GRAY, "fontSize": "12px"}),
-                    html.Span(" | ", style={"color": DARKGRAY}),
-                    html.Span(f"Tax ${tulsa_tax:,.2f}", style={"color": GRAY, "fontSize": "12px"}),
-                ], style={"marginTop": "6px"}),
-                html.Div(f"{tulsa_spend / true_inventory_cost * 100:.1f}% of total" if true_inventory_cost else "",
-                         style={"color": TEAL, "fontSize": "13px", "marginTop": "4px", "fontWeight": "600"}),
-            ], style={"backgroundColor": CARD, "padding": "16px", "borderRadius": "10px",
-                       "flex": "1", "border": f"1px solid {TEAL}44", "textAlign": "center"}),
-
-            # Texas card
-            html.Div([
-                html.Div("BRADEN (Texas)", style={"color": ORANGE, "fontSize": "16px", "fontWeight": "bold",
-                                           "marginBottom": "4px"}),
-                html.Div("Braden Walker - 606 W ASH ST, Celina",
-                         style={"color": GRAY, "fontSize": "11px", "marginBottom": "10px"}),
-                html.Div(f"${texas_spend:,.2f}", style={"color": WHITE, "fontSize": "28px",
-                                                         "fontWeight": "bold", "fontFamily": "monospace"}),
-                html.Div([
-                    html.Span(f"{texas_orders} orders", style={"color": GRAY, "fontSize": "12px"}),
-                    html.Span(" | ", style={"color": DARKGRAY}),
-                    html.Span(f"Subtotal ${texas_subtotal:,.2f}", style={"color": GRAY, "fontSize": "12px"}),
-                    html.Span(" | ", style={"color": DARKGRAY}),
-                    html.Span(f"Tax ${texas_tax:,.2f}", style={"color": GRAY, "fontSize": "12px"}),
-                ], style={"marginTop": "6px"}),
-                html.Div(f"{texas_spend / true_inventory_cost * 100:.1f}% of total" if true_inventory_cost else "",
-                         style={"color": ORANGE, "fontSize": "13px", "marginTop": "4px", "fontWeight": "600"}),
-            ], style={"backgroundColor": CARD, "padding": "16px", "borderRadius": "10px",
-                       "flex": "1", "border": f"1px solid {ORANGE}44", "textAlign": "center"}),
-        ], style={"display": "flex", "gap": "12px", "marginBottom": "14px"}),
-
-        # Location monthly comparison chart
-        dcc.Graph(figure=loc_monthly_fig, config={"displayModeBar": False}),
-
-        # Location category donuts side by side
-        html.Div([
-            html.Div([dcc.Graph(figure=tulsa_cat_fig, config={"displayModeBar": False})], style={"flex": "1"}),
-            html.Div([dcc.Graph(figure=texas_cat_fig, config={"displayModeBar": False})], style={"flex": "1"}),
-        ], style={"display": "flex", "gap": "8px", "marginBottom": "10px"}),
-
-        # Per-location category spending tables side by side
-        html.Div([
-            # Tulsa categories
-            html.Div([
-                html.H4("TJ (Tulsa) Categories", style={"color": TEAL, "margin": "0 0 8px 0", "fontSize": "14px"}),
-            ] + [
-                html.Div([
-                    html.Span(f"{cat}", style={"color": WHITE, "flex": "1"}),
-                    html.Span(f"${amt:,.2f}", style={"color": TEAL, "fontFamily": "monospace", "fontWeight": "bold"}),
-                ], style={"display": "flex", "padding": "3px 8px", "borderBottom": "1px solid #ffffff10"})
-                for cat, amt in tulsa_by_cat.items()
-            ] + [
-                html.Div([
-                    html.Span("TOTAL", style={"color": TEAL, "flex": "1", "fontWeight": "bold"}),
-                    html.Span(f"${tulsa_by_cat.sum():,.2f}", style={"color": TEAL, "fontFamily": "monospace", "fontWeight": "bold"}),
-                ], style={"display": "flex", "padding": "6px 8px", "borderTop": f"2px solid {TEAL}"}),
-            ], style={"backgroundColor": CARD, "padding": "12px", "borderRadius": "10px", "flex": "1"}),
-
-            # Texas categories
-            html.Div([
-                html.H4("Braden (Texas) Categories", style={"color": ORANGE, "margin": "0 0 8px 0", "fontSize": "14px"}),
-            ] + [
-                html.Div([
-                    html.Span(f"{cat}", style={"color": WHITE, "flex": "1"}),
-                    html.Span(f"${amt:,.2f}", style={"color": ORANGE, "fontFamily": "monospace", "fontWeight": "bold"}),
-                ], style={"display": "flex", "padding": "3px 8px", "borderBottom": "1px solid #ffffff10"})
-                for cat, amt in texas_by_cat.items()
-            ] + [
-                html.Div([
-                    html.Span("TOTAL", style={"color": ORANGE, "flex": "1", "fontWeight": "bold"}),
-                    html.Span(f"${texas_by_cat.sum():,.2f}", style={"color": ORANGE, "fontFamily": "monospace", "fontWeight": "bold"}),
-                ], style={"display": "flex", "padding": "6px 8px", "borderTop": f"2px solid {ORANGE}"}),
-            ], style={"backgroundColor": CARD, "padding": "12px", "borderRadius": "10px", "flex": "1"}),
-        ], style={"display": "flex", "gap": "12px", "marginBottom": "14px"}),
-
-        # ── EXACT ITEMS AT EACH LOCATION ──
-        html.H3("EXACT ITEMS AT EACH LOCATION", style={"color": CYAN, "margin": "20px 0 6px 0"}),
-        html.P("Every item shipped to each address — use this to track who has what.",
-               style={"color": GRAY, "margin": "0 0 12px 0", "fontSize": "13px"}),
-
-        # Tulsa items table
-        *_build_location_item_section("TJ (Tulsa, OK)", TEAL, "Tulsa, OK"),
-        # Braden items table
-        *_build_location_item_section("BRADEN (Celina/Prosper, TX)", ORANGE, "Texas"),
-
-        # ── PAYMENT METHODS ──
-        html.H3("PAYMENT METHODS", style={"color": CYAN, "margin": "20px 0 6px 0"}),
-        html.P("Breakdown by payment card — showing total spent, orders, date range, and items purchased with each card.",
-               style={"color": GRAY, "margin": "0 0 12px 0", "fontSize": "13px"}),
-        *_build_payment_sections(),
-
-        # Order Detail Table
-        section("ALL ORDERS (" + str(inv_order_count) + " orders)", [
-            html.Div([
-                html.Table([
-                    html.Thead(html.Tr([
-                        html.Th("Date", style={"textAlign": "left", "padding": "6px 8px"}),
-                        html.Th("Order #", style={"textAlign": "left", "padding": "6px 8px"}),
-                        html.Th("Store", style={"textAlign": "left", "padding": "6px 8px"}),
-                        html.Th("Shipped To", style={"textAlign": "left", "padding": "6px 8px"}),
-                        html.Th("Items", style={"textAlign": "center", "padding": "6px 8px"}),
-                        html.Th("Subtotal", style={"textAlign": "right", "padding": "6px 8px"}),
-                        html.Th("Tax", style={"textAlign": "right", "padding": "6px 8px"}),
-                        html.Th("Total", style={"textAlign": "right", "padding": "6px 8px"}),
-                    ], style={"borderBottom": f"2px solid {PURPLE}"})),
-                    html.Tbody(order_table_rows + [
-                        html.Tr([
-                            html.Td("TOTAL", style={"color": ORANGE, "fontWeight": "bold", "padding": "6px 8px"}),
-                            html.Td("", style={"padding": "6px 8px"}),
-                            html.Td("", style={"padding": "6px 8px"}),
-                            html.Td("", style={"padding": "6px 8px"}),
-                            html.Td(str(INV_DF["item_count"].sum()), style={"textAlign": "center", "color": ORANGE,
-                                                                             "fontWeight": "bold", "padding": "6px 8px"}),
-                            html.Td(f"${total_inv_subtotal:,.2f}", style={"textAlign": "right", "color": ORANGE,
-                                                                           "fontWeight": "bold", "padding": "6px 8px"}),
-                            html.Td(f"${total_inv_tax:,.2f}", style={"textAlign": "right", "color": ORANGE,
-                                                                       "fontWeight": "bold", "padding": "6px 8px"}),
-                            html.Td(f"${total_inventory_cost:,.2f}", style={"textAlign": "right", "color": ORANGE,
-                                                                             "fontWeight": "bold", "fontSize": "14px",
-                                                                             "padding": "6px 8px"}),
-                        ], style={"borderTop": f"3px solid {ORANGE}"}),
-                    ]),
-                ], style={"width": "100%", "borderCollapse": "collapse", "color": WHITE}),
+                dcc.Input(id="stock-filter-input", type="text", placeholder="Search items...",
+                          style={"backgroundColor": "#0f0f1a", "color": WHITE,
+                                 "border": f"1px solid {DARKGRAY}", "borderRadius": "4px",
+                                 "padding": "6px 10px", "fontSize": "12px", "width": "200px"}),
+                html.Div(style={"width": "1px", "height": "20px", "backgroundColor": f"{DARKGRAY}44"}),
+                html.Span("Category:", style={"color": GRAY, "fontSize": "12px", "marginRight": "4px"}),
+                dcc.Dropdown(id="stock-filter-cat",
+                             options=[{"label": c, "value": c} for c in _stock_cats],
+                             value="All", clearable=False,
+                             style={"width": "160px", "fontSize": "12px",
+                                    "backgroundColor": "#1a1a2e", "color": WHITE}),
+                html.Div(style={"width": "1px", "height": "20px", "backgroundColor": f"{DARKGRAY}44"}),
+                html.Span("Status:", style={"color": GRAY, "fontSize": "12px", "marginRight": "4px"}),
+                dcc.Dropdown(id="stock-filter-status",
+                             options=[{"label": s, "value": s} for s in
+                                      ["All", "In Stock", "Low Stock", "Out of Stock"]],
+                             value="All", clearable=False,
+                             style={"width": "130px", "fontSize": "12px",
+                                    "backgroundColor": "#1a1a2e", "color": WHITE}),
+                html.Div(style={"width": "1px", "height": "20px", "backgroundColor": f"{DARKGRAY}44"}),
+                html.Span("Sort:", style={"color": GRAY, "fontSize": "12px", "marginRight": "4px"}),
+                dcc.Dropdown(id="stock-sort-by",
+                             options=_sort_options, value="Category", clearable=False,
+                             style={"width": "150px", "fontSize": "12px",
+                                    "backgroundColor": "#1a1a2e", "color": WHITE}),
+                html.Div(style={"flex": "1"}),
+                dcc.Checklist(
+                    id="stock-include-tax",
+                    options=[{"label": " Receipt cost", "value": "tax"}],
+                    value=[],
+                    style={"fontSize": "11px", "color": GRAY},
+                    labelStyle={"cursor": "pointer", "display": "flex", "alignItems": "center"},
+                ),
+            ], style={"display": "flex", "alignItems": "center", "flexWrap": "wrap",
+                      "gap": "8px", "marginBottom": "10px", "padding": "10px 12px",
+                      "backgroundColor": "#0f1225", "borderRadius": "8px"}),
+            # Stock table
+            html.Div(
+                _build_stock_table_html(STOCK_SUMMARY),
+                id="stock-table-container",
+                style={"maxHeight": "600px", "overflowY": "auto"},
+            ),
+            # Usage log (collapsed)
+            html.Details([
+                html.Summary("USAGE LOG", style={
+                    "color": CYAN, "fontSize": "13px", "fontWeight": "bold", "cursor": "pointer",
+                    "padding": "8px 0", "marginTop": "12px", "borderTop": f"1px solid {DARKGRAY}33",
+                    "paddingTop": "12px"}),
+                html.Div(
+                    _build_usage_log_html(),
+                    id="usage-log-container",
+                ),
             ]),
-        ], PURPLE),
+        ], style={"backgroundColor": CARD, "padding": "18px", "borderRadius": "12px",
+                  "marginBottom": "18px", "border": f"1px solid {TEAL}33",
+                  "borderTop": f"5px solid {TEAL}",
+                  "boxShadow": "0 4px 20px rgba(0,0,0,0.3)"}),
 
-        # Item Detail Table
-        section("ALL INVENTORY ITEMS (sorted by cost)", [
-            html.P("Business supplies only. Personal/gift items shown under Owner Draws in Financials tab.",
-                   style={"color": GRAY, "fontSize": "12px", "marginBottom": "8px"}),
+        # ══════════════════════════════════════════════════════════════════════
+        # 5. CATEGORY MANAGER — fast inline categorization
+        # ══════════════════════════════════════════════════════════════════════
+        html.Div([
+            html.H4([
+                html.Span("CATEGORY MANAGER", style={"color": PURPLE, "letterSpacing": "1px"}),
+                html.Span(f"  —  {len(INV_ITEMS)} items", style={"color": GRAY, "fontSize": "12px",
+                                                                    "fontWeight": "normal", "marginLeft": "8px"}),
+            ], style={"margin": "0 0 10px 0", "fontSize": "16px", "fontWeight": "700"}),
+            html.P("Change any item's category or location — saves instantly to Supabase.",
+                   style={"color": GRAY, "fontSize": "12px", "marginBottom": "10px"}),
+            html.Div(id="catmgr-container", children=[_build_category_manager()]),
+        ], style={"backgroundColor": CARD, "padding": "18px", "borderRadius": "12px",
+                  "marginBottom": "18px", "border": f"1px solid {PURPLE}33",
+                  "borderTop": f"5px solid {PURPLE}",
+                  "boxShadow": "0 4px 20px rgba(0,0,0,0.3)"}),
+
+        # ══════════════════════════════════════════════════════════════════════
+        # 6. INVENTORY EDITOR (detailed per-item with split wizard)
+        # ══════════════════════════════════════════════════════════════════════
+        _build_inventory_editor(),
+
+        # ══════════════════════════════════════════════════════════════════════
+        # 6. RECEIPT UPLOAD
+        # ══════════════════════════════════════════════════════════════════════
+        _build_receipt_upload_section(),
+
+        # ══════════════════════════════════════════════════════════════════════
+        # 7. IMAGE MANAGER (collapsed)
+        # ══════════════════════════════════════════════════════════════════════
+        html.Details([
+            html.Summary("IMAGE MANAGER", style={
+                "color": CYAN, "fontSize": "15px", "fontWeight": "bold", "cursor": "pointer",
+                "padding": "8px 0",
+            }),
+            _build_image_manager(),
+        ], open=False,
+           style={"backgroundColor": CARD, "padding": "12px 16px", "borderRadius": "10px",
+                  "marginBottom": "14px", "border": f"1px solid {CYAN}33",
+                  "borderLeft": f"4px solid {CYAN}"}),
+
+        # ══════════════════════════════════════════════════════════════════════
+        # 8. WAREHOUSES (location cards)
+        # ══════════════════════════════════════════════════════════════════════
+        _build_enhanced_location_section(),
+
+        # ══════════════════════════════════════════════════════════════════════
+        # 9. ANALYTICS (collapsed)
+        # ══════════════════════════════════════════════════════════════════════
+        html.Details([
+            html.Summary("ANALYTICS & REFERENCE DATA", style={
+                "color": PURPLE, "fontSize": "16px", "fontWeight": "700", "cursor": "pointer",
+                "padding": "10px 0", "letterSpacing": "1.5px",
+            }),
             html.Div([
-                html.Table([
-                    html.Thead(html.Tr([
-                        html.Th("Type", style={"textAlign": "center", "padding": "6px 8px", "width": "80px"}),
-                        html.Th("Item Name", style={"textAlign": "left", "padding": "6px 8px"}),
-                        html.Th("Category", style={"textAlign": "left", "padding": "6px 8px"}),
-                        html.Th("Store", style={"textAlign": "left", "padding": "6px 8px"}),
-                        html.Th("Shipped To", style={"textAlign": "left", "padding": "6px 8px"}),
-                        html.Th("Qty", style={"textAlign": "center", "padding": "6px 8px"}),
-                        html.Th("Unit Price", style={"textAlign": "right", "padding": "6px 8px"}),
-                        html.Th("Total", style={"textAlign": "right", "padding": "6px 8px"}),
-                        html.Th("Date", style={"textAlign": "left", "padding": "6px 8px"}),
-                    ], style={"borderBottom": f"2px solid {TEAL}"})),
-                    html.Tbody(item_table_rows),
-                ], style={"width": "100%", "borderCollapse": "collapse", "color": WHITE}),
-            ], style={"maxHeight": "600px", "overflowY": "auto"}),
-        ], TEAL),
+                # Charts
+                html.Div([
+                    html.Div([dcc.Graph(figure=inv_monthly_fig, config={"displayModeBar": False})], style={"flex": "3"}),
+                    html.Div([dcc.Graph(figure=inv_cat_fig, config={"displayModeBar": False})], style={"flex": "2"}),
+                ], style={"display": "flex", "gap": "8px", "marginBottom": "10px"}),
+                dcc.Graph(figure=rev_cogs_fig, config={"displayModeBar": False}),
 
-        # Category summary
-        section("SPENDING BY CATEGORY", [
+                # Location Spending Breakdown
+                html.Details([
+                    html.Summary("LOCATION SPENDING BREAKDOWN", style={
+                        "color": CYAN, "fontSize": "14px", "fontWeight": "bold", "cursor": "pointer",
+                        "padding": "8px 0",
+                    }),
+                    html.Div([
+                        dcc.Graph(figure=loc_monthly_fig, config={"displayModeBar": False}),
+                        html.Div([
+                            html.Div([dcc.Graph(figure=tulsa_cat_fig, config={"displayModeBar": False})], style={"flex": "1"}),
+                            html.Div([dcc.Graph(figure=texas_cat_fig, config={"displayModeBar": False})], style={"flex": "1"}),
+                        ], style={"display": "flex", "gap": "8px", "marginBottom": "10px"}),
+                        html.Div([
+                            html.Div([
+                                html.H4("TJ (Tulsa) Categories", style={"color": TEAL, "margin": "0 0 8px 0", "fontSize": "14px"}),
+                            ] + [
+                                html.Div([
+                                    html.Span(f"{cat}", style={"color": WHITE, "flex": "1"}),
+                                    html.Span(f"${amt:,.2f}", style={"color": TEAL, "fontFamily": "monospace", "fontWeight": "bold"}),
+                                ], style={"display": "flex", "padding": "3px 8px", "borderBottom": "1px solid #ffffff10"})
+                                for cat, amt in tulsa_by_cat.items()
+                            ] + [
+                                html.Div([
+                                    html.Span("TOTAL", style={"color": TEAL, "flex": "1", "fontWeight": "bold"}),
+                                    html.Span(f"${tulsa_by_cat.sum():,.2f}", style={"color": TEAL, "fontFamily": "monospace", "fontWeight": "bold"}),
+                                ], style={"display": "flex", "padding": "6px 8px", "borderTop": f"2px solid {TEAL}"}),
+                            ], style={"backgroundColor": CARD, "padding": "12px", "borderRadius": "10px", "flex": "1"}),
+                            html.Div([
+                                html.H4("Braden (Texas) Categories", style={"color": ORANGE, "margin": "0 0 8px 0", "fontSize": "14px"}),
+                            ] + [
+                                html.Div([
+                                    html.Span(f"{cat}", style={"color": WHITE, "flex": "1"}),
+                                    html.Span(f"${amt:,.2f}", style={"color": ORANGE, "fontFamily": "monospace", "fontWeight": "bold"}),
+                                ], style={"display": "flex", "padding": "3px 8px", "borderBottom": "1px solid #ffffff10"})
+                                for cat, amt in texas_by_cat.items()
+                            ] + [
+                                html.Div([
+                                    html.Span("TOTAL", style={"color": ORANGE, "flex": "1", "fontWeight": "bold"}),
+                                    html.Span(f"${texas_by_cat.sum():,.2f}", style={"color": ORANGE, "fontFamily": "monospace", "fontWeight": "bold"}),
+                                ], style={"display": "flex", "padding": "6px 8px", "borderTop": f"2px solid {ORANGE}"}),
+                            ], style={"backgroundColor": CARD, "padding": "12px", "borderRadius": "10px", "flex": "1"}),
+                        ], style={"display": "flex", "gap": "12px", "marginBottom": "14px"}),
+                    ]),
+                ], open=False,
+                   style={"backgroundColor": CARD2, "padding": "12px 16px", "borderRadius": "10px",
+                          "marginBottom": "14px", "border": f"1px solid {CYAN}33"}),
+
+                # Payment Methods
+                html.Details([
+                    html.Summary("PAYMENT METHODS", style={
+                        "color": CYAN, "fontSize": "14px", "fontWeight": "bold", "cursor": "pointer",
+                        "padding": "8px 0",
+                    }),
+                    html.Div([
+                        html.P("Breakdown by payment card.",
+                               style={"color": GRAY, "margin": "0 0 12px 0", "fontSize": "13px"}),
+                        *_build_payment_sections(),
+                    ]),
+                ], open=False,
+                   style={"backgroundColor": CARD2, "padding": "12px 16px", "borderRadius": "10px",
+                          "marginBottom": "14px", "border": f"1px solid {CYAN}33"}),
+
+                # All Orders Table
+                html.Details([
+                    html.Summary(f"ALL ORDERS ({inv_order_count} orders)", style={
+                        "color": PURPLE, "fontSize": "14px", "fontWeight": "bold", "cursor": "pointer",
+                        "padding": "8px 0",
+                    }),
+                    html.Div([
+                        html.Table([
+                            html.Thead(html.Tr([
+                                html.Th("Date", style={"textAlign": "left", "padding": "6px 8px"}),
+                                html.Th("Order #", style={"textAlign": "left", "padding": "6px 8px"}),
+                                html.Th("Store", style={"textAlign": "left", "padding": "6px 8px"}),
+                                html.Th("Shipped To", style={"textAlign": "left", "padding": "6px 8px"}),
+                                html.Th("Items", style={"textAlign": "center", "padding": "6px 8px"}),
+                                html.Th("Subtotal", style={"textAlign": "right", "padding": "6px 8px"}),
+                                html.Th("Tax", style={"textAlign": "right", "padding": "6px 8px"}),
+                                html.Th("Total", style={"textAlign": "right", "padding": "6px 8px"}),
+                            ], style={"borderBottom": f"2px solid {PURPLE}"})),
+                            html.Tbody(order_table_rows + [
+                                html.Tr([
+                                    html.Td("TOTAL", style={"color": ORANGE, "fontWeight": "bold", "padding": "6px 8px"}),
+                                    html.Td("", style={"padding": "6px 8px"}),
+                                    html.Td("", style={"padding": "6px 8px"}),
+                                    html.Td("", style={"padding": "6px 8px"}),
+                                    html.Td(str(INV_DF["item_count"].sum()), style={"textAlign": "center", "color": ORANGE,
+                                                                                     "fontWeight": "bold", "padding": "6px 8px"}),
+                                    html.Td(f"${total_inv_subtotal:,.2f}", style={"textAlign": "right", "color": ORANGE,
+                                                                                   "fontWeight": "bold", "padding": "6px 8px"}),
+                                    html.Td(f"${total_inv_tax:,.2f}", style={"textAlign": "right", "color": ORANGE,
+                                                                               "fontWeight": "bold", "padding": "6px 8px"}),
+                                    html.Td(f"${total_inventory_cost:,.2f}", style={"textAlign": "right", "color": ORANGE,
+                                                                                     "fontWeight": "bold", "fontSize": "14px",
+                                                                                     "padding": "6px 8px"}),
+                                ], style={"borderTop": f"3px solid {ORANGE}"}),
+                            ]),
+                        ], style={"width": "100%", "borderCollapse": "collapse", "color": WHITE}),
+                    ]),
+                ], open=False,
+                   style={"backgroundColor": CARD2, "padding": "12px 16px", "borderRadius": "10px",
+                          "marginBottom": "14px", "border": f"1px solid {PURPLE}33"}),
+
+                # All Items Table
+                html.Details([
+                    html.Summary("ALL INVENTORY ITEMS (sorted by cost)", style={
+                        "color": TEAL, "fontSize": "14px", "fontWeight": "bold", "cursor": "pointer",
+                        "padding": "8px 0",
+                    }),
+                    html.Div([
+                        html.P("Business supplies only.", style={"color": GRAY, "fontSize": "12px", "marginBottom": "8px"}),
+                        html.Div([
+                            html.Table([
+                                html.Thead(html.Tr([
+                                    html.Th("", style={"padding": "6px 4px", "width": "44px"}),
+                                    html.Th("Type", style={"textAlign": "center", "padding": "6px 8px", "width": "80px"}),
+                                    html.Th("Item Name", style={"textAlign": "left", "padding": "6px 8px"}),
+                                    html.Th("Category", style={"textAlign": "left", "padding": "6px 8px"}),
+                                    html.Th("Store", style={"textAlign": "left", "padding": "6px 8px"}),
+                                    html.Th("Shipped To", style={"textAlign": "left", "padding": "6px 8px"}),
+                                    html.Th("Qty", style={"textAlign": "center", "padding": "6px 8px"}),
+                                    html.Th("Unit Price", style={"textAlign": "right", "padding": "6px 8px"}),
+                                    html.Th("Total", style={"textAlign": "right", "padding": "6px 8px"}),
+                                    html.Th("Date", style={"textAlign": "left", "padding": "6px 8px"}),
+                                ], style={"borderBottom": f"2px solid {TEAL}"})),
+                                html.Tbody(item_table_rows),
+                            ], style={"width": "100%", "borderCollapse": "collapse", "color": WHITE}),
+                        ], style={"maxHeight": "600px", "overflowY": "auto"}),
+                    ]),
+                ], open=False,
+                   style={"backgroundColor": CARD2, "padding": "12px 16px", "borderRadius": "10px",
+                          "marginBottom": "14px", "border": f"1px solid {TEAL}33"}),
+
+                # Spending by Category
+                html.Details([
+                    html.Summary("SPENDING BY CATEGORY", style={
+                        "color": ORANGE, "fontSize": "14px", "fontWeight": "bold", "cursor": "pointer",
+                        "padding": "8px 0",
+                    }),
+                    html.Div([
+                        html.Div([
+                            row_item(f"{cat}", amt, color=WHITE)
+                            for cat, amt in inv_by_category.items()
+                        ] + [
+                            html.Div(style={"borderTop": f"2px solid {ORANGE}", "marginTop": "8px"}),
+                            row_item("TOTAL (all items, subtotal only)", INV_ITEMS["total"].sum(), bold=True, color=ORANGE),
+                        ]) if len(inv_by_category) > 0 else html.P("No items found.", style={"color": GRAY}),
+                    ]),
+                ], open=False,
+                   style={"backgroundColor": CARD2, "padding": "12px 16px", "borderRadius": "10px",
+                          "marginBottom": "14px", "border": f"1px solid {ORANGE}33"}),
+            ]),
+        ], open=False,
+           style={"backgroundColor": CARD2, "padding": "14px 20px", "borderRadius": "12px",
+                  "marginBottom": "14px", "border": f"1px solid {PURPLE}33",
+                  "borderTop": f"4px solid {PURPLE}"}),
+
+        # ── Receipt Gallery ─────────────────────────────────────────────────
+        _build_receipt_gallery(),
+
+    ], style={"padding": TAB_PADDING})
+
+
+def _build_receipt_gallery():
+    """Build a visual receipt gallery with embedded PDF viewers and parsed specs."""
+    import urllib.parse as _ul
+
+    def _make_receipt_card(inv, is_personal=False):
+        """Build a single receipt card with PDF viewer + specs."""
+        source = inv.get("source", "Unknown")
+        subfolder = _SOURCE_FOLDER_MAP.get(source, "keycomp")
+        raw_file = inv.get("file", "")
+
+        # Strip " (page X)" suffix for multi-page scanned receipts
+        clean_file = re.sub(r'\s*\(page\s*\d+\)$', '', raw_file)
+        encoded_file = _ul.quote(clean_file)
+
+        # Check if file exists on disk
+        file_path = os.path.join(BASE_DIR, "data", "invoices", subfolder, clean_file)
+        file_exists = os.path.isfile(file_path)
+
+        pdf_url = f"/api/receipt/{subfolder}/{encoded_file}"
+
+        # Left side: PDF viewer
+        if file_exists:
+            pdf_viewer = html.Iframe(
+                src=pdf_url,
+                style={
+                    "width": "100%", "height": "320px", "border": "none",
+                    "borderRadius": "8px", "backgroundColor": "#ffffff",
+                },
+            )
+        else:
+            pdf_viewer = html.Div(
+                [html.Span("PDF not found on disk", style={"color": GRAY, "fontSize": "13px"}),
+                 html.Br(),
+                 html.Span(raw_file, style={"color": DARKGRAY, "fontSize": "11px"})],
+                style={
+                    "width": "100%", "height": "320px", "display": "flex",
+                    "flexDirection": "column", "alignItems": "center",
+                    "justifyContent": "center", "backgroundColor": "#ffffff08",
+                    "borderRadius": "8px", "border": f"1px dashed {DARKGRAY}",
+                },
+            )
+
+        # Right side: Specs
+        order_num = inv.get("order_num", "N/A")
+        date_str = inv.get("date", "Unknown")
+        payment = inv.get("payment_method", "Unknown")
+        ship_addr = inv.get("ship_address", "")
+        if ship_addr.count(",") >= 2:
+            parts = ship_addr.split(",")
+            short_addr = parts[1].strip() + ", " + parts[2].strip().split(" ")[0]
+        else:
+            short_addr = ship_addr
+
+        accent = PINK if is_personal else CYAN
+
+        # Items table
+        item_rows = []
+        for it in inv.get("items", []):
+            item_rows.append(html.Tr([
+                html.Td(it["name"][:60] + ("..." if len(it["name"]) > 60 else ""),
+                         style={"color": WHITE, "fontSize": "11px", "padding": "3px 6px",
+                                "maxWidth": "280px", "overflow": "hidden", "textOverflow": "ellipsis"}),
+                html.Td(str(it["qty"]), style={"color": GRAY, "fontSize": "11px",
+                                                "textAlign": "center", "padding": "3px 6px"}),
+                html.Td(f"${it['price']:,.2f}", style={"color": WHITE, "fontSize": "11px",
+                                                        "textAlign": "right", "padding": "3px 6px"}),
+            ]))
+
+        specs_panel = html.Div([
+            # Order number
             html.Div([
-                row_item(f"{cat}", amt, color=WHITE)
-                for cat, amt in inv_by_category.items()
-            ] + [
-                html.Div(style={"borderTop": f"2px solid {ORANGE}", "marginTop": "8px"}),
-                row_item("TOTAL (all items, subtotal only)", INV_ITEMS["total"].sum(), bold=True, color=ORANGE),
-            ]) if len(inv_by_category) > 0 else html.P("No items found.", style={"color": GRAY}),
-        ], ORANGE),
+                html.Span("Order #  ", style={"color": GRAY, "fontSize": "11px"}),
+                html.Span(order_num, style={"color": accent, "fontSize": "13px", "fontWeight": "bold"}),
+            ], style={"marginBottom": "6px"}),
+            # Date
+            html.Div([
+                html.Span("Date  ", style={"color": GRAY, "fontSize": "11px"}),
+                html.Span(date_str, style={"color": WHITE, "fontSize": "12px"}),
+            ], style={"marginBottom": "4px"}),
+            # Source
+            html.Div([
+                html.Span("Source  ", style={"color": GRAY, "fontSize": "11px"}),
+                html.Span(source, style={"color": TEAL, "fontSize": "12px"}),
+            ], style={"marginBottom": "4px"}),
+            # Payment
+            html.Div([
+                html.Span("Payment  ", style={"color": GRAY, "fontSize": "11px"}),
+                html.Span(payment, style={"color": WHITE, "fontSize": "12px"}),
+            ], style={"marginBottom": "4px"}),
+            # Ship to
+            html.Div([
+                html.Span("Ship to  ", style={"color": GRAY, "fontSize": "11px"}),
+                html.Span(short_addr, style={"color": CYAN, "fontSize": "12px"}),
+            ], style={"marginBottom": "8px"}) if short_addr else html.Div(),
+            # Items table
+            html.Table([
+                html.Thead(html.Tr([
+                    html.Th("Item", style={"textAlign": "left", "color": GRAY, "fontSize": "10px",
+                                           "padding": "3px 6px", "borderBottom": f"1px solid {DARKGRAY}"}),
+                    html.Th("Qty", style={"textAlign": "center", "color": GRAY, "fontSize": "10px",
+                                          "padding": "3px 6px", "borderBottom": f"1px solid {DARKGRAY}"}),
+                    html.Th("Price", style={"textAlign": "right", "color": GRAY, "fontSize": "10px",
+                                            "padding": "3px 6px", "borderBottom": f"1px solid {DARKGRAY}"}),
+                ])),
+                html.Tbody(item_rows),
+            ], style={"width": "100%", "borderCollapse": "collapse", "marginBottom": "8px"}),
+            # Totals
+            html.Div([
+                html.Div([
+                    html.Span("Subtotal ", style={"color": GRAY, "fontSize": "11px"}),
+                    html.Span(f"${inv.get('subtotal', 0):,.2f}", style={"color": WHITE, "fontSize": "12px"}),
+                ]),
+                html.Div([
+                    html.Span("Tax ", style={"color": GRAY, "fontSize": "11px"}),
+                    html.Span(f"${inv.get('tax', 0):,.2f}", style={"color": WHITE, "fontSize": "12px"}),
+                ]),
+                html.Div([
+                    html.Span("Total ", style={"color": GRAY, "fontSize": "11px", "fontWeight": "bold"}),
+                    html.Span(f"${inv.get('grand_total', 0):,.2f}",
+                              style={"color": ORANGE, "fontSize": "14px", "fontWeight": "bold"}),
+                ], style={"marginTop": "2px"}),
+            ], style={"borderTop": f"1px solid {DARKGRAY}", "paddingTop": "6px"}),
+        ], style={"padding": "12px"})
 
-    ], style={"padding": "12px"})
+        # Card: flex row with PDF left, specs right
+        return html.Div([
+            html.Div(pdf_viewer, style={"flex": "0 0 40%", "padding": "12px"}),
+            html.Div(specs_panel, style={"flex": "1", "minWidth": "0"}),
+        ], style={
+            "display": "flex", "backgroundColor": CARD, "borderRadius": "12px",
+            "marginBottom": "12px", "border": f"1px solid {accent}22",
+            "overflow": "hidden",
+        })
+
+    # Sort invoices by date (newest first)
+    sorted_invoices = sorted(INVOICES, key=lambda o: o.get("date", ""), reverse=True)
+    try:
+        sorted_invoices = sorted(INVOICES,
+            key=lambda o: pd.to_datetime(o.get("date", ""), format="%B %d, %Y", errors="coerce"),
+            reverse=True)
+    except Exception:
+        pass
+
+    biz_cards = []
+    personal_cards = []
+    for inv in sorted_invoices:
+        is_personal = inv.get("source") == "Personal Amazon" or (
+            isinstance(inv.get("file", ""), str) and "Gigi" in inv.get("file", ""))
+        card = _make_receipt_card(inv, is_personal=is_personal)
+        if is_personal:
+            personal_cards.append(card)
+        else:
+            biz_cards.append(card)
+
+    gallery_children = [
+        html.H5(f"RECEIPT GALLERY  ({len(biz_cards)} business)", style={
+            "color": CYAN, "fontWeight": "bold", "marginBottom": "4px", "fontSize": "15px",
+        }),
+        html.P("Every uploaded receipt with embedded PDF viewer and parsed specs.",
+               style={"color": GRAY, "fontSize": "12px", "marginBottom": "14px"}),
+    ] + biz_cards
+
+    # Personal receipts in a collapsed section
+    if personal_cards:
+        gallery_children.append(
+            html.Details([
+                html.Summary(f"Personal Receipts ({len(personal_cards)})", style={
+                    "color": PINK, "fontSize": "14px", "fontWeight": "bold",
+                    "cursor": "pointer", "padding": "8px 0",
+                }),
+                html.Div(personal_cards),
+            ], open=False, style={
+                "marginTop": "14px", "backgroundColor": CARD2,
+                "padding": "12px 16px", "borderRadius": "10px",
+                "border": f"1px solid {PINK}33",
+            })
+        )
+
+    return html.Div(gallery_children, style={
+        "backgroundColor": CARD2, "padding": "20px", "borderRadius": "12px",
+        "marginTop": "14px", "border": f"1px solid {CYAN}33",
+        "borderTop": f"4px solid {CYAN}", "maxHeight": "800px", "overflowY": "auto",
+    })
 
 
 def _get_bank_computed():
@@ -3378,9 +6499,32 @@ _bank_cat_color_map, _bank_acct_gap, _bank_no_receipt, _bank_amazon_txns = _get_
 
 # ── Build Layout ─────────────────────────────────────────────────────────────
 
-app = dash.Dash(__name__)
+app = dash.Dash(
+    __name__,
+    suppress_callback_exceptions=True,
+    external_stylesheets=[
+        "https://cdn.jsdelivr.net/npm/bootswatch@5.3.3/dist/darkly/bootstrap.min.css",
+        "https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap",
+    ],
+)
 server = app.server
 app.title = "TJs Software Project"
+
+# ── Source → subfolder mapping for receipt PDFs ─────────────────────────────
+_SOURCE_FOLDER_MAP = {
+    "Key Component Mfg": "keycomp",
+    "Personal Amazon": "personal_amazon",
+    "Hobby Lobby": "other_receipts",
+    "Home Depot": "other_receipts",
+    "Oklahoma Secretary of State": "other_receipts",
+    "SUNLU": "other_receipts",
+    "Alibaba": "other_receipts",
+}
+
+@server.route("/api/receipt/<subfolder>/<path:filename>")
+def serve_receipt_pdf(subfolder, filename):
+    folder = os.path.join(BASE_DIR, "data", "invoices", subfolder)
+    return flask.send_from_directory(folder, filename)
 
 # Shared tab styling
 tab_style = {
@@ -3575,7 +6719,7 @@ def build_tab5_tax_forms():
             html.Div("COST OF GOODS SOLD", style={"color": ORANGE, "fontWeight": "bold", "fontSize": "12px",
                       "marginTop": "4px", "marginBottom": "4px"}),
             row_item("Inventory (invoices)", -d["inventory_cost"], indent=1, color=GRAY),
-            row_item("Amazon Inventory (bank)", -d["bank_inv"], indent=1, color=GRAY),
+            row_item("Additional bank Amazon (not in receipts)", -d["bank_inv_gap"], indent=1, color=GRAY) if d["bank_inv_gap"] > 0 else html.Div(),
             row_item("Total COGS", -d["cogs"], bold=True),
             divider(),
             row_item("GROSS PROFIT", gross_profit, bold=True, color=GREEN),
@@ -4233,7 +7377,7 @@ def build_tab5_tax_forms():
                       "border": f"1px solid {RED}33"}),
     ]))
 
-    return html.Div(children, style={"padding": "16px"})
+    return html.Div(children, style={"padding": TAB_PADDING})
 
 
 def build_tab6_valuation():
@@ -4245,7 +7389,7 @@ def build_tab6_valuation():
         kpi_card("BUSINESS VALUE", money(val_blended_mid), CYAN, f"Range: {money(val_blended_low)} — {money(val_blended_high)}",
                  f"Blended estimate using 3 methods: SDE Multiple (50% weight, {money(val_sde_mid)}), Revenue Multiple (25%, {money(val_rev_mid)}), Asset-Based (25%, {money(val_asset_val)}). Low estimate: {money(val_blended_low)}, high: {money(val_blended_high)}. This is what the business would likely sell for."),
         kpi_card("ANNUAL SDE", money(val_annual_sde), GREEN, f"Monthly: {money(val_sde / _val_months_operating)}",
-                 f"Seller's Discretionary Earnings = Real Profit ({money(real_profit)}) + Owner Draws ({money(bank_owner_draw_total)}), annualized from {_val_months_operating} months. SDE represents what a single owner-operator could earn. It's the most common metric for valuing small businesses."),
+                 f"Seller's Discretionary Earnings = Profit ({money(profit)}) + Owner Draws ({money(bank_owner_draw_total)}), annualized from {_val_months_operating} months. SDE represents what a single owner-operator could earn. It's the most common metric for valuing small businesses."),
         kpi_card("HEALTH SCORE", f"{val_health_score}/100 ({val_health_grade})", val_health_color,
                  "Profitability + Growth + Cash + Diversity",
                  f"Composite score: Profitability {_hs_profit:.0f}/25 + Growth {_hs_growth:.0f}/25 + Product Diversity {_hs_diversity:.0f}/15 + Cash Position {_hs_cash:.0f}/15 + Debt {_hs_debt:.0f}/10 + Shipping {_hs_shipping:.0f}/10. Grade: A (80+), B (60-79), C (40-59), D (below 40)."),
@@ -4473,8 +7617,8 @@ def build_tab6_valuation():
     ], GREEN))
 
     # ── SECTION E: REVENUE TO VALUE BRIDGE (Waterfall) ──
-    wf_labels = ["Gross Sales", "Fees", "Shipping", "Ads", "Refunds", "= ETSY NET",
-                  "Bank Expenses", "= REAL PROFIT", "Owner Draws", "= SDE"]
+    wf_labels = ["Gross Sales", "Fees", "Shipping", "Ads", "Refunds", "= After Etsy Fees",
+                  "Bank Expenses", "= PROFIT", "Owner Draws", "= SDE"]
     wf_values = [gross_sales, -total_fees, -total_shipping_cost, -total_marketing, -total_refunds, 0,
                  -bank_all_expenses, 0, bank_owner_draw_total, 0]
     wf_measures = ["absolute", "relative", "relative", "relative", "relative", "total",
@@ -4495,7 +7639,7 @@ def build_tab6_valuation():
     waterfall_fig.update_layout(title="Revenue to SDE Bridge", showlegend=False)
 
     # Efficiency KPIs
-    _profit_per_order = real_profit / order_count if order_count else 0
+    _profit_per_order = profit / order_count if order_count else 0
     _revenue_per_day = gross_sales / days_active if days_active else 0
     _etsy_take_rate = (total_fees + total_shipping_cost + total_marketing) / gross_sales * 100 if gross_sales else 0
 
@@ -4505,7 +7649,7 @@ def build_tab6_valuation():
         dcc.Graph(figure=waterfall_fig, config={"displayModeBar": False}),
         html.Div([
             kpi_card("Profit / Order", money(_profit_per_order), GREEN, f"{order_count} orders",
-                     f"Real profit ({money(real_profit)}) divided by {order_count} orders. This is how much profit you actually make per sale after ALL costs. Higher is better -- raise this by increasing prices, reducing shipping costs, or cutting refunds."),
+                     f"Profit ({money(profit)}) divided by {order_count} orders. This is how much profit you actually make per sale after ALL costs. Higher is better -- raise this by increasing prices, reducing shipping costs, or cutting refunds."),
             kpi_card("Monthly Run Rate", money(val_monthly_run_rate), TEAL, f"{_val_months_operating} months",
                      f"Average monthly gross sales: {money(gross_sales)} over {_val_months_operating} months. This is what you'd expect to earn in a typical month at current pace. Annualized: {money(val_annual_revenue)}."),
             kpi_card("Revenue / Day", money(_revenue_per_day), BLUE, f"{days_active} days active",
@@ -4633,8 +7777,8 @@ def build_tab6_valuation():
     _refund_rate = total_refunds / gross_sales * 100 if gross_sales else 0
     _cogs_ratio = true_inventory_cost / gross_sales * 100 if gross_sales else 0
 
-    bench_categories = ["Profit Margin", "Fee Rate", "Refund Rate", "COGS Ratio", "Monthly Growth"]
-    bench_actual = [real_profit_margin, _fee_rate, _refund_rate, _cogs_ratio, _val_growth_pct]
+    bench_categories = ["Profit Margin", "Fee Rate", "Refund Rate", "Supply Cost Ratio", "Monthly Growth"]
+    bench_actual = [profit_margin, _fee_rate, _refund_rate, _cogs_ratio, _val_growth_pct]
     bench_avg = [15, 13, 3.0, 25, 5]  # Industry averages for small Etsy businesses
     bench_good = [25, 10, 1.5, 15, 10]  # "Good" benchmarks
 
@@ -4696,7 +7840,7 @@ def build_tab6_valuation():
     children.append(section("J. KEY METRICS TIMELINE", [
         chart_context("Monthly revenue (bars) with profit margin % and AOV overlaid.",
                       metrics=[
-                          ("Avg Margin", f"{real_profit_margin:.1f}%", ORANGE),
+                          ("Avg Margin", f"{profit_margin:.1f}%", ORANGE),
                           ("Avg AOV", money(avg_order), PURPLE),
                           ("Months", str(_val_months_operating), GRAY),
                       ],
@@ -4709,7 +7853,7 @@ def build_tab6_valuation():
         html.Div([
             html.H4("Methodology", style={"color": CYAN, "fontSize": "13px", "margin": "0 0 8px 0"}),
             html.Ul([
-                html.Li([html.B("SDE Multiple (50%): "), "Seller's Discretionary Earnings = Real Profit + Owner Draws. "
+                html.Li([html.B("SDE Multiple (50%): "), "Seller's Discretionary Earnings = Profit + Owner Draws. "
                          "Annualized from 5 months, multiplied by 1.0x (floor), 1.5x (typical), 2.5x (optimistic) for small e-commerce businesses."],
                         style={"color": GRAY, "fontSize": "12px", "marginBottom": "4px"}),
                 html.Li([html.B("Revenue Multiple (25%): "), "Gross sales annualized, multiplied by 0.3x-1.0x. "
@@ -4744,70 +7888,288 @@ def build_tab6_valuation():
         ]),
     ], GRAY))
 
-    return html.Div(children, style={"padding": "16px"})
+    return html.Div(children, style={"padding": TAB_PADDING})
+
+
+def _build_health_checks():
+    """Scan ALL data sources and return a todo/health panel with every issue found."""
+    todos = []  # list of (priority, icon, color, title, detail)
+
+    # ── 1. Missing Etsy CSVs (gaps in monthly coverage) ──
+    etsy_dir = os.path.join(BASE_DIR, "data", "etsy_statements")
+    etsy_months_found = set()
+    if os.path.isdir(etsy_dir):
+        for fn in os.listdir(etsy_dir):
+            if fn.endswith(".csv"):
+                # Try to extract YYYY_MM from filename
+                import re as _re
+                m = _re.search(r"(\d{4})_(\d{2})", fn)
+                if m:
+                    etsy_months_found.add(f"{m.group(1)}-{m.group(2)}")
+    if etsy_months_found:
+        all_months = sorted(etsy_months_found)
+        first_y, first_m = map(int, all_months[0].split("-"))
+        last_y, last_m = map(int, all_months[-1].split("-"))
+        expected = set()
+        y, mo = first_y, first_m
+        while (y, mo) <= (last_y, last_m):
+            expected.add(f"{y}-{mo:02d}")
+            mo += 1
+            if mo > 12:
+                mo = 1
+                y += 1
+        missing_etsy = sorted(expected - etsy_months_found)
+        for mm in missing_etsy:
+            todos.append((1, "\U0001f4c4", RED, f"Missing Etsy statement: {mm}",
+                          f"Upload etsy_statement_{mm.replace('-', '_')}.csv in Data Hub"))
+    if not etsy_months_found:
+        todos.append((1, "\U0001f4c4", RED, "No Etsy statements uploaded",
+                      "Go to Data Hub and upload your Etsy CSV statements"))
+
+    # ── 2. Missing bank statements ──
+    if bank_statement_count == 0:
+        todos.append((1, "\U0001f3e6", RED, "No bank statements uploaded",
+                      "Go to Data Hub and upload your Capital One PDF statements"))
+    elif bank_statement_count < 3:
+        todos.append((2, "\U0001f3e6", ORANGE, f"Only {bank_statement_count} bank statement(s)",
+                      "Upload more bank statements for better cash flow tracking"))
+
+    # ── 3. No receipts at all ──
+    if len(INVOICES) == 0:
+        todos.append((1, "\U0001f9fe", RED, "No inventory receipts uploaded",
+                      "Upload Amazon/supplier invoices in Data Hub to track COGS"))
+
+    # ── 4. Unreviewed inventory items (no _ITEM_DETAILS entry) ──
+    unreviewed_items = []
+    for inv in INVOICES:
+        for item in inv["items"]:
+            key = (inv["order_num"], item["name"])
+            if key not in _ITEM_DETAILS:
+                unreviewed_items.append(item["name"][:40])
+    if unreviewed_items:
+        count = len(unreviewed_items)
+        examples = ", ".join(unreviewed_items[:3])
+        todos.append((2, "\u270f\ufe0f", ORANGE,
+                      f"{count} inventory item(s) need naming/categorizing",
+                      f"Go to Inventory tab editor. Examples: {examples}{'...' if count > 3 else ''}"))
+
+    # ── 5. Items without images ──
+    no_image_items = []
+    if len(STOCK_SUMMARY) > 0:
+        for _, row in STOCK_SUMMARY.iterrows():
+            name = row["display_name"]
+            if not _IMAGE_URLS.get(name, ""):
+                no_image_items.append(name[:35])
+    if no_image_items:
+        count = len(no_image_items)
+        examples = ", ".join(no_image_items[:3])
+        todos.append((3, "\U0001f5bc\ufe0f", CYAN,
+                      f"{count} product(s) missing images",
+                      f"Add image URLs in Inventory tab. Examples: {examples}{'...' if count > 3 else ''}"))
+
+    # ── 6. Out-of-stock items ──
+    oos_items = []
+    if len(STOCK_SUMMARY) > 0:
+        oos = STOCK_SUMMARY[STOCK_SUMMARY["in_stock"] <= 0]
+        oos_items = list(oos["display_name"].values[:5])
+    if oos_items:
+        count = len(STOCK_SUMMARY[STOCK_SUMMARY["in_stock"] <= 0])
+        todos.append((2, "\U0001f6a8", RED,
+                      f"{count} item(s) out of stock",
+                      f"Reorder needed: {', '.join(oos_items)}{'...' if count > 5 else ''}"))
+
+    # ── 7. Low stock items (1-2 remaining) ──
+    if len(STOCK_SUMMARY) > 0:
+        low = STOCK_SUMMARY[STOCK_SUMMARY["in_stock"].between(1, 2)]
+        if len(low) > 0:
+            low_names = list(low["display_name"].values[:5])
+            todos.append((3, "\u26a0", ORANGE,
+                          f"{len(low)} item(s) low stock (1-2 left)",
+                          f"Running low: {', '.join(low_names)}{'...' if len(low) > 5 else ''}"))
+
+    # ── 8. Receipt COGS vs Bank Amazon — compare totals ──
+    _bank_amz = bank_by_cat.get("Amazon Inventory", 0)
+    _cogs_outside_bank = max(0, true_inventory_cost - _bank_amz)
+    if _cogs_outside_bank > 50:
+        todos.append((3, "\U0001f50d", CYAN,
+                      f"${_cogs_outside_bank:,.0f} in supplies on other cards (not in bank)",
+                      f"Receipts: ${true_inventory_cost:,.0f} total supplies. Bank sees ${_bank_amz:,.0f} (Amazon debits). "
+                      f"The ${_cogs_outside_bank:,.0f} difference is from other cards (Discover, Visa, etc.)."))
+    elif _bank_amz > true_inventory_cost + 50 and true_inventory_cost > 0:
+        _missing_receipts = _bank_amz - true_inventory_cost
+        todos.append((2, "\U0001f9fe", ORANGE,
+                      f"${_missing_receipts:,.0f} in bank Amazon debits without matching receipts",
+                      f"Bank shows ${_bank_amz:,.0f} in Amazon purchases but receipts only total "
+                      f"${true_inventory_cost:,.0f}. Upload the missing invoice PDFs in Data Hub."))
+
+    # ── 10. Etsy balance gap ──
+    if abs(etsy_csv_gap) > 5:
+        todos.append((2, "\U0001f4b1", ORANGE,
+                      f"Etsy balance gap: ${abs(etsy_csv_gap):,.2f}",
+                      f"Reported: ${etsy_balance:,.2f} vs Calculated: ${etsy_balance_calculated:,.2f}. "
+                      f"May indicate a missing Etsy CSV or pending transactions."))
+
+    # ── 11. Uncategorized bank transactions ──
+    _pending = bank_by_cat.get("Pending", 0)
+    _pending_count = sum(1 for t in BANK_TXNS if t.get("category") == "Pending")
+    if _pending_count > 0:
+        todos.append((3, "\U0001f4b3", CYAN,
+                      f"{_pending_count} pending bank transaction(s) (${_pending:,.0f})",
+                      "These haven't been categorized yet. Update bank parser if they're recurring."))
+
+    # ── 12. Draw imbalance ──
+    if draw_diff > 50:
+        todos.append((3, "\U0001f91d", ORANGE,
+                      f"Owner draw imbalance: ${draw_diff:,.0f} ({draw_owed_to} is owed)",
+                      f"TJ: ${tulsa_draw_total:,.0f} vs Braden: ${texas_draw_total:,.0f}. "
+                      f"50/50 split means {draw_owed_to} needs ${draw_diff:,.0f} to even out."))
+
+    # Sort by priority (1=critical, 2=warning, 3=info)
+    todos.sort(key=lambda x: x[0])
+
+    if not todos:
+        return html.Div([
+            html.Div([
+                html.Span("\u2705", style={"fontSize": "20px", "marginRight": "8px"}),
+                html.Span("ALL CLEAR", style={"color": GREEN, "fontWeight": "bold",
+                                                "fontSize": "15px", "letterSpacing": "1.5px"}),
+            ], style={"marginBottom": "6px"}),
+            html.P("All data sources are connected, up to date, and balanced.",
+                   style={"color": GRAY, "fontSize": "13px", "margin": "0"}),
+        ], style={
+            "backgroundColor": CARD2, "borderRadius": "10px", "padding": "14px 16px",
+            "border": f"1px solid {GREEN}33", "marginBottom": "14px",
+        })
+
+    # Build todo rows
+    todo_rows = []
+    for pri, icon, color, title, detail in todos:
+        pri_badge = {1: ("CRITICAL", RED), 2: ("ACTION", ORANGE), 3: ("INFO", CYAN)}[pri]
+        todo_rows.append(html.Div([
+            html.Div([
+                html.Span(icon, style={"fontSize": "16px", "width": "24px", "textAlign": "center",
+                                        "flexShrink": "0"}),
+                html.Span(pri_badge[0], style={
+                    "fontSize": "9px", "fontWeight": "bold", "padding": "2px 6px",
+                    "borderRadius": "3px", "backgroundColor": f"{pri_badge[1]}22",
+                    "color": pri_badge[1], "letterSpacing": "0.5px", "flexShrink": "0",
+                }),
+                html.Span(title, style={"color": WHITE, "fontSize": "13px", "fontWeight": "600",
+                                         "flex": "1"}),
+            ], style={"display": "flex", "alignItems": "center", "gap": "8px"}),
+            html.P(detail, style={"color": GRAY, "fontSize": "11px", "margin": "3px 0 0 32px",
+                                   "lineHeight": "1.4"}),
+        ], style={"padding": "8px 10px", "borderBottom": "1px solid #ffffff08"}))
+
+    critical_count = sum(1 for t in todos if t[0] == 1)
+    action_count = sum(1 for t in todos if t[0] == 2)
+    info_count = sum(1 for t in todos if t[0] == 3)
+    badge_parts = []
+    if critical_count:
+        badge_parts.append(html.Span(f"{critical_count} critical", style={"color": RED, "fontSize": "12px"}))
+    if action_count:
+        badge_parts.append(html.Span(f"{action_count} action", style={"color": ORANGE, "fontSize": "12px"}))
+    if info_count:
+        badge_parts.append(html.Span(f"{info_count} info", style={"color": CYAN, "fontSize": "12px"}))
+
+    return html.Div([
+        html.Div([
+            html.Span("\U0001f4cb", style={"fontSize": "18px", "marginRight": "8px"}),
+            html.Span("DASHBOARD HEALTH", style={"fontSize": "14px", "fontWeight": "bold",
+                                                    "color": RED if critical_count else ORANGE,
+                                                    "letterSpacing": "1.5px"}),
+            html.Span(" — ", style={"color": DARKGRAY, "margin": "0 6px"}),
+        ] + [html.Span(" | ", style={"color": DARKGRAY}) if i > 0 else html.Span("") for i, _ in enumerate(badge_parts)
+             for _ in [None]] + badge_parts if False else (
+            [html.Span("\U0001f4cb", style={"fontSize": "18px", "marginRight": "8px"}),
+             html.Span("DASHBOARD HEALTH", style={"fontSize": "14px", "fontWeight": "bold",
+                                                     "color": RED if critical_count else ORANGE,
+                                                     "letterSpacing": "1.5px"}),
+             html.Span(f"  {len(todos)} issue{'s' if len(todos) != 1 else ''}",
+                        style={"color": GRAY, "fontSize": "12px", "marginLeft": "8px"}),
+            ]
+        ), style={"marginBottom": "8px", "display": "flex", "alignItems": "center"}),
+        html.Div(todo_rows, style={"backgroundColor": "#0f0f1a", "borderRadius": "8px",
+                                     "overflow": "hidden", "maxHeight": "300px", "overflowY": "auto"}),
+    ], style={
+        "backgroundColor": CARD2, "borderRadius": "10px", "padding": "14px 16px",
+        "border": f"1px solid {RED if critical_count else ORANGE}33",
+        "marginBottom": "14px",
+    })
+
+
+def _build_pl_row(label, amount_str, color, bold=False, border=False):
+    """Return a list of Dash components for one P&L waterfall row.
+    Use * splat to unpack into a parent's children list."""
+    row_style = {
+        "display": "flex", "justifyContent": "space-between",
+        "padding": "4px 0",
+        "fontWeight": "bold" if bold else "normal",
+    }
+    if border:
+        row_style["borderTop"] = f"1px solid {DARKGRAY}44"
+        row_style["marginTop"] = "2px"
+        row_style["paddingTop"] = "6px"
+    return [html.Div([
+        html.Span(label, style={"color": color if bold else GRAY, "flex": "1",
+                                 "fontSize": "14px" if bold else "13px"}),
+        html.Span(amount_str, style={"color": color, "fontFamily": "monospace",
+                                      "fontSize": "14px" if bold else "13px",
+                                      "fontWeight": "bold" if bold else "normal"}),
+    ], style=row_style)]
 
 
 def build_tab1_overview():
     """Tab 1 - Overview: Business health at a glance. Single screen, no scrolling."""
-    _total_deductions = total_fees + total_shipping_cost + total_marketing + total_refunds
-    _draw_text = (f"Company owes {draw_owed_to} ${draw_diff:,.2f}"
-                  if draw_diff >= 0.01 else "Even!")
     return html.Div([
-        # KPI Strip (5 cards)
+        # KPI Strip (4 pills)
         html.Div([
-            kpi_card("REAL PROFIT", f"${real_profit:,.2f}", GREEN, f"{real_profit_margin:.1f}% margin",
-                     f"Cash you HAVE (${bank_cash_on_hand:,.2f}) + cash you TOOK as draws (${bank_owner_draw_total:,.2f}). This is the true profit the business generated, bank-reconciled. Not an Etsy estimate -- this comes from actual bank deposits minus actual bank expenses."),
-            kpi_card("CASH ON HAND", f"${bank_cash_on_hand:,.2f}", CYAN,
-                     f"Bank ${bank_net_cash:,.0f} + Etsy ${etsy_balance:,.0f}",
-                     f"Capital One checking balance (${bank_net_cash:,.2f}) plus money sitting in your Etsy payment account (${etsy_balance:,.2f}) waiting to be deposited. This is liquid cash available to the business right now."),
-            kpi_card("DEBT", f"${bb_cc_balance:,.2f}", RED,
-                     f"Best Buy CC (${bb_cc_available:,.0f} avail)",
-                     f"Best Buy Citi credit card. Total charged: ${bb_cc_total_charged:,.2f} for business equipment (3D printers, etc). Paid back: ${bb_cc_total_paid:,.2f}. Remaining balance: ${bb_cc_balance:,.2f}. Credit limit: ${bb_cc_limit:,.2f}, available: ${bb_cc_available:,.2f}. This is the ONLY debt the business has."),
-            kpi_card("DRAW SETTLEMENT", _draw_text, ORANGE,
-                     f"TJ ${tulsa_draw_total:,.0f} | Braden ${texas_draw_total:,.0f}",
-                     f"Owner draws are personal withdrawals from the business. TJ (Tulsa) took ${tulsa_draw_total:,.2f}, Braden (Texas) took ${texas_draw_total:,.2f}. As 50/50 partners, draws should be equal. The difference (${draw_diff:,.2f}) is owed to {draw_owed_to}."),
-            kpi_card("GROSS SALES", f"${gross_sales:,.2f}", TEAL, f"{order_count} orders",
-                     f"Total revenue from {order_count} Etsy sales before any deductions. Average order value: ${avg_order:,.2f}. This is the top-line number -- what customers paid. Etsy fees, shipping labels, ads, and refunds all come out of this."),
-            kpi_card("TOTAL DEDUCTIONS", f"${_total_deductions:,.2f}", RED,
-                     "Fees+Ship+Ads+Refunds",
-                     f"Everything Etsy takes before depositing to your bank. Fees: ${total_fees:,.2f} (listing, transaction, processing). Shipping labels: ${total_shipping_cost:,.2f}. Ads: ${total_marketing:,.2f}. Refunds: ${total_refunds:,.2f}. That's {_total_deductions / gross_sales * 100:.1f}% of gross sales."),
+            _build_kpi_pill("\U0001f4ca", "REVENUE", f"${gross_sales:,.2f}", TEAL,
+                            f"{order_count} orders, avg ${avg_order:,.2f}",
+                            f"Total from {order_count} orders, avg ${avg_order:,.2f} each."),
+            _build_kpi_pill("\U0001f4b0", "PROFIT", f"${profit:,.2f}", GREEN,
+                            f"{profit_margin:.1f}% margin",
+                            f"Revenue minus all costs -- {profit_margin:.1f}% margin."),
+            _build_kpi_pill("\U0001f3e6", "CASH", f"${bank_cash_on_hand:,.2f}", CYAN,
+                            f"Bank ${bank_net_cash:,.0f} + Etsy ${etsy_balance:,.0f}",
+                            f"Bank ${bank_net_cash:,.2f} + Etsy pending ${etsy_balance:,.2f}."),
+            _build_kpi_pill("\U0001f4b3", "DEBT", f"${bb_cc_balance:,.2f}", RED,
+                            f"Best Buy CC (${bb_cc_available:,.0f} avail)",
+                            f"Best Buy Citi CC -- ${bb_cc_available:,.0f} available of ${bb_cc_limit:,.0f} limit."),
         ], style={"display": "flex", "gap": "8px", "marginBottom": "14px", "flexWrap": "wrap"}),
-        html.P("Your business at a glance -- profit, cash, and what's owed.",
-               style={"color": GRAY, "margin": "-6px 0 12px 0", "fontSize": "13px"}),
+
+        # Dashboard Health / To-Do panel
+        _build_health_checks(),
+
+        # Simplified data sources one-liner
+        html.Div([
+            html.Span(f"{order_count} orders", style={"color": TEAL, "fontWeight": "bold", "fontSize": "13px"}),
+            html.Span("  |  ", style={"color": DARKGRAY}),
+            html.Span(f"{len(BANK_TXNS)} bank transactions", style={"color": CYAN, "fontWeight": "bold", "fontSize": "13px"}),
+            html.Span("  |  ", style={"color": DARKGRAY}),
+            html.Span(f"{len(INVOICES)} receipts", style={"color": PURPLE, "fontWeight": "bold", "fontSize": "13px"}),
+        ], style={"backgroundColor": CARD, "padding": "10px 16px", "borderRadius": "10px",
+                  "borderLeft": f"4px solid {CYAN}", "marginBottom": "12px", "textAlign": "center"}),
 
         # Quick P&L + Monthly chart side by side
         html.Div([
-            # Quick P&L (compact, 5 lines)
+            # Quick P&L
             html.Div([
-                html.H3("QUICK P&L (Profit & Loss)", style={"color": CYAN, "margin": "0 0 10px 0", "fontSize": "15px"}),
+                html.H3("Profit & Loss", style={"color": CYAN, "margin": "0 0 10px 0", "fontSize": "15px"}),
+                *_build_pl_row("Gross Sales", f"${gross_sales:,.0f}", GREEN, bold=True),
+                *_build_pl_row("  Etsy Deductions (fees, ship, ads, refunds, tax)",
+                               f"-${gross_sales - etsy_net:,.0f}", RED),
+                *_build_pl_row("= After Etsy Fees", f"${etsy_net:,.0f}", WHITE, bold=True, border=True),
+                *_build_pl_row("  Supplies & Materials",
+                               f"-${true_inventory_cost:,.0f}", RED),
+                *_build_pl_row("  Business Expenses",
+                               f"-${max(0, bank_total_debits - bank_amazon_inv - bank_owner_draw_total):,.0f}", RED),
+                *_build_pl_row("  Owner Draws (TJ + Braden)",
+                               f"-${bank_owner_draw_total:,.0f}", ORANGE),
                 html.Div([
-                    html.Span("Gross Sales", style={"color": WHITE, "flex": "1", "fontSize": "14px"}),
-                    html.Span(f"${gross_sales:,.0f}", style={"color": GREEN, "fontFamily": "monospace",
-                              "fontSize": "16px", "fontWeight": "bold"}),
-                ], style={"display": "flex", "justifyContent": "space-between", "padding": "6px 0",
-                          "borderBottom": "1px solid #ffffff10"}),
-                html.Div([
-                    html.Span("  Etsy Deductions (fees, labels, ads, tax, refunds)", style={"color": GRAY, "flex": "1", "fontSize": "13px"}),
-                    html.Span(f"-${_total_deductions:,.0f}", style={"color": RED, "fontFamily": "monospace",
-                              "fontSize": "14px"}),
-                ], style={"display": "flex", "justifyContent": "space-between", "padding": "4px 0",
-                          "borderBottom": "1px solid #ffffff08"}),
-                html.Div([
-                    html.Span("  Bank Expenses (inventory, supplies, subscriptions)", style={"color": GRAY, "flex": "1", "fontSize": "13px"}),
-                    html.Span(f"-${bank_all_expenses:,.0f}", style={"color": RED, "fontFamily": "monospace",
-                              "fontSize": "14px"}),
-                ], style={"display": "flex", "justifyContent": "space-between", "padding": "4px 0",
-                          "borderBottom": "1px solid #ffffff08"}),
-                html.Div([
-                    html.Span("  Owner Draws (TJ + Braden)", style={"color": GRAY, "flex": "1", "fontSize": "13px"}),
-                    html.Span(f"-${bank_owner_draw_total:,.0f}", style={"color": ORANGE, "fontFamily": "monospace",
-                              "fontSize": "14px"}),
-                ], style={"display": "flex", "justifyContent": "space-between", "padding": "4px 0",
-                          "borderBottom": "1px solid #ffffff10"}),
-                html.Div([
-                    html.Span("= REAL PROFIT", style={"color": GREEN, "flex": "1", "fontSize": "16px",
+                    html.Span("= CASH ON HAND", style={"color": GREEN, "flex": "1", "fontSize": "16px",
                               "fontWeight": "bold"}),
-                    html.Span(f"${real_profit:,.0f}", style={"color": GREEN, "fontFamily": "monospace",
+                    html.Span(f"${bank_cash_on_hand:,.0f}", style={"color": GREEN, "fontFamily": "monospace",
                               "fontSize": "18px", "fontWeight": "bold"}),
                 ], style={"display": "flex", "justifyContent": "space-between", "padding": "8px 0",
                           "borderTop": f"2px solid {GREEN}44", "marginTop": "4px"}),
@@ -4819,7 +8181,7 @@ def build_tab1_overview():
                 dcc.Graph(figure=monthly_fig, config={"displayModeBar": False}),
             ], style={"flex": "2"}),
         ], style={"display": "flex", "gap": "12px"}),
-    ], style={"padding": "12px"})
+    ], style={"padding": TAB_PADDING})
 
 
 def build_tab2_deep_dive():
@@ -4942,7 +8304,7 @@ def build_tab2_deep_dive():
             "Running totals since your first sale. The gap between the green (revenue) and orange (profit) lines = total costs paid to date.",
             metrics=[
                 ("Total Revenue", f"${gross_sales:,.0f}", GREEN),
-                ("Total Profit", f"${net_profit:,.0f}", ORANGE),
+                ("Total Profit", f"${etsy_net:,.0f}", ORANGE),
                 ("Total Costs", f"${_total_costs:,.0f}", RED),
                 ("Margin", f"{_net_margin_overall:.1f}%", TEAL),
             ],
@@ -5067,7 +8429,7 @@ def build_tab2_deep_dive():
                         ("Unit Margin", f"{_unit_margin:.1f}%", GREEN if _unit_margin > 20 else ORANGE),
                         ("COGS/Order", money(_unit_cogs), PURPLE),
                     ],
-                    look_for="Profit bar should be at least 20% of revenue bar. If COGS is the biggest deduction, find cheaper suppliers.",
+                    look_for="Profit bar should be at least 20% of revenue bar. If supply costs are the biggest deduction, find cheaper suppliers.",
                     simple="Start with what a customer pays (left bar). Each red bar shows where that money goes -- fees, shipping, etc. The blue bar at the end is your actual profit per order. If the blue bar is small, your costs are eating too much.",
                 ),
                 dcc.Graph(figure=unit_wf, config={"displayModeBar": False}, style={"height": "340px"}),
@@ -5097,7 +8459,7 @@ def build_tab2_deep_dive():
             "(% of revenue going to materials). Rising ratio = margins shrinking.",
             metrics=[
                 ("Total Inventory", money(true_inventory_cost), PURPLE),
-                ("COGS Ratio", f"{true_inventory_cost / gross_sales * 100:.1f}%" if gross_sales else "N/A", ORANGE),
+                ("Supply Cost Ratio", f"{true_inventory_cost / gross_sales * 100:.1f}%" if gross_sales else "N/A", ORANGE),
                 ("Avg Monthly Spend", money(true_inventory_cost / _val_months_operating), TEAL),
             ],
             look_for="COGS ratio should stay flat or decrease. If it's rising, you're spending more on materials relative to sales.",
@@ -5164,28 +8526,30 @@ def build_tab2_deep_dive():
 
         # Key financial metrics grid
         html.Div([
-            kpi_card("INVENTORY TURNOVER",
+            _build_kpi_pill("🔄", "INVENTORY TURNOVER",
                      f"{gross_sales / true_inventory_cost:.1f}x" if true_inventory_cost > 0 else "N/A",
-                     TEAL, "Revenue / Inventory Cost",
-                     f"How many times your inventory investment generates revenue. {gross_sales / true_inventory_cost:.1f}x means "
-                     f"every $1 of inventory generates ${gross_sales / true_inventory_cost:.2f} in revenue. "
-                     f"Higher is better. Benchmark: 4-8x for handmade goods." if true_inventory_cost > 0 else "No inventory data."),
-            kpi_card("GROSS MARGIN",
+                     TEAL,
+                     detail=(f"How many times your inventory investment generates revenue. {gross_sales / true_inventory_cost:.1f}x means "
+                             f"every $1 of inventory generates ${gross_sales / true_inventory_cost:.2f} in revenue. "
+                             f"Higher is better. Benchmark: 4-8x for handmade goods." if true_inventory_cost > 0 else "No inventory data.")),
+            _build_kpi_pill("📊", "GROSS MARGIN",
                      f"{(gross_sales - true_inventory_cost) / gross_sales * 100:.1f}%" if gross_sales else "N/A",
-                     GREEN, "Revenue minus COGS only",
-                     f"Revenue ({money(gross_sales)}) minus cost of goods ({money(true_inventory_cost)}) = "
-                     f"{money(gross_sales - true_inventory_cost)} gross profit. This ignores Etsy fees and other expenses. "
-                     f"Benchmark: >60% for handmade, >40% for resale."),
-            kpi_card("OPERATING MARGIN",
-                     f"{real_profit_margin:.1f}%", GREEN if real_profit_margin > 15 else ORANGE,
-                     "After ALL expenses",
-                     f"Real profit ({money(real_profit)}) as % of revenue. This is after everything: Etsy fees, shipping, "
-                     f"ads, refunds, inventory, bank expenses. >20% is excellent for e-commerce."),
-            kpi_card("CASH CONVERSION",
+                     GREEN, subtitle="Revenue minus COGS only",
+                     detail=(f"Revenue ({money(gross_sales)}) minus cost of goods ({money(true_inventory_cost)}) = "
+                             f"{money(gross_sales - true_inventory_cost)} gross profit. This ignores Etsy fees and other expenses. "
+                             f"Benchmark: >60% for handmade, >40% for resale.")),
+            _build_kpi_pill("💰", "OPERATING MARGIN",
+                     f"{profit_margin:.1f}%", GREEN if profit_margin > 15 else ORANGE,
+                     subtitle="After ALL expenses",
+                     detail=(f"Revenue minus all costs. Bank profit ({money(real_profit)}) minus credit card supplies "
+                             f"({money(receipt_cogs_outside_bank)}). Receipts: {money(true_inventory_cost)} supplies, "
+                             f"bank sees {money(bank_amazon_inv)}. "
+                             f"Result: {money(profit)} ({profit_margin:.1f}%).")),
+            _build_kpi_pill("💵", "CASH CONVERSION",
                      f"{bank_cash_on_hand / gross_sales * 100:.1f}%" if gross_sales else "N/A",
-                     CYAN, "Cash retained / Revenue",
-                     f"What % of gross sales you actually retained as cash: {money(bank_cash_on_hand)} / {money(gross_sales)}. "
-                     f"The rest went to expenses, inventory, and owner draws. Higher = more efficient cash management."),
+                     CYAN, subtitle="Cash retained / Revenue",
+                     detail=(f"What % of gross sales you actually retained as cash: {money(bank_cash_on_hand)} / {money(gross_sales)}. "
+                             f"The rest went to expenses, inventory, and owner draws. Higher = more efficient cash management.")),
         ], style={"display": "flex", "gap": "8px", "flexWrap": "wrap", "marginBottom": "14px"}),
 
         # ── CHATBOT ──
@@ -5251,7 +8615,7 @@ def build_tab2_deep_dive():
 
         # Hidden store for conversation history
         dcc.Store(id="chat-store", data=[]),
-    ], style={"padding": "14px"})
+    ], style={"padding": TAB_PADDING})
 
 
 def build_tab3_financials():
@@ -5268,7 +8632,7 @@ def build_tab3_financials():
     _wf_labels = [
         "Gross Sales",
         "Fees", "Ship Labels", "Ads", "Refunds",
-        "ETSY NET",
+        "AFTER ETSY FEES",
         "Amazon Inv.", "AliExpress", "Craft", "Etsy Fees",
         "Subscriptions", "Ship Supplies", "Best Buy CC",
         "Owner Draws",
@@ -5326,25 +8690,27 @@ def build_tab3_financials():
         html.P("Complete breakdown of every dollar in and out.",
                style={"color": GRAY, "margin": "0 0 10px 0", "fontSize": "13px"}),
 
-        # KPI cards
+        # KPI pills
         html.Div([
-            kpi_card("DEBT", f"${bb_cc_balance:,.2f}", RED,
-                     f"Best Buy CC (${bb_cc_available:,.0f} avail)",
-                     f"Best Buy Citi credit card used for business equipment (3D printers, etc). Charged: ${bb_cc_total_charged:,.2f}. Paid: ${bb_cc_total_paid:,.2f}. Balance: ${bb_cc_balance:,.2f}. Limit: ${bb_cc_limit:,.2f}. This is the company's only debt. The equipment purchased is counted as a business asset worth ${bb_cc_asset_value:,.2f}."),
-            kpi_card("ETSY NET", f"${net_profit:,.2f}", ORANGE, "What Etsy deposits to your bank",
-                     f"Gross sales (${gross_sales:,.2f}) minus everything Etsy deducts: fees (${total_fees:,.2f}), shipping labels (${total_shipping_cost:,.2f}), ads (${total_marketing:,.2f}), refunds (${total_refunds:,.2f}), taxes collected (${total_taxes:,.2f}), buyer fees (${total_buyer_fees:,.2f}). This is what actually hits your bank account from Etsy."),
-            kpi_card("TOTAL FEES", f"${net_fees_after_credits:,.2f}", RED,
-                     f"{net_fees_after_credits / gross_sales * 100:.1f}% of sales" if gross_sales else "",
-                     detail=f"Listing fees: ${listing_fees:,.2f}. Transaction fees (product): ${transaction_fees_product:,.2f}. Transaction fees (shipping): ${transaction_fees_shipping:,.2f}. Processing fees: ${processing_fees:,.2f}. Fee credits returned: ${abs(total_credits):,.2f}. Net after credits: ${net_fees_after_credits:,.2f}."),
-            kpi_card("REFUNDS", f"${total_refunds:,.2f}", PINK,
-                     f"{len(refund_df)} orders ({len(refund_df) / order_count * 100:.1f}%)" if order_count else "",
-                     detail=f"{len(refund_df)} orders refunded out of {order_count} total ({len(refund_df) / order_count * 100:.1f}% rate). Average refund: ${total_refunds / max(len(refund_df), 1):,.2f}. Refunds also incur return shipping labels (${usps_return:,.2f} for {usps_return_count} labels). True cost per refund = refund amount + original label + return label."),
-            kpi_card("REAL PROFIT", f"${real_profit:,.2f}", GREEN, f"Bank-reconciled ({real_profit_margin:.1f}%)",
-                     f"The real bottom line. Cash on hand (${bank_cash_on_hand:,.2f}) + owner draws taken (${bank_owner_draw_total:,.2f}) = ${real_profit:,.2f}. This is bank-reconciled -- every dollar accounted for through actual Capital One transactions, not Etsy estimates."),
+            _build_kpi_pill("\U0001f4b3", "DEBT", f"${bb_cc_balance:,.2f}", RED,
+                            f"Best Buy CC (${bb_cc_available:,.0f} avail)",
+                            f"Best Buy Citi CC for equipment. Charged: ${bb_cc_total_charged:,.2f}. Paid: ${bb_cc_total_paid:,.2f}. Balance: ${bb_cc_balance:,.2f}. Limit: ${bb_cc_limit:,.2f}. Asset value: ${bb_cc_asset_value:,.2f}."),
+            _build_kpi_pill("\U0001f4e5", "AFTER ETSY FEES", f"${etsy_net:,.2f}", ORANGE,
+                            "What Etsy deposits to your bank",
+                            f"Gross (${gross_sales:,.2f}) minus fees (${total_fees:,.2f}), shipping (${total_shipping_cost:,.2f}), ads (${total_marketing:,.2f}), refunds (${total_refunds:,.2f}), taxes (${total_taxes:,.2f}), buyer fees (${total_buyer_fees:,.2f})."),
+            _build_kpi_pill("\U0001f4c9", "TOTAL FEES", f"${net_fees_after_credits:,.2f}", RED,
+                            f"{net_fees_after_credits / gross_sales * 100:.1f}% of sales" if gross_sales else "",
+                            f"Listing: ${listing_fees:,.2f}. Transaction (product): ${transaction_fees_product:,.2f}. Transaction (shipping): ${transaction_fees_shipping:,.2f}. Processing: ${processing_fees:,.2f}. Credits: ${abs(total_credits):,.2f}. Net: ${net_fees_after_credits:,.2f}."),
+            _build_kpi_pill("\u21a9\ufe0f", "REFUNDS", f"${total_refunds:,.2f}", PINK,
+                            f"{len(refund_df)} orders ({len(refund_df) / order_count * 100:.1f}%)" if order_count else "",
+                            f"{len(refund_df)} refunded of {order_count} total. Avg refund: ${total_refunds / max(len(refund_df), 1):,.2f}. Return labels: ${usps_return:,.2f} ({usps_return_count} labels)."),
+            _build_kpi_pill("\U0001f4b0", "PROFIT", f"${profit:,.2f}", GREEN,
+                            f"{profit_margin:.1f}% margin",
+                            f"Revenue minus all costs. Cash ({money(bank_cash_on_hand)}) + draws ({money(bank_owner_draw_total)}) - credit card supplies ({money(receipt_cogs_outside_bank)})."),
         ], style={"display": "flex", "gap": "8px", "marginBottom": "14px", "flexWrap": "wrap"}),
 
         # Full P&L
-        section("FULL PROFIT & LOSS", [
+        section("PROFIT & LOSS", [
             row_item("Gross Sales", gross_sales, color=GREEN),
             html.Div("ETSY DEDUCTIONS:", style={"color": RED, "fontWeight": "bold", "fontSize": "12px",
                       "marginTop": "8px", "marginBottom": "4px"}),
@@ -5354,7 +8720,7 @@ def build_tab3_financials():
             row_item("  Ads & Marketing", -total_marketing, indent=1, color=GRAY),
             row_item("  Refunds to Customers", -total_refunds, indent=1, color=GRAY),
             html.Div(style={"borderTop": f"2px solid {ORANGE}44", "margin": "6px 0"}),
-            row_item("ETSY NET (what Etsy pays you)", net_profit, bold=True, color=ORANGE),
+            row_item("AFTER ETSY FEES (what Etsy pays you)", etsy_net, bold=True, color=ORANGE),
             html.Div("BANK EXPENSES (from Cap One statement):", style={"color": RED, "fontWeight": "bold", "fontSize": "12px",
                       "marginTop": "10px", "marginBottom": "4px"}),
             row_item("  Amazon Inventory", -bank_by_cat.get("Amazon Inventory", 0), indent=1, color=GRAY),
@@ -5371,20 +8737,20 @@ def build_tab3_financials():
             row_item("  Untracked (prior bank + Etsy gap)", -(bank_unaccounted + etsy_csv_gap), indent=1, color=RED),
             html.Div(style={"borderTop": f"3px solid {GREEN}", "marginTop": "10px"}),
             html.Div([
-                html.Span("REAL PROFIT", style={"color": GREEN, "fontWeight": "bold", "fontSize": "22px"}),
-                html.Span(f"${real_profit:,.2f}", style={"color": GREEN, "fontWeight": "bold", "fontSize": "22px", "fontFamily": "monospace"}),
+                html.Span("PROFIT", style={"color": GREEN, "fontWeight": "bold", "fontSize": "22px"}),
+                html.Span(f"${profit:,.2f}", style={"color": GREEN, "fontWeight": "bold", "fontSize": "22px", "fontFamily": "monospace"}),
             ], style={"display": "flex", "justifyContent": "space-between", "padding": "12px 0"}),
-            html.Div(f"= Cash On Hand ${bank_cash_on_hand:,.2f} + Owner Draws ${bank_owner_draw_total:,.2f}",
+            html.Div(f"= Cash On Hand ${bank_cash_on_hand:,.2f} + Owner Draws ${bank_owner_draw_total:,.2f} - Credit Card Supplies ${receipt_cogs_outside_bank:,.2f}",
                      style={"color": GRAY, "fontSize": "12px", "textAlign": "center"}),
             html.Div([
                 html.Div([
                     html.Span("Profit/Day", style={"color": GRAY, "fontSize": "11px"}),
-                    html.Div(f"${real_profit / days_active:,.2f}",
+                    html.Div(f"${profit / days_active:,.2f}",
                              style={"color": GREEN, "fontSize": "18px", "fontWeight": "bold", "fontFamily": "monospace"}),
                 ], style={"textAlign": "center", "flex": "1"}),
                 html.Div([
                     html.Span("Profit/Order", style={"color": GRAY, "fontSize": "11px"}),
-                    html.Div(f"${real_profit / order_count if order_count else 0:,.2f}",
+                    html.Div(f"${profit / order_count if order_count else 0:,.2f}",
                              style={"color": GREEN, "fontSize": "18px", "fontWeight": "bold", "fontFamily": "monospace"}),
                 ], style={"textAlign": "center", "flex": "1"}),
                 html.Div([
@@ -5418,7 +8784,7 @@ def build_tab3_financials():
         # Cash KPIs
         html.Div([
             html.Div([
-                html.Div(f"${real_profit:,.2f}", style={"color": GREEN, "fontSize": "22px", "fontWeight": "bold", "fontFamily": "monospace"}),
+                html.Div(f"${profit:,.2f}", style={"color": GREEN, "fontSize": "22px", "fontWeight": "bold", "fontFamily": "monospace"}),
                 html.Div("PROFIT", style={"color": GRAY, "fontSize": "10px"}),
             ], style={"textAlign": "center", "flex": "1"}),
             html.Div([
@@ -5849,42 +9215,2124 @@ def build_tab3_financials():
             ], style={"maxHeight": "700px", "overflowY": "auto"}),
         ], CYAN),
 
-    ], style={"padding": "12px"})
+    ], style={"padding": TAB_PADDING})
+
+
+# ── Data Hub Tab ─────────────────────────────────────────────────────────────
+
+def _build_upload_zone(zone_id, icon, label, color, accept, description):
+    """Reusable upload card with drag-drop zone, status area, and file list."""
+    return html.Div([
+        # Header
+        html.Div([
+            html.Span(icon, style={"fontSize": "22px", "marginRight": "8px"}),
+            html.Span(label, style={"fontSize": "16px", "fontWeight": "bold", "color": color}),
+        ], style={"marginBottom": "10px"}),
+        html.P(description, style={"color": GRAY, "fontSize": "12px", "margin": "0 0 12px 0"}),
+
+        # Upload zone
+        dcc.Upload(
+            id=f"datahub-{zone_id}-upload",
+            children=html.Div([
+                html.Div(icon, style={"fontSize": "28px", "marginBottom": "6px", "opacity": "0.6"}),
+                html.Span("Drop file here or ", style={"color": GRAY, "fontSize": "13px"}),
+                html.A("browse", style={
+                    "color": color, "textDecoration": "underline",
+                    "cursor": "pointer", "fontSize": "13px"}),
+            ], style={"textAlign": "center", "padding": "20px 16px"}),
+            accept=accept,
+            style={
+                "borderWidth": "2px", "borderStyle": "dashed",
+                "borderColor": f"{color}55", "borderRadius": "8px",
+                "backgroundColor": f"{color}08", "cursor": "pointer",
+                "marginBottom": "12px", "transition": "all 0.15s ease",
+            },
+        ),
+
+        # Status message
+        html.Div(id=f"datahub-{zone_id}-status", style={"marginBottom": "8px", "minHeight": "20px"}),
+
+        # Stats line
+        html.Div(id=f"datahub-{zone_id}-stats", style={"marginBottom": "10px", "minHeight": "16px"}),
+
+        # Existing files list
+        html.Div([
+            html.Div("Existing Files:", style={"color": GRAY, "fontSize": "11px",
+                                                 "fontWeight": "bold", "marginBottom": "4px",
+                                                 "textTransform": "uppercase", "letterSpacing": "1px"}),
+            html.Div(id=f"datahub-{zone_id}-files"),
+        ]),
+    ], style={
+        "backgroundColor": CARD2, "borderRadius": "12px", "padding": "18px",
+        "borderLeft": f"4px solid {color}", "flex": "1", "minWidth": "280px",
+        "boxShadow": "0 4px 15px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.05)",
+    })
+
+
+def _get_existing_files(zone_type):
+    """Scan the appropriate directory and return list of {filename, size_kb, modified}."""
+    dir_map = {
+        "etsy": os.path.join(BASE_DIR, "data", "etsy_statements"),
+        "receipt": os.path.join(BASE_DIR, "data", "invoices", "keycomp"),
+        "bank": os.path.join(BASE_DIR, "data", "bank_statements"),
+    }
+    ext_map = {"etsy": ".csv", "receipt": ".pdf", "bank": (".pdf", ".csv")}
+    target_dir = dir_map.get(zone_type, "")
+    ext = ext_map.get(zone_type, "")
+    files = []
+    if os.path.isdir(target_dir):
+        for fn in sorted(os.listdir(target_dir)):
+            if fn.lower().endswith(ext):
+                fpath = os.path.join(target_dir, fn)
+                stat = os.stat(fpath)
+                files.append({
+                    "filename": fn,
+                    "size_kb": round(stat.st_size / 1024, 1),
+                })
+    return files
+
+
+def _render_file_list(files, color):
+    """Render a list of existing files as compact rows."""
+    if not files:
+        return html.Div("No files yet", style={"color": DARKGRAY, "fontSize": "12px", "fontStyle": "italic"})
+    return html.Div([
+        html.Div([
+            html.Span(f["filename"], style={"color": WHITE, "fontSize": "12px", "flex": "1"}),
+            html.Span(f'{f["size_kb"]} KB', style={"color": DARKGRAY, "fontSize": "11px",
+                                                      "fontFamily": "monospace"}),
+        ], style={"display": "flex", "justifyContent": "space-between",
+                   "padding": "3px 0", "borderBottom": "1px solid #ffffff08"})
+        for f in files
+    ], style={"maxHeight": "120px", "overflowY": "auto"})
+
+
+def _build_datahub_summary():
+    """Build the KPI summary strip showing current data state."""
+    etsy_dir = os.path.join(BASE_DIR, "data", "etsy_statements")
+    etsy_count = len([f for f in os.listdir(etsy_dir) if f.endswith(".csv")]) if os.path.isdir(etsy_dir) else 0
+    bank_dir = os.path.join(BASE_DIR, "data", "bank_statements")
+    bank_count = len([f for f in os.listdir(bank_dir) if f.endswith(".pdf")]) if os.path.isdir(bank_dir) else 0
+
+    return html.Div([
+        _build_kpi_pill("\U0001f4ca", "ETSY STATEMENTS", str(etsy_count), TEAL,
+                        f"{len(DATA)} transactions"),
+        _build_kpi_pill("\U0001f4e6", "INVENTORY ORDERS", str(len(INVOICES)), PURPLE,
+                        f"${total_inventory_cost:,.2f} spent"),
+        _build_kpi_pill("\U0001f3e6", "BANK STATEMENTS", str(bank_count), CYAN,
+                        f"{len(BANK_TXNS)} transactions"),
+        _build_kpi_pill("\U0001f4b0", "PROFIT", f"${profit:,.2f}", GREEN,
+                        f"{profit_margin:.1f}% margin"),
+    ], style={"display": "flex", "gap": "12px", "flexWrap": "wrap"})
+
+
+def _build_data_coverage():
+    """Show what date ranges are covered by each data source so user knows what to upload."""
+    from datetime import datetime, date
+
+    rows = []
+
+    # ── Etsy Statements coverage ──
+    etsy_dir = os.path.join(BASE_DIR, "data", "etsy_statements")
+    etsy_months_on_file = set()
+    if os.path.isdir(etsy_dir):
+        for fn in os.listdir(etsy_dir):
+            m = re.match(r"etsy_statement_(\d{4})_(\d{1,2})\.csv", fn)
+            if m:
+                etsy_months_on_file.add((int(m.group(1)), int(m.group(2))))
+
+    # Expected months: Oct 2025 through current month
+    today = date.today()
+    expected_etsy = []
+    y, m = 2025, 10  # business start
+    while (y, m) <= (today.year, today.month):
+        expected_etsy.append((y, m))
+        m += 1
+        if m > 12:
+            m = 1
+            y += 1
+
+    etsy_missing = [ym for ym in expected_etsy if ym not in etsy_months_on_file]
+
+    month_pills = []
+    for ym in expected_etsy:
+        label = f"{['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][ym[1]-1]} {ym[0]}"
+        have = ym in etsy_months_on_file
+        month_pills.append(html.Span(label, style={
+            "display": "inline-block", "padding": "3px 8px", "borderRadius": "4px",
+            "fontSize": "11px", "fontWeight": "bold", "marginRight": "4px", "marginBottom": "4px",
+            "backgroundColor": f"{GREEN}22" if have else f"{RED}22",
+            "color": GREEN if have else RED,
+            "border": f"1px solid {GREEN}44" if have else f"1px solid {RED}44",
+        }))
+
+    etsy_latest = ""
+    if len(DATA) > 0 and DATA["Date_Parsed"].notna().any():
+        etsy_latest = DATA["Date_Parsed"].max().strftime("%b %d, %Y")
+
+    rows.append(html.Div([
+        html.Div([
+            html.Span("\U0001f4ca", style={"fontSize": "16px", "marginRight": "8px"}),
+            html.Span("ETSY STATEMENTS", style={"fontSize": "13px", "fontWeight": "bold",
+                                                   "color": TEAL, "letterSpacing": "1px"}),
+            html.Span(f"  Latest: {etsy_latest}" if etsy_latest else "",
+                       style={"color": GRAY, "fontSize": "12px", "marginLeft": "12px"}),
+        ], style={"marginBottom": "8px"}),
+        html.Div(month_pills, style={"marginBottom": "4px"}),
+        html.Div(
+            f"{len(etsy_missing)} month{'s' if len(etsy_missing) != 1 else ''} missing" if etsy_missing else "All months covered",
+            style={"color": RED if etsy_missing else GREEN, "fontSize": "11px", "fontWeight": "bold"}
+        ),
+    ], style={"padding": "10px 14px", "borderBottom": "1px solid #ffffff08"}))
+
+    # ── Receipt / Invoice coverage ──
+    inv_dates = []
+    for inv in INVOICES:
+        try:
+            dt = pd.to_datetime(inv["date"], format="%B %d, %Y")
+            inv_dates.append(dt)
+        except Exception:
+            try:
+                dt = pd.to_datetime(inv["date"])
+                inv_dates.append(dt)
+            except Exception:
+                pass
+
+    inv_latest = max(inv_dates).strftime("%b %d, %Y") if inv_dates else "None"
+    inv_oldest = min(inv_dates).strftime("%b %d, %Y") if inv_dates else "None"
+
+    # Orders by month
+    inv_by_month = {}
+    for dt in inv_dates:
+        key = dt.strftime("%b %Y")
+        inv_by_month[key] = inv_by_month.get(key, 0) + 1
+
+    inv_month_pills = []
+    for month_label, count in sorted(inv_by_month.items(),
+                                      key=lambda x: pd.to_datetime(x[0], format="%b %Y")):
+        inv_month_pills.append(html.Span(f"{month_label} ({count})", style={
+            "display": "inline-block", "padding": "3px 8px", "borderRadius": "4px",
+            "fontSize": "11px", "fontWeight": "bold", "marginRight": "4px", "marginBottom": "4px",
+            "backgroundColor": f"{PURPLE}22", "color": PURPLE,
+            "border": f"1px solid {PURPLE}44",
+        }))
+
+    # Days since latest receipt
+    days_since_receipt = ""
+    if inv_dates:
+        days_ago = (pd.Timestamp.now() - max(inv_dates)).days
+        days_since_receipt = f" ({days_ago} days ago)" if days_ago > 0 else " (today)"
+
+    rows.append(html.Div([
+        html.Div([
+            html.Span("\U0001f4e6", style={"fontSize": "16px", "marginRight": "8px"}),
+            html.Span("RECEIPT ORDERS", style={"fontSize": "13px", "fontWeight": "bold",
+                                                  "color": PURPLE, "letterSpacing": "1px"}),
+            html.Span(f"  {len(INVOICES)} orders  |  Latest: {inv_latest}{days_since_receipt}",
+                       style={"color": GRAY, "fontSize": "12px", "marginLeft": "12px"}),
+        ], style={"marginBottom": "8px"}),
+        html.Div(inv_month_pills if inv_month_pills else [
+            html.Span("No receipts uploaded", style={"color": DARKGRAY, "fontSize": "12px"})
+        ], style={"marginBottom": "4px"}),
+        html.Div(f"Range: {inv_oldest} — {inv_latest}" if inv_dates else "No data",
+                  style={"color": GRAY, "fontSize": "11px"}),
+    ], style={"padding": "10px 14px", "borderBottom": "1px solid #ffffff08"}))
+
+    # ── Bank Statement coverage ──
+    # Track which source covers each month
+    bank_month_source = {}  # (year, month) -> "PDF" or "CSV"
+    for t in BANK_TXNS:
+        try:
+            parts = t["date"].split("/")
+            ym = (int(parts[2]), int(parts[0]))
+            src = t.get("source_file", "")
+            src_type = "CSV" if src.lower().endswith(".csv") else "PDF"
+            # PDF takes priority label (it was parsed first)
+            if ym not in bank_month_source or src_type == "PDF":
+                bank_month_source[ym] = src_type
+        except Exception:
+            pass
+
+    bank_dates = []
+    for t in BANK_TXNS:
+        try:
+            parts = t["date"].split("/")
+            dt = date(int(parts[2]), int(parts[0]), int(parts[1]))
+            bank_dates.append(dt)
+        except Exception:
+            pass
+
+    bank_latest = max(bank_dates).strftime("%b %d, %Y") if bank_dates else "None"
+
+    bank_months_covered = set(bank_month_source.keys())
+    bank_missing = [ym for ym in expected_etsy if ym not in bank_months_covered]
+
+    bank_month_pills = []
+    for ym in expected_etsy:
+        label = f"{['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][ym[1]-1]} {ym[0]}"
+        have = ym in bank_months_covered
+        src_type = bank_month_source.get(ym, "")
+        if have:
+            # Color-code by source: CYAN for PDF, TEAL for CSV
+            is_pdf = src_type == "PDF"
+            pill_color = CYAN if is_pdf else TEAL
+            pill_label = f"{label} ({src_type})"
+        else:
+            pill_color = RED
+            pill_label = label
+        bank_month_pills.append(html.Span(pill_label, style={
+            "display": "inline-block", "padding": "3px 8px", "borderRadius": "4px",
+            "fontSize": "11px", "fontWeight": "bold", "marginRight": "4px", "marginBottom": "4px",
+            "backgroundColor": f"{pill_color}22" if have else f"{RED}22",
+            "color": pill_color if have else RED,
+            "border": f"1px solid {pill_color}44" if have else f"1px solid {RED}44",
+        }))
+
+    days_since_bank = ""
+    if bank_dates:
+        days_ago = (date.today() - max(bank_dates)).days
+        days_since_bank = f" ({days_ago} days ago)" if days_ago > 0 else " (today)"
+
+    pdf_months = sum(1 for v in bank_month_source.values() if v == "PDF")
+    csv_months = sum(1 for v in bank_month_source.values() if v == "CSV")
+    source_summary = []
+    if pdf_months:
+        source_summary.append(f"{pdf_months} from PDFs")
+    if csv_months:
+        source_summary.append(f"{csv_months} filled by CSV")
+
+    rows.append(html.Div([
+        html.Div([
+            html.Span("\U0001f3e6", style={"fontSize": "16px", "marginRight": "8px"}),
+            html.Span("BANK DATA", style={"fontSize": "13px", "fontWeight": "bold",
+                                                   "color": CYAN, "letterSpacing": "1px"}),
+            html.Span(f"  {len(BANK_TXNS)} txns  |  Latest: {bank_latest}{days_since_bank}",
+                       style={"color": GRAY, "fontSize": "12px", "marginLeft": "12px"}),
+        ], style={"marginBottom": "8px"}),
+        html.Div(bank_month_pills if bank_month_pills else [
+            html.Span("No bank data", style={"color": DARKGRAY, "fontSize": "12px"})
+        ], style={"marginBottom": "4px"}),
+        html.Div([
+            html.Span(
+                f"{len(bank_missing)} month{'s' if len(bank_missing) != 1 else ''} missing" if bank_missing else "All months covered",
+                style={"color": RED if bank_missing else GREEN, "fontSize": "11px", "fontWeight": "bold"}
+            ),
+            html.Span(f"  |  {' · '.join(source_summary)}" if source_summary else "",
+                       style={"color": GRAY, "fontSize": "11px", "marginLeft": "4px"}),
+        ]),
+    ], style={"padding": "10px 14px"}))
+
+    return html.Div([
+        html.Div([
+            html.Span("\U0001f4c5", style={"fontSize": "18px", "marginRight": "8px"}),
+            html.Span("DATA COVERAGE", style={"fontSize": "14px", "fontWeight": "bold",
+                                                 "color": CYAN, "letterSpacing": "1.5px"}),
+            html.Span("  — See what's uploaded and what's missing",
+                       style={"color": GRAY, "fontSize": "12px", "marginLeft": "8px"}),
+        ], style={"marginBottom": "10px"}),
+        html.Div(rows, style={"backgroundColor": "#0f0f1a", "borderRadius": "8px",
+                                "overflow": "hidden"}),
+    ], style={
+        "backgroundColor": CARD2, "borderRadius": "12px", "padding": "16px",
+        "boxShadow": "0 4px 15px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.05)",
+        "marginBottom": "16px",
+    })
+
+
+def _build_reconciliation_panel():
+    """Cross-reference data sources and show match/mismatch indicators."""
+    rows = []
+
+    def _recon_row(label, val_a, val_b, label_a="Source A", label_b="Source B"):
+        diff = abs(val_a - val_b)
+        ok = diff <= 1.0
+        icon = "\u2713" if ok else "\u26a0"
+        icon_color = GREEN if ok else ORANGE
+        diff_color = GREEN if ok else ORANGE
+        return html.Div([
+            html.Span(icon, style={"fontSize": "18px", "color": icon_color,
+                                    "width": "28px", "textAlign": "center", "flexShrink": "0"}),
+            html.Span(label, style={"color": WHITE, "fontSize": "13px", "fontWeight": "600",
+                                     "flex": "1", "minWidth": "180px"}),
+            html.Span(f"{label_a}: ${val_a:,.2f}", style={"color": GRAY, "fontSize": "12px",
+                                                            "fontFamily": "monospace", "width": "180px"}),
+            html.Span(f"{label_b}: ${val_b:,.2f}", style={"color": GRAY, "fontSize": "12px",
+                                                            "fontFamily": "monospace", "width": "180px"}),
+            html.Span(f"{'Match' if ok else f'Gap: ${diff:,.2f}'}",
+                       style={"color": diff_color, "fontSize": "12px", "fontWeight": "bold",
+                              "width": "120px", "textAlign": "right"}),
+        ], style={"display": "flex", "alignItems": "center", "padding": "8px 12px",
+                   "borderBottom": "1px solid #ffffff08", "gap": "8px"})
+
+    # Etsy Deposits vs Bank Etsy Payouts
+    bank_etsy_deposits = sum(t["amount"] for t in BANK_TXNS
+                             if t["type"] == "deposit" and "etsy" in t.get("desc", "").lower())
+    rows.append(_recon_row(
+        "Etsy Deposits vs Bank Etsy Payouts",
+        etsy_total_deposited, bank_etsy_deposits + etsy_pre_capone_deposits,
+        "Etsy CSV", "Bank Stmt"))
+
+    # Receipt COGS vs Bank Amazon category
+    rows.append(_recon_row(
+        "Inventory COGS: Receipts vs Bank Amazon",
+        true_inventory_cost, bank_by_cat.get("Amazon Inventory", 0),
+        "Receipts", "Bank Stmt"))
+
+    # Discover card receipts vs Bank Amazon (more granular)
+    rows.append(_recon_row(
+        "Discover Invoices vs Bank Amazon",
+        discover_inv_total, bank_by_cat.get("Amazon Inventory", 0),
+        "Invoices", "Bank Stmt"))
+
+    # Etsy Account Balance: self-reported vs calculated
+    rows.append(_recon_row(
+        "Etsy Balance: Reported vs Calculated",
+        etsy_balance, etsy_balance_calculated,
+        "Reported", "Calculated"))
+
+    # Reconciled profit vs bank-only (gap = credit card supplies)
+    rows.append(_recon_row(
+        "Profit: Reconciled vs Bank-Only",
+        profit, real_profit,
+        "Reconciled", "Bank Only"))
+
+    return html.Div([
+        html.Div([
+            html.Span("\U0001f50d", style={"fontSize": "18px", "marginRight": "8px"}),
+            html.Span("DATA RECONCILIATION", style={"fontSize": "14px", "fontWeight": "bold",
+                                                      "color": CYAN, "letterSpacing": "1.5px"}),
+        ], style={"marginBottom": "10px"}),
+        html.P("Cross-checking data sources for consistency.",
+               style={"color": GRAY, "fontSize": "12px", "margin": "0 0 10px 0"}),
+        html.Div(rows, style={"backgroundColor": "#0f0f1a", "borderRadius": "8px",
+                                "overflow": "hidden"}),
+    ], style={
+        "backgroundColor": CARD2, "borderRadius": "12px", "padding": "16px",
+        "boxShadow": "0 4px 15px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.05)",
+        "marginBottom": "16px",
+    })
+
+
+def build_tab7_data_hub():
+    """Build the Data Hub tab — upload & auto-update everything."""
+    etsy_files = _get_existing_files("etsy")
+    receipt_files = _get_existing_files("receipt")
+    bank_files = _get_existing_files("bank")
+
+    return html.Div([
+        # Title
+        html.Div([
+            html.H2("DATA HUB", style={"color": CYAN, "margin": "0", "fontSize": "22px",
+                                         "letterSpacing": "2px"}),
+            html.P("Upload files and auto-update all dashboard data. No restart needed.",
+                   style={"color": GRAY, "margin": "4px 0 0 0", "fontSize": "13px"}),
+        ], style={"marginBottom": "16px"}),
+
+        # Summary KPI strip
+        html.Div(id="datahub-summary-strip", children=[_build_datahub_summary()]),
+
+        html.Hr(style={"border": "none", "borderTop": f"1px solid {DARKGRAY}33", "margin": "16px 0"}),
+
+        # Data coverage panel — what's uploaded and what's missing
+        _build_data_coverage(),
+
+        # 3-column upload zones
+        html.Div([
+            _build_upload_zone("etsy", "\U0001f4ca", "Etsy Statements", TEAL, ".csv",
+                               "Upload Etsy CSV statements. Rebuilds all sales, fees, and financial data."),
+            _build_upload_zone("receipt", "\U0001f4e6", "Receipt PDFs", PURPLE, ".pdf",
+                               "Upload Amazon/supplier invoice PDFs. Parses items and updates inventory."),
+            _build_upload_zone("bank", "\U0001f3e6", "Bank Statements", CYAN, ".pdf,.csv",
+                               "Upload Capital One bank PDFs or CSV transaction downloads. Deduplicates automatically."),
+        ], style={"display": "flex", "gap": "16px", "flexWrap": "wrap", "marginBottom": "20px"}),
+
+        # Reconciliation panel
+        html.Hr(style={"border": "none", "borderTop": f"1px solid {DARKGRAY}33", "margin": "0 0 16px 0"}),
+        _build_reconciliation_panel(),
+
+        # Pre-populate existing file lists (static on load)
+        dcc.Store(id="datahub-init-trigger", data="init"),
+
+        # ── EXPORT DATA ──────────────────────────────────────────────────
+        html.Div([
+            html.Div([
+                html.Span("\U0001f4e5", style={"fontSize": "20px", "marginRight": "8px"}),
+                html.Span("EXPORT DATA", style={"fontSize": "16px", "fontWeight": "bold", "color": GREEN,
+                                                   "letterSpacing": "1.5px"}),
+                html.Span("  — Download CSVs to verify in Excel or share with your accountant",
+                           style={"color": GRAY, "fontSize": "12px", "marginLeft": "8px"}),
+            ], style={"marginBottom": "14px"}),
+            html.Div([
+                html.Button(["\U0001f4ca  Etsy Transactions"], id="btn-download-etsy", n_clicks=0,
+                            style={"backgroundColor": f"{TEAL}22", "color": TEAL,
+                                   "border": f"1px solid {TEAL}55", "borderRadius": "8px",
+                                   "padding": "10px 18px", "fontSize": "13px", "cursor": "pointer",
+                                   "fontWeight": "bold"}),
+                html.Button(["\U0001f3e6  Bank Transactions"], id="btn-download-bank", n_clicks=0,
+                            style={"backgroundColor": f"{CYAN}22", "color": CYAN,
+                                   "border": f"1px solid {CYAN}55", "borderRadius": "8px",
+                                   "padding": "10px 18px", "fontSize": "13px", "cursor": "pointer",
+                                   "fontWeight": "bold"}),
+                html.Button(["\U0001f4e6  All Inventory Items"], id="btn-download-inventory", n_clicks=0,
+                            style={"backgroundColor": f"{PURPLE}22", "color": PURPLE,
+                                   "border": f"1px solid {PURPLE}55", "borderRadius": "8px",
+                                   "padding": "10px 18px", "fontSize": "13px", "cursor": "pointer",
+                                   "fontWeight": "bold"}),
+                html.Button(["\U0001f4ca  Stock Summary"], id="btn-download-stock", n_clicks=0,
+                            style={"backgroundColor": f"{ORANGE}22", "color": ORANGE,
+                                   "border": f"1px solid {ORANGE}55", "borderRadius": "8px",
+                                   "padding": "10px 18px", "fontSize": "13px", "cursor": "pointer",
+                                   "fontWeight": "bold"}),
+                html.Button(["\U0001f4b0  Profit & Loss"], id="btn-download-pl", n_clicks=0,
+                            style={"backgroundColor": f"{GREEN}22", "color": GREEN,
+                                   "border": f"1px solid {GREEN}55", "borderRadius": "8px",
+                                   "padding": "10px 18px", "fontSize": "13px", "cursor": "pointer",
+                                   "fontWeight": "bold"}),
+            ], style={"display": "flex", "gap": "10px", "flexWrap": "wrap"}),
+        ], style={
+            "backgroundColor": CARD2, "borderRadius": "12px", "padding": "18px",
+            "borderLeft": f"4px solid {GREEN}", "marginBottom": "20px",
+            "boxShadow": "0 4px 15px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.05)",
+        }),
+
+        # Activity Log
+        html.Div([
+            html.Div([
+                html.Span("\U0001f4dd", style={"marginRight": "8px"}),
+                html.Span("Activity Log", style={"fontWeight": "bold", "color": WHITE}),
+            ], style={"marginBottom": "8px"}),
+            html.Div(id="datahub-activity-log", children=[
+                html.Div("No uploads yet this session.", style={
+                    "color": DARKGRAY, "fontSize": "12px", "fontStyle": "italic"}),
+            ], style={"maxHeight": "200px", "overflowY": "auto"}),
+        ], style={
+            "backgroundColor": CARD2, "borderRadius": "12px", "padding": "16px",
+            "boxShadow": "0 4px 15px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.05)",
+        }),
+
+        # Hidden initial file-list populator
+        html.Div(id="datahub-etsy-files-init", children=[_render_file_list(etsy_files, TEAL)],
+                  style={"display": "none"}),
+        html.Div(id="datahub-receipt-files-init", children=[_render_file_list(receipt_files, PURPLE)],
+                  style={"display": "none"}),
+        html.Div(id="datahub-bank-files-init", children=[_render_file_list(bank_files, CYAN)],
+                  style={"display": "none"}),
+    ], style={"padding": TAB_PADDING})
 
 
 # ── App Layout ───────────────────────────────────────────────────────────────
 
-app.layout = html.Div([
-    # Header
-    html.Div([
-        html.H1("TJs SOFTWARE PROJECT", style={"color": ORANGE, "margin": "0", "fontSize": "24px"}),
-        html.P(
-            f"Oct 2025 -- Feb 2026  |  {order_count} orders  |  {len(DATA)} transactions  |  "
-            f"Profit: ${real_profit:,.2f} ({real_profit_margin:.1f}%)  |  "
-            f"Bank: ${bank_net_cash:,.2f}  |  Etsy: ${etsy_balance:,.2f}",
-            style={"color": GRAY, "margin": "2px 0 0 0", "fontSize": "13px"},
-        ),
-    ], style={"padding": "14px 20px", "backgroundColor": CARD2}),
+def _header_text():
+    """Build the dynamic header subtitle string."""
+    return (f"Oct 2025 -- Feb 2026  |  {order_count} orders  |  "
+            f"Profit: ${profit:,.2f} ({profit_margin:.1f}%)  |  "
+            f"Cash: ${bank_cash_on_hand:,.2f}")
 
-    # Tabs (4 consolidated tabs)
-    dcc.Tabs(id="main-tabs", value="tab-overview", children=[
-        dcc.Tab(label="Overview", value="tab-overview", style=tab_style, selected_style=tab_selected_style,
-            children=[build_tab1_overview()]),
-        dcc.Tab(label="Deep Dive", value="tab-deep-dive", style=tab_style, selected_style=tab_selected_style,
-            children=[build_tab2_deep_dive()]),
-        dcc.Tab(label="Financials", value="tab-financials", style=tab_style, selected_style=tab_selected_style,
-            children=[build_tab3_financials()]),
-        dcc.Tab(label="Inventory (Cost of Goods)", value="tab-inventory", style=tab_style, selected_style=tab_selected_style,
-            children=[build_tab4_inventory()]),
-        dcc.Tab(label="Tax Forms", value="tab-tax-forms", style=tab_style, selected_style=tab_selected_style,
-            children=[build_tab5_tax_forms()]),
-        dcc.Tab(label="Business Valuation", value="tab-valuation", style=tab_style, selected_style=tab_selected_style,
-            children=[build_tab6_valuation()]),
-    ], style={"backgroundColor": BG}),
-], style={
-    "backgroundColor": BG, "minHeight": "100vh",
-    "fontFamily": "'Segoe UI', Arial, sans-serif", "color": WHITE,
-})
+
+def serve_layout():
+    """Rebuild layout on every page load so saved edits appear after refresh."""
+    # Count unsaved items from recent uploads for Inventory tab label
+    _new_count = 0
+    for onum in _RECENT_UPLOADS:
+        for inv in INVOICES:
+            if inv["order_num"] == onum:
+                for item in inv["items"]:
+                    key = (onum, item["name"])
+                    if key not in _ITEM_DETAILS:
+                        _new_count += 1
+    inv_label = f"Inventory ({_new_count} new)" if _new_count > 0 else "Inventory (Cost of Goods)"
+
+    return html.Div([
+        # Header
+        html.Div([
+            html.H1("TJs SOFTWARE PROJECT", style={"color": ORANGE, "margin": "0", "fontSize": "24px"}),
+            html.Div(
+                _header_text(),
+                id="app-header-content",
+                style={"color": GRAY, "margin": "2px 0 0 0", "fontSize": "13px"},
+            ),
+        ], style={"padding": "14px 20px", "backgroundColor": CARD2}),
+
+        # Tabs — content rendered dynamically via callback so uploads refresh data
+        dcc.Tabs(id="main-tabs", value="tab-overview", children=[
+            dcc.Tab(label="Overview", value="tab-overview", style=tab_style, selected_style=tab_selected_style),
+            dcc.Tab(label="Deep Dive", value="tab-deep-dive", style=tab_style, selected_style=tab_selected_style),
+            dcc.Tab(label="Financials", value="tab-financials", style=tab_style, selected_style=tab_selected_style),
+            dcc.Tab(label=inv_label, value="tab-inventory", style=tab_style, selected_style=tab_selected_style),
+            dcc.Tab(label="Tax Forms", value="tab-tax-forms", style=tab_style, selected_style=tab_selected_style),
+            dcc.Tab(label="Business Valuation", value="tab-valuation", style=tab_style, selected_style=tab_selected_style),
+            dcc.Tab(label="Data Hub", value="tab-data-hub", style=tab_style, selected_style=tab_selected_style),
+        ], style={"backgroundColor": BG}),
+        html.Div(id="tab-content"),
+
+        # Toast notification container
+        html.Div(id="toast-container", style={
+            "position": "fixed", "top": "20px", "right": "20px", "zIndex": "9999",
+            "display": "flex", "flexDirection": "column", "gap": "8px",
+        }),
+
+        # CSV Download components (hidden, triggered by callbacks)
+        dcc.Download(id="download-etsy-csv"),
+        dcc.Download(id="download-bank-csv"),
+        dcc.Download(id="download-inventory-csv"),
+        dcc.Download(id="download-stock-csv"),
+        dcc.Download(id="download-pl-csv"),
+    ], style={
+        "backgroundColor": BG, "minHeight": "100vh",
+        "fontFamily": "'Inter', 'Segoe UI', -apple-system, sans-serif", "color": WHITE,
+    })
+
+app.layout = serve_layout
+
+
+# ── Dynamic Tab Rendering ────────────────────────────────────────────────────
+
+@app.callback(
+    Output("tab-content", "children"),
+    Input("main-tabs", "value"),
+)
+def render_active_tab(tab):
+    """Rebuild the active tab's content on every switch so uploads are reflected."""
+    if tab == "tab-overview":
+        return build_tab1_overview()
+    elif tab == "tab-deep-dive":
+        return build_tab2_deep_dive()
+    elif tab == "tab-financials":
+        return build_tab3_financials()
+    elif tab == "tab-inventory":
+        return build_tab4_inventory()
+    elif tab == "tab-tax-forms":
+        return build_tab5_tax_forms()
+    elif tab == "tab-valuation":
+        return build_tab6_valuation()
+    elif tab == "tab-data-hub":
+        return build_tab7_data_hub()
+    return html.Div("Select a tab")
+
+
+# ── Image Manager Callbacks ──────────────────────────────────────────────────
+
+@app.callback(
+    Output({"type": "img-preview", "index": MATCH}, "children"),
+    Output({"type": "img-status", "index": MATCH}, "children"),
+    Input({"type": "img-save-btn", "index": MATCH}, "n_clicks"),
+    State({"type": "img-url-input", "index": MATCH}, "value"),
+    State({"type": "img-item-name", "index": MATCH}, "data"),
+    prevent_initial_call=True,
+)
+def save_image_url(n_clicks, url_value, item_name):
+    """Save image URL to Supabase and update preview."""
+    if not n_clicks or not item_name:
+        raise dash.exceptions.PreventUpdate
+
+    url_value = (url_value or "").strip()
+    count = _save_image_url(item_name, url_value)
+
+    # Update the in-memory lookup
+    if url_value:
+        _IMAGE_URLS[item_name] = url_value
+    elif item_name in _IMAGE_URLS:
+        del _IMAGE_URLS[item_name]
+
+    preview = item_thumbnail(url_value, 100)
+    if count:
+        status = f"Saved! ({count} rows)"
+    else:
+        status = "Saved as override!"
+    return preview, status
+
+
+@app.callback(
+    Output("img-mgr-grid", "children"),
+    Input("img-filter-input", "value"),
+    Input("img-filter-show", "value"),
+    prevent_initial_call=True,
+)
+def filter_image_cards(search_text, show_filter):
+    """Filter the Image Manager card grid."""
+    import urllib.parse
+
+    search_text = (search_text or "").strip().lower()
+
+    # Rebuild deduplicated items
+    seen = {}
+    if len(INV_ITEMS) > 0:
+        for _, r in INV_ITEMS.iterrows():
+            name = r["name"]
+            if name not in seen:
+                seen[name] = {
+                    "name": name,
+                    "price": r["price"],
+                    "image_url": _IMAGE_URLS.get(name, ""),
+                    "order_num": r.get("order_num", ""),
+                }
+    unique_items = sorted(seen.values(), key=lambda x: x["name"].lower())
+
+    # Apply filters
+    filtered = []
+    for it in unique_items:
+        if search_text and search_text not in it["name"].lower():
+            continue
+        if show_filter == "missing" and it["image_url"]:
+            continue
+        if show_filter == "has" and not it["image_url"]:
+            continue
+        filtered.append(it)
+
+    # Build cards (same structure as _build_image_manager)
+    cards = []
+    for i, it in enumerate(filtered):
+        safe_idx = str(i)
+        img_url = it["image_url"]
+        search_q = urllib.parse.quote_plus(it["name"][:80])
+
+        card = html.Div([
+            html.Div([
+                item_thumbnail(img_url, 100),
+            ], id={"type": "img-preview", "index": safe_idx},
+               style={"textAlign": "center", "marginBottom": "6px"}),
+            html.Div(it["name"][:50], title=it["name"],
+                     style={"color": WHITE, "fontSize": "11px", "fontWeight": "600",
+                            "overflow": "hidden", "textOverflow": "ellipsis",
+                            "whiteSpace": "nowrap", "marginBottom": "2px"}),
+            html.Div(f"${it['price']:,.2f}", style={"color": GRAY, "fontSize": "11px", "marginBottom": "6px"}),
+            dcc.Input(
+                id={"type": "img-url-input", "index": safe_idx},
+                type="text", placeholder="Paste image URL...",
+                value=img_url,
+                style={"width": "100%", "backgroundColor": "#0f0f1a", "color": WHITE,
+                       "border": f"1px solid {DARKGRAY}", "borderRadius": "4px",
+                       "padding": "4px 6px", "fontSize": "10px", "marginBottom": "4px",
+                       "boxSizing": "border-box"}),
+            dcc.Store(id={"type": "img-item-name", "index": safe_idx}, data=it["name"]),
+            # Order ID
+            html.Div(it.get("order_num", ""), title=it.get("order_num", ""),
+                     style={"color": DARKGRAY, "fontSize": "9px", "marginBottom": "4px",
+                            "overflow": "hidden", "textOverflow": "ellipsis", "whiteSpace": "nowrap"}),
+            html.Div([
+                html.Button("Save", id={"type": "img-save-btn", "index": safe_idx},
+                            n_clicks=0,
+                            style={"backgroundColor": TEAL, "color": WHITE, "border": "none",
+                                   "borderRadius": "4px", "padding": "3px 10px", "fontSize": "10px",
+                                   "cursor": "pointer", "fontWeight": "600", "marginRight": "4px"}),
+                html.A("Amazon", href=f"https://www.amazon.com/s?k={search_q}",
+                       target="_blank",
+                       style={"color": CYAN, "fontSize": "10px", "textDecoration": "none",
+                              "padding": "3px 6px", "border": f"1px solid {CYAN}44",
+                              "borderRadius": "4px"}),
+            ], style={"display": "flex", "alignItems": "center", "gap": "4px"}),
+            html.Div("", id={"type": "img-status", "index": safe_idx},
+                     style={"color": GREEN, "fontSize": "10px", "marginTop": "2px", "minHeight": "14px"}),
+        ], className="img-mgr-card",
+           style={"backgroundColor": CARD2, "padding": "10px", "borderRadius": "8px",
+                  "border": f"1px solid {'#ffffff15' if not img_url else TEAL + '44'}",
+                  "width": "160px", "minWidth": "160px"})
+        cards.append(card)
+
+    if not cards:
+        cards = [html.P("No items match filter.", style={"color": GRAY, "padding": "20px"})]
+
+    return cards
+
+
+# ── Inventory Editor Callbacks ──────────────────────────────────────────────
+
+@app.callback(
+    Output({"type": "det-split-container", "index": MATCH}, "style"),
+    Output({"type": "det-split-data", "index": MATCH}, "data"),
+    Output({"type": "det-split-display", "index": MATCH}, "children"),
+    Output({"type": "wiz-state", "index": MATCH}, "data"),
+    Output({"type": "wiz-question", "index": MATCH}, "children"),
+    Output({"type": "wiz-step0", "index": MATCH}, "style"),
+    Output({"type": "wiz-step1", "index": MATCH}, "style"),
+    Output({"type": "wiz-step2", "index": MATCH}, "style"),
+    Output({"type": "wiz-step3a", "index": MATCH}, "style"),
+    Output({"type": "wiz-step3b", "index": MATCH}, "style"),
+    Output({"type": "wiz-step3c", "index": MATCH}, "style"),
+    Output({"type": "wiz-btn-row", "index": MATCH}, "style"),
+    Output({"type": "wiz-next", "index": MATCH}, "children"),
+    Input({"type": "loc-split-check", "index": MATCH}, "value"),
+    State({"type": "det-name", "index": MATCH}, "value"),
+    State({"type": "det-cat", "index": MATCH}, "value"),
+    State({"type": "det-qty", "index": MATCH}, "value"),
+    State({"type": "loc-dropdown", "index": MATCH}, "value"),
+    State({"type": "det-order-num", "index": MATCH}, "data"),
+    State({"type": "det-item-name", "index": MATCH}, "data"),
+    State({"type": "det-split-data", "index": MATCH}, "data"),
+    prevent_initial_call=True,
+)
+def toggle_split(check_value, det_name, det_cat, det_qty, det_loc,
+                 order_num, item_name, current_split_data):
+    """Show/hide split container and initialize wizard."""
+    H = {"display": "none"}
+    V = {"display": "block", "marginTop": "4px", "padding": "8px 10px",
+         "backgroundColor": "#0f0f1a", "borderRadius": "6px",
+         "border": f"1px solid {TEAL}33"}
+    B = {"display": "block", "marginTop": "8px"}
+    show = check_value and "split" in check_value
+    # 13 outputs: container, data, display, state, question, s0-s3c(6), btn_row, btn_text
+    if not show:
+        return (H, current_split_data or [], [],
+                {"step": 0, "category": "", "total_qty": 0}, "",
+                H, H, H, H, H, H, H, "")
+
+    if current_split_data:
+        n = len(current_split_data)
+        return (V, current_split_data, _render_split_rows(current_split_data),
+                {"step": "done", "category": det_cat, "total_qty": n},
+                f"All {n} items allocated! Click Save above when ready.",
+                H, H, H, H, H, H, H, "")
+
+    key = (order_num, item_name)
+    existing = _ITEM_DETAILS.get(key, [])
+    if existing and len(existing) > 1:
+        data = [{"name": d["display_name"], "qty": d["true_qty"],
+                 "category": d["category"], "location": d.get("location", "")}
+                for d in existing]
+        n = len(data)
+        return (V, data, _render_split_rows(data),
+                {"step": "done", "category": det_cat, "total_qty": n},
+                f"All {n} items allocated! Click Save above when ready.",
+                H, H, H, H, H, H, H, "")
+
+    # Fresh start — wizard step 0
+    return (V, [], [],
+            {"step": 0, "category": "", "total_qty": 0},
+            "What type of item is this?",
+            {"display": "block"}, H, H, H, H, H, B, "Next \u2192")
+
+
+@app.callback(
+    Output({"type": "wiz-state", "index": MATCH}, "data", allow_duplicate=True),
+    Output({"type": "wiz-question", "index": MATCH}, "children", allow_duplicate=True),
+    Output({"type": "wiz-step0", "index": MATCH}, "style", allow_duplicate=True),
+    Output({"type": "wiz-step1", "index": MATCH}, "style", allow_duplicate=True),
+    Output({"type": "wiz-step2", "index": MATCH}, "style", allow_duplicate=True),
+    Output({"type": "wiz-step3a", "index": MATCH}, "style", allow_duplicate=True),
+    Output({"type": "wiz-step3b", "index": MATCH}, "style", allow_duplicate=True),
+    Output({"type": "wiz-step3c", "index": MATCH}, "style", allow_duplicate=True),
+    Output({"type": "wiz-btn-row", "index": MATCH}, "style", allow_duplicate=True),
+    Output({"type": "wiz-next", "index": MATCH}, "children", allow_duplicate=True),
+    Output({"type": "wiz-item-name", "index": MATCH}, "value"),
+    Output({"type": "det-split-data", "index": MATCH}, "data", allow_duplicate=True),
+    Output({"type": "det-split-display", "index": MATCH}, "children", allow_duplicate=True),
+    Input({"type": "wiz-next", "index": MATCH}, "n_clicks"),
+    State({"type": "wiz-state", "index": MATCH}, "data"),
+    State({"type": "wiz-cat", "index": MATCH}, "value"),
+    State({"type": "wiz-qty", "index": MATCH}, "value"),
+    State({"type": "wiz-same-diff", "index": MATCH}, "value"),
+    State({"type": "wiz-same-name", "index": MATCH}, "value"),
+    State({"type": "wiz-tulsa-qty", "index": MATCH}, "value"),
+    State({"type": "wiz-texas-qty", "index": MATCH}, "value"),
+    State({"type": "wiz-item-name", "index": MATCH}, "value"),
+    State({"type": "wiz-item-loc", "index": MATCH}, "value"),
+    State({"type": "det-split-data", "index": MATCH}, "data"),
+    State({"type": "det-name", "index": MATCH}, "value"),
+    State({"type": "det-cat", "index": MATCH}, "value"),
+    prevent_initial_call=True,
+)
+def wizard_advance(n_clicks, wiz_state, wiz_cat, wiz_qty, wiz_same_diff,
+                   wiz_same_name, wiz_tulsa_qty, wiz_texas_qty,
+                   wiz_item_name, wiz_item_loc,
+                   split_data, det_name, det_cat):
+    """Advance the guided wizard: category -> qty -> same/diff -> details -> done."""
+    if not n_clicks:
+        raise dash.exceptions.PreventUpdate
+
+    H = {"display": "none"}
+    B = {"display": "block", "marginTop": "8px"}
+    state = wiz_state or {"step": 0, "category": "", "total_qty": 0}
+    step = state.get("step", 0)
+    split_data = split_data or []
+    # 13 outputs: state, question, s0-s3c(6), btn_row, btn_text, item_name_clear, data, display
+
+    if step == 0:
+        # Category selected → ask how many
+        cat = wiz_cat or det_cat or "Other"
+        state = {**state, "step": 1, "category": cat}
+        word = "rolls" if cat == "Filament" else "items"
+        q = f"How many {word} are in this pack?"
+        return (state, q,
+                H, {"display": "block"}, H, H, H, H,
+                B, "Next \u2192", "", split_data, _render_split_rows(split_data))
+
+    elif step == 1:
+        # Quantity entered → ask same or different
+        total_qty = max(int(wiz_qty or 1), 1)
+        cat = state.get("category", "Other")
+        state = {**state, "step": 2, "total_qty": total_qty}
+        q = "Are these all the same item, or each different?"
+        return (state, q,
+                H, H, {"display": "block"}, H, H, H,
+                B, "Next \u2192", "", split_data, _render_split_rows(split_data))
+
+    elif step == 2:
+        # Same/different selected → branch
+        branch = wiz_same_diff or "same"
+        cat = state.get("category", "Other")
+        total_qty = state.get("total_qty", 1)
+        state = {**state, "branch": branch}
+
+        if branch == "same":
+            state["step"] = "3a"
+            word = "rolls" if cat == "Filament" else "items"
+            q = f"What are these {total_qty} {word} called?"
+            return (state, q,
+                    H, H, H, {"display": "block"}, H, H,
+                    B, "Next \u2192", "", split_data, _render_split_rows(split_data))
+        else:
+            state["step"] = "3c"
+            state["items_added"] = 0
+            iw = "roll" if cat == "Filament" else "item"
+            cw = "color" if cat == "Filament" else "name"
+            q = f"{iw.title()} 1 of {total_qty} \u2014 What {cw} is it and where did it go?"
+            return (state, q,
+                    H, H, H, H, H, {"display": "block"},
+                    B, f"Add {iw.title()} \u2192", "", split_data, _render_split_rows(split_data))
+
+    elif step == "3a":
+        # Common name entered → ask location allocation
+        name = (wiz_same_name or "").strip()
+        if not name:
+            raise dash.exceptions.PreventUpdate
+        total_qty = state.get("total_qty", 1)
+        state = {**state, "step": "3b", "common_name": name}
+        q = f"How many of the {total_qty} went to each location?"
+        return (state, q,
+                H, H, H, H, {"display": "block"}, H,
+                B, "Done \u2713", "", split_data, _render_split_rows(split_data))
+
+    elif step == "3b":
+        # Location allocation → generate split data → done
+        tulsa_n = max(int(wiz_tulsa_qty or 0), 0)
+        texas_n = max(int(wiz_texas_qty or 0), 0)
+        total_qty = state.get("total_qty", 1)
+        cat = state.get("category", "Other")
+        name = state.get("common_name", det_name)
+
+        if tulsa_n + texas_n == 0:
+            raise dash.exceptions.PreventUpdate
+
+        split_data = []
+        if tulsa_n > 0:
+            split_data.append({"name": name, "qty": tulsa_n, "category": cat, "location": "Tulsa, OK"})
+        if texas_n > 0:
+            split_data.append({"name": name, "qty": texas_n, "category": cat, "location": "Texas"})
+        other_n = total_qty - tulsa_n - texas_n
+        if other_n > 0:
+            split_data.append({"name": name, "qty": other_n, "category": cat, "location": "Other"})
+
+        state = {**state, "step": "done"}
+        total_entered = tulsa_n + texas_n + max(other_n, 0)
+        q = f"All {total_entered} items allocated! Click Save above when ready."
+        return (state, q,
+                H, H, H, H, H, H,
+                H, "", "", split_data, _render_split_rows(split_data))
+
+    elif step == "3c":
+        # Per-item entry (different items path)
+        name = (wiz_item_name or "").strip()
+        if not name:
+            raise dash.exceptions.PreventUpdate
+        cat = state.get("category", "Other")
+        total_qty = state.get("total_qty", 1)
+        split_data.append({
+            "name": name, "qty": 1,
+            "category": cat, "location": wiz_item_loc or "",
+        })
+        items_added = len(split_data)
+
+        if items_added >= total_qty:
+            state = {**state, "step": "done", "items_added": items_added}
+            word = "rolls" if cat == "Filament" else "items"
+            q = f"All {total_qty} {word} added! Click Save above when ready."
+            return (state, q,
+                    H, H, H, H, H, H,
+                    H, "", "", split_data, _render_split_rows(split_data))
+        else:
+            next_num = items_added + 1
+            state = {**state, "items_added": items_added}
+            iw = "roll" if cat == "Filament" else "item"
+            cw = "color" if cat == "Filament" else "name"
+            q = f"{iw.title()} {next_num} of {total_qty} \u2014 What {cw} is it and where did it go?"
+            return (state, q,
+                    H, H, H, H, H, {"display": "block"},
+                    B, f"Add {iw.title()} \u2192", "", split_data, _render_split_rows(split_data))
+
+    raise dash.exceptions.PreventUpdate
+
+
+@app.callback(
+    Output({"type": "det-split-data", "index": MATCH}, "data", allow_duplicate=True),
+    Output({"type": "det-split-display", "index": MATCH}, "children", allow_duplicate=True),
+    Output({"type": "wiz-state", "index": MATCH}, "data", allow_duplicate=True),
+    Output({"type": "wiz-question", "index": MATCH}, "children", allow_duplicate=True),
+    Output({"type": "wiz-step0", "index": MATCH}, "style", allow_duplicate=True),
+    Output({"type": "wiz-step1", "index": MATCH}, "style", allow_duplicate=True),
+    Output({"type": "wiz-step2", "index": MATCH}, "style", allow_duplicate=True),
+    Output({"type": "wiz-step3a", "index": MATCH}, "style", allow_duplicate=True),
+    Output({"type": "wiz-step3b", "index": MATCH}, "style", allow_duplicate=True),
+    Output({"type": "wiz-step3c", "index": MATCH}, "style", allow_duplicate=True),
+    Output({"type": "wiz-btn-row", "index": MATCH}, "style", allow_duplicate=True),
+    Output({"type": "wiz-next", "index": MATCH}, "children", allow_duplicate=True),
+    Input({"type": "split-clear-btn", "index": MATCH}, "n_clicks"),
+    prevent_initial_call=True,
+)
+def clear_split(n_clicks):
+    """Clear all sub-items and restart the wizard from step 0."""
+    if not n_clicks:
+        raise dash.exceptions.PreventUpdate
+    H = {"display": "none"}
+    return ([], _render_split_rows([]),
+            {"step": 0, "category": "", "total_qty": 0},
+            "What type of item is this?",
+            {"display": "block"}, H, H, H, H, H,
+            {"display": "block", "marginTop": "8px"}, "Next \u2192")
+
+
+@app.callback(
+    Output({"type": "det-price-display", "index": MATCH}, "children"),
+    Input({"type": "det-qty", "index": MATCH}, "value"),
+    State({"type": "det-orig-total", "index": MATCH}, "data"),
+    State({"type": "det-orig-qty", "index": MATCH}, "data"),
+    prevent_initial_call=True,
+)
+def update_price_display(new_qty, orig_total, orig_qty):
+    """Live-update per-unit price as user changes qty."""
+    new_qty = int(new_qty) if new_qty else orig_qty
+    if new_qty <= 0:
+        new_qty = orig_qty
+    per_unit = orig_total / new_qty
+    return f"  (qty {new_qty}, ${per_unit:.2f}ea — total ${orig_total:.2f})"
+
+
+@app.callback(
+    Output("editor-items-container", "children"),
+    Input("editor-search", "value"),
+    Input("editor-cat-filter", "value"),
+    Input("editor-status-filter", "value"),
+    prevent_initial_call=True,
+)
+def filter_editor(search, cat_filter, status_filter):
+    """Rebuild editor order cards based on search/category/status filters."""
+    search = (search or "").lower().strip()
+    cat_filter = cat_filter or "All"
+    status_filter = status_filter or "All"
+
+    sorted_orders = sorted(INVOICES, key=lambda o: o.get("date", ""), reverse=True)
+    order_cards = []
+
+    for inv in sorted_orders:
+        onum = inv["order_num"]
+        is_personal = inv["source"] == "Personal Amazon" or ("file" in inv and isinstance(inv.get("file"), str) and "Gigi" in inv.get("file", ""))
+
+        source_label = "Personal Amazon" if is_personal else ("Amazon" if inv["source"] in ("Key Component Mfg",) else inv["source"])
+        ship_addr = inv.get("ship_address", "")
+        orig_location = classify_location(ship_addr)
+
+        item_cards = []
+        _seen_names = {}
+        order_saved = 0
+        order_total_items = 0
+        for item in inv["items"]:
+            item_name = item["name"]
+            if item_name.startswith("Your package was left near the front door or porch."):
+                item_name = item_name.replace("Your package was left near the front door or porch.", "").strip()
+            auto_cat = categorize_item(item_name)
+
+            orig_qty = item["qty"]
+            price = item["price"]
+            orig_total = round(price * orig_qty, 2)
+
+            detail_key = (onum, item_name)
+            existing = _ITEM_DETAILS.get(detail_key, [])
+            has_details = bool(existing)
+
+            if existing:
+                det0 = existing[0]
+                det_name = det0["display_name"]
+                det_cat = det0["category"]
+                det_qty = sum(d.get("true_qty", 1) for d in existing)
+                det_loc = det0.get("location", "") or orig_location
+            else:
+                det_name = item_name
+                det_cat = auto_cat
+                det_qty = orig_qty
+                det_loc = orig_location
+
+            order_total_items += 1
+            if has_details:
+                order_saved += 1
+
+            # Apply filters
+            if search and search not in item_name.lower() and search not in det_name.lower():
+                continue
+            if cat_filter != "All" and det_cat != cat_filter:
+                continue
+            if status_filter == "Saved" and not has_details:
+                continue
+            if status_filter == "Unsaved" and has_details:
+                continue
+
+            _seen_names[item_name] = _seen_names.get(item_name, 0) + 1
+            if _seen_names[item_name] > 1:
+                idx = f"{onum}__{item_name}__{_seen_names[item_name]}"
+            else:
+                idx = f"{onum}__{item_name}"
+
+            img_url = _IMAGE_URLS.get(item_name, "")
+            is_split = len(existing) > 1
+
+            item_cards.append(_build_item_card(
+                idx, item_name, img_url, det_name, det_cat, det_qty, det_loc,
+                has_details, orig_qty, orig_total, is_split, existing, onum))
+
+        if not item_cards:
+            continue
+
+        order_total = sum(it["price"] * it["qty"] for it in inv["items"])
+        _loc_color = TEAL if "Tulsa" in orig_location else (ORANGE if "Texas" in orig_location else GRAY)
+        _prog_color = GREEN if order_saved == order_total_items else ORANGE
+        _order_all_done = order_saved == order_total_items and order_total_items > 0
+        _order_pct = round(order_saved / order_total_items * 100) if order_total_items > 0 else 0
+        mini_progress = html.Div([
+            html.Div(style={"width": f"{max(_order_pct, 3)}%", "height": "6px",
+                            "background": f"linear-gradient(90deg, {_prog_color}88, {_prog_color})",
+                            "borderRadius": "3px",
+                            "transition": "width 0.3s ease"}),
+        ], style={"width": "120px", "height": "6px", "backgroundColor": "#0d0d1a",
+                  "borderRadius": "3px", "display": "inline-block", "verticalAlign": "middle",
+                  "marginLeft": "10px", "overflow": "hidden"})
+        done_pill = html.Span("\u2713 ALL DONE", className="pulse-complete", style={
+            "fontSize": "12px", "fontWeight": "bold", "padding": "4px 14px",
+            "borderRadius": "12px", "backgroundColor": f"{GREEN}22", "color": GREEN,
+            "border": f"1px solid {GREEN}44", "marginLeft": "10px",
+            "textShadow": "0 0 8px #2ecc7144"}) if _order_all_done else None
+        _header_gradient = f"linear-gradient(180deg, {CYAN}08, transparent)" if not _order_all_done else f"linear-gradient(180deg, {GREEN}08, transparent)"
+        order_card = html.Div([
+            html.Div([
+                html.Div([
+                    html.Span(f"ORDER #{onum}", style={"color": CYAN, "fontWeight": "bold", "fontSize": "18px",
+                                                        "letterSpacing": "0.5px"}),
+                    html.Span(orig_location,
+                              style={"fontSize": "11px", "padding": "3px 12px", "borderRadius": "12px",
+                                     "backgroundColor": f"{_loc_color}22", "color": _loc_color,
+                                     "border": f"1px solid {_loc_color}33", "marginLeft": "12px",
+                                     "fontWeight": "bold", "whiteSpace": "nowrap"}),
+                    done_pill,
+                ], style={"display": "flex", "alignItems": "center", "marginBottom": "6px"}),
+                html.Div([
+                    html.Span(f"{inv['date']}", style={"color": GRAY, "fontSize": "12px"}),
+                    html.Span(" \u00b7 ", style={"color": f"{DARKGRAY}66", "margin": "0 6px"}),
+                    html.Span(f"{source_label}", style={"color": GRAY, "fontSize": "12px"}),
+                    html.Span(" \u00b7 ", style={"color": f"{DARKGRAY}66", "margin": "0 6px"}),
+                    html.Span(f"${order_total:.2f}", style={"color": WHITE, "fontSize": "14px", "fontWeight": "700"}),
+                    html.Span([
+                        html.Span(f"{order_saved}/{order_total_items} saved",
+                                  style={"color": _prog_color, "fontSize": "13px", "fontWeight": "bold"}),
+                        mini_progress,
+                    ], style={"marginLeft": "auto", "display": "flex", "alignItems": "center"}),
+                ], style={"display": "flex", "alignItems": "center"}),
+            ], style={"marginBottom": "12px", "paddingBottom": "12px",
+                      "borderBottom": f"1px solid {CYAN}18",
+                      "background": _header_gradient,
+                      "margin": "-18px -20px 12px -20px", "padding": "18px 20px 12px 20px",
+                      "borderRadius": "10px 10px 0 0"}),
+            html.Div(item_cards),
+        ], className="order-card order-card-saved" if _order_all_done else "order-card",
+           style={"backgroundColor": f"#2ecc7108" if _order_all_done else CARD2,
+                  "padding": "18px 20px", "borderRadius": "10px",
+                  "marginBottom": "14px",
+                  "border": f"1px solid {GREEN}55" if _order_all_done else f"1px solid {CYAN}18",
+                  "boxShadow": ("0 0 16px #2ecc7122, 0 4px 16px rgba(0,0,0,0.3)" if _order_all_done
+                                else "0 2px 12px rgba(0,0,0,0.25)")})
+        order_cards.append(order_card)
+
+    if not order_cards:
+        return [html.P("No items match your filter.", style={"color": GRAY, "padding": "20px"})]
+    return order_cards
+
+
+@app.callback(
+    Output({"type": "det-status", "index": MATCH}, "children"),
+    Input({"type": "det-save-btn", "index": MATCH}, "n_clicks"),
+    Input({"type": "det-reset-btn", "index": MATCH}, "n_clicks"),
+    State({"type": "det-name", "index": MATCH}, "value"),
+    State({"type": "det-cat", "index": MATCH}, "value"),
+    State({"type": "det-qty", "index": MATCH}, "value"),
+    State({"type": "loc-dropdown", "index": MATCH}, "value"),
+    State({"type": "loc-split-check", "index": MATCH}, "value"),
+    State({"type": "det-split-data", "index": MATCH}, "data"),
+    State({"type": "det-order-num", "index": MATCH}, "data"),
+    State({"type": "det-item-name", "index": MATCH}, "data"),
+    State({"type": "det-orig-qty", "index": MATCH}, "data"),
+    prevent_initial_call=True,
+)
+def handle_detail_save_reset(save_clicks, reset_clicks, display_name, category,
+                             true_qty, loc_dropdown,
+                             loc_split_check, split_data,
+                             order_num, item_name, orig_qty):
+    """Save or reset item details."""
+    ctx = callback_context
+    if not ctx.triggered:
+        raise dash.exceptions.PreventUpdate
+
+    trigger_id = ctx.triggered[0]["prop_id"]
+    is_reset = "det-reset-btn" in trigger_id
+    key = (order_num, item_name)
+
+    def _apply_details_to_inv_items():
+        """Re-apply _ITEM_DETAILS to INV_ITEMS so STOCK_SUMMARY stays fresh.
+
+        Uses _processed set to avoid duplicating split items, and looks up
+        original pricing from INVOICES so cost calculations stay correct.
+        """
+        global INV_ITEMS
+        if len(INV_ITEMS) == 0:
+            return
+        # Build lookup for original item pricing from INVOICES
+        _orig_pricing = {}
+        for inv in INVOICES:
+            onum = inv["order_num"]
+            ot = {"subtotal": inv["subtotal"], "grand_total": inv["grand_total"]}
+            for item in inv["items"]:
+                iname = item["name"]
+                if iname.startswith("Your package was left near the front door or porch."):
+                    iname = iname.replace("Your package was left near the front door or porch.", "").strip()
+                orig_total = item["price"] * item["qty"]
+                tax_ratio = (ot["grand_total"] / ot["subtotal"]) if ot["subtotal"] > 0 else 1.0
+                _orig_pricing[(onum, iname)] = {
+                    "price": item["price"], "qty": item["qty"],
+                    "total": orig_total,
+                    "total_with_tax": round(orig_total * tax_ratio, 2),
+                }
+
+        detail_rows = []
+        _processed = set()
+        for _, row in INV_ITEMS.iterrows():
+            rkey = (row["order_num"], row.get("_orig_name", row["name"]))
+            if rkey in _processed:
+                continue  # Already expanded this item (prevents split duplication)
+            _processed.add(rkey)
+            if rkey in _ITEM_DETAILS:
+                dets = _ITEM_DETAILS[rkey]
+                # Use original pricing from INVOICES for correct totals
+                orig = _orig_pricing.get(rkey, {})
+                orig_total = orig.get("total", row["price"] * row["qty"])
+                orig_with_tax = orig.get("total_with_tax", orig_total)
+                total_dq = sum(d["true_qty"] for d in dets)
+                pu = orig_total / total_dq if total_dq > 0 else 0
+                put = orig_with_tax / total_dq if total_dq > 0 else 0
+                for det in dets:
+                    nr = row.copy()
+                    nr["_orig_name"] = row.get("_orig_name", row["name"])
+                    nr["name"] = det["display_name"]
+                    nr["category"] = det["category"]
+                    nr["qty"] = det["true_qty"]
+                    nr["price"] = round(pu, 2)
+                    nr["total"] = round(pu * det["true_qty"], 2)
+                    nr["total_with_tax"] = round(put * det["true_qty"], 2)
+                    nr["image_url"] = ""
+                    if det.get("location"):
+                        nr["_override_location"] = det["location"]
+                        nr["location"] = det["location"]
+                    detail_rows.append(nr)
+                    # Map renamed items to original image (fallback)
+                    orig_img = _IMAGE_URLS.get(rkey[1], "")
+                    if orig_img and det["display_name"] not in _IMAGE_URLS:
+                        _IMAGE_URLS[det["display_name"]] = orig_img
+            else:
+                rc = row.copy()
+                if "_orig_name" not in rc.index:
+                    rc["_orig_name"] = row["name"]
+                detail_rows.append(rc)
+        INV_ITEMS = pd.DataFrame(detail_rows)
+        if len(INV_ITEMS) == 0:
+            return
+        # Ensure _orig_name exists
+        if "_orig_name" not in INV_ITEMS.columns:
+            INV_ITEMS["_orig_name"] = INV_ITEMS["name"]
+        # Re-apply categories for items without details
+        if "category" in INV_ITEMS.columns:
+            _cm = INV_ITEMS["category"].isna() | (INV_ITEMS["category"] == "")
+            INV_ITEMS.loc[_cm, "category"] = INV_ITEMS.loc[_cm, "name"].apply(categorize_item)
+        # Re-apply locations
+        if "_override_location" in INV_ITEMS.columns:
+            INV_ITEMS["location"] = INV_ITEMS.apply(
+                lambda r: r["_override_location"] if r.get("_override_location") else classify_location(r.get("ship_to", "")),
+                axis=1)
+
+    def _rebuild_uploaded_inventory():
+        """Rebuild _UPLOADED_INVENTORY from current INV_ITEMS after any change."""
+        _UPLOADED_INVENTORY.clear()
+        if len(INV_ITEMS) > 0:
+            for _, _r in INV_ITEMS.iterrows():
+                _loc = _norm_loc(_r.get("_override_location", ""))
+                if _loc:
+                    _ik = (_loc, _r["name"], _r.get("category", "Other"))
+                    _UPLOADED_INVENTORY[_ik] = _UPLOADED_INVENTORY.get(_ik, 0) + int(_r["qty"])
+
+    if is_reset:
+        ok = _delete_item_details(order_num, item_name)
+        if key in _ITEM_DETAILS:
+            del _ITEM_DETAILS[key]
+        _apply_details_to_inv_items()
+        _recompute_stock_summary()
+        _rebuild_uploaded_inventory()
+        return "Reset!"
+
+    # Build detail entries
+    display_name = (display_name or "").strip() or item_name
+    category = category or "Other"
+    true_qty = int(true_qty or orig_qty)
+    location = loc_dropdown or ""
+    is_split = loc_split_check and "split" in loc_split_check
+
+    if is_split and split_data:
+        details = [{"display_name": d["name"], "category": d.get("category") or category,
+                     "true_qty": int(d.get("qty", 1)), "location": d.get("location") or location}
+                    for d in split_data if d.get("name", "").strip()]
+        if not details:
+            details = [{"display_name": display_name, "category": category,
+                        "true_qty": true_qty, "location": location}]
+    else:
+        details = [{"display_name": display_name, "category": category,
+                     "true_qty": true_qty, "location": location}]
+
+    ok = _save_item_details(order_num, item_name, details)
+    if ok:
+        _ITEM_DETAILS[key] = details
+        count = len(details)
+
+        # Rebuild INV_ITEMS, STOCK_SUMMARY, and _UPLOADED_INVENTORY
+        _apply_details_to_inv_items()
+        _recompute_stock_summary()
+        _rebuild_uploaded_inventory()
+
+        return f"Saved! ({count} entry{'s' if count > 1 else ''})"
+    return "Error saving"
+
+
+# ── Editor-save cascade: relay det-status changes into a single trigger ───────
+
+@app.callback(
+    Output("editor-save-trigger", "data"),
+    Input({"type": "det-status", "index": ALL}, "children"),
+    State("editor-save-trigger", "data"),
+    prevent_initial_call=True,
+)
+def _relay_save_trigger(all_statuses, current):
+    """Increment trigger whenever any editor item is saved/reset."""
+    # Only fire if at least one status contains text (a save just happened)
+    if any(s for s in all_statuses if s):
+        return (current or 0) + 1
+    raise dash.exceptions.PreventUpdate
+
+
+@app.callback(
+    Output("stock-table-container", "children", allow_duplicate=True),
+    Input("editor-save-trigger", "data"),
+    State("stock-filter-input", "value"),
+    State("stock-filter-cat", "value"),
+    State("stock-filter-status", "value"),
+    State("stock-include-tax", "value"),
+    State("stock-sort-by", "value"),
+    prevent_initial_call=True,
+)
+def _refresh_stock_on_save(trigger, search, cat_filter, status_filter, include_tax, sort_by):
+    """Rebuild stock table after an editor save."""
+    with_tax = bool(include_tax and "tax" in include_tax)
+    return _build_stock_table_html(STOCK_SUMMARY, search or "", cat_filter or "All",
+                                   status_filter or "All", show_with_tax=with_tax,
+                                   sort_by=sort_by or "Category")
+
+
+@app.callback(
+    Output("location-inventory-display", "children", allow_duplicate=True),
+    Input("editor-save-trigger", "data"),
+    prevent_initial_call=True,
+)
+def _refresh_location_on_save(trigger):
+    """Rebuild location display after an editor save."""
+    tulsa_pct = (tulsa_spend / true_inventory_cost * 100) if true_inventory_cost else 0
+    texas_pct = (texas_spend / true_inventory_cost * 100) if true_inventory_cost else 0
+    return [
+        _build_warehouse_card("TJ (Tulsa, OK)", "Tulsa", TEAL,
+                               tulsa_spend, tulsa_orders, tulsa_subtotal, tulsa_tax, tulsa_pct),
+        _build_warehouse_card("BRADEN (Texas)", "Texas", ORANGE,
+                               texas_spend, texas_orders, texas_subtotal, texas_tax, texas_pct),
+    ]
+
+
+@app.callback(
+    Output("inv-kpi-row", "children"),
+    Input("editor-save-trigger", "data"),
+    prevent_initial_call=True,
+)
+def _refresh_kpis_on_save(trigger):
+    """Rebuild inventory KPI cards after an editor save."""
+    return _build_inv_kpi_row()
+
+
+@app.callback(
+    Output("inv-health-panel", "children"),
+    Input("editor-save-trigger", "data"),
+    prevent_initial_call=True,
+)
+def _refresh_health_on_save(trigger):
+    """Rebuild health panel after an editor save."""
+    return [_build_inventory_health_panel()]
+
+
+@app.callback(
+    Output("editor-items-container", "children", allow_duplicate=True),
+    Input("editor-save-trigger", "data"),
+    State("editor-search", "value"),
+    State("editor-cat-filter", "value"),
+    State("editor-status-filter", "value"),
+    prevent_initial_call=True,
+)
+def _refresh_editor_on_save(trigger, search, cat_filter, status_filter):
+    """Rebuild editor after save so saved items auto-compact."""
+    return filter_editor(search or "", cat_filter or "All", status_filter or "All")
+
+
+# ── Receipt Upload + Item Wizard ──────────────────────────────────────────────
+
+@app.callback(
+    Output("receipt-wizard-state", "data"),
+    Output("receipt-wizard-panel", "style"),
+    Output("receipt-wizard-header", "children"),
+    Output("receipt-wizard-orig", "children"),
+    Output("wizard-name", "value"),
+    Output("wizard-cat", "value"),
+    Output("wizard-qty", "value"),
+    Output("wizard-loc", "value"),
+    Output("receipt-wizard-progress", "children"),
+    Output("receipt-upload-status", "children"),
+    Output("wizard-form-row", "style"),
+    Output("wizard-nav-btns", "style"),
+    Output("wizard-done-btn", "style"),
+    Output("wizard-back-btn", "disabled"),
+    Input("receipt-upload", "contents"),
+    Input("wizard-save-btn", "n_clicks"),
+    Input("wizard-skip-btn", "n_clicks"),
+    Input("wizard-done-btn", "n_clicks"),
+    Input("wizard-back-btn", "n_clicks"),
+    State("receipt-upload", "filename"),
+    State("receipt-wizard-state", "data"),
+    State("wizard-name", "value"),
+    State("wizard-cat", "value"),
+    State("wizard-qty", "value"),
+    State("wizard-loc", "value"),
+    prevent_initial_call=True,
+)
+def handle_receipt_wizard(contents, save_clicks, skip_clicks, done_clicks, back_clicks,
+                          filename, state, wiz_name, wiz_cat, wiz_qty, wiz_loc):
+    """Handle PDF upload, wizard navigation (Save & Next / Skip / Back), and Done."""
+    ctx = callback_context
+    if not ctx.triggered:
+        raise dash.exceptions.PreventUpdate
+
+    trigger = ctx.triggered[0]["prop_id"]
+    _HIDE = {"display": "none"}
+    _SHOW_BLOCK = {"display": "block"}
+    _SHOW_FLEX = {"display": "flex", "alignItems": "center", "flexWrap": "wrap",
+                  "gap": "12px", "marginBottom": "12px"}
+    _NAV_FLEX = {"display": "flex", "gap": "10px", "alignItems": "center",
+                 "marginBottom": "10px"}
+    _NO = dash.no_update
+
+    def _build_wizard_display(st):
+        """Build wizard header, orig info, form defaults, and progress dots."""
+        idx = st["current_index"]
+        item = st["items"][idx]
+        total_items = st["total"]
+
+        header = html.Div([
+            html.Div([
+                html.Span(f"NEW RECEIPT: Order #{st['order_num']}",
+                          style={"color": CYAN, "fontWeight": "bold", "fontSize": "15px"}),
+                html.Span(f"  ({total_items} item{'s' if total_items != 1 else ''})",
+                          style={"color": GRAY, "fontSize": "13px", "marginLeft": "6px"}),
+            ]),
+            html.Div(f"Item {idx + 1} of {total_items}",
+                      style={"color": PURPLE, "fontSize": "13px", "fontWeight": "bold",
+                             "marginTop": "2px"}),
+        ])
+
+        orig = html.Div([
+            html.Div([
+                html.Span("Original: ", style={"color": GRAY, "fontSize": "12px"}),
+                html.Span(f'"{item["name"][:80]}"',
+                          style={"color": WHITE, "fontSize": "12px", "fontStyle": "italic"}),
+            ]),
+            html.Div([
+                html.Span(f'Qty: {item["qty"]}', style={"color": WHITE, "fontSize": "12px"}),
+                html.Span(f'    Price: ${item["price"]:.2f}/ea', style={"color": WHITE, "fontSize": "12px"}),
+                html.Span(f'    Total: ${item["price"] * item["qty"]:.2f}',
+                          style={"color": ORANGE, "fontSize": "12px", "fontWeight": "bold"}),
+            ], style={"marginTop": "4px"}),
+            html.Div([
+                html.Span(f'Seller: {item["seller"]}', style={"color": TEAL, "fontSize": "11px"}),
+                html.Span(f'    Ship to: {item.get("ship_to_short", "")}',
+                          style={"color": GRAY, "fontSize": "11px"}),
+            ], style={"marginTop": "2px"}),
+        ])
+
+        # Progress dots
+        dots = []
+        for i in range(total_items):
+            if i < idx:
+                dot_color = GREEN
+            elif i == idx:
+                dot_color = CYAN
+            else:
+                dot_color = DARKGRAY
+            dots.append(html.Span("\u25cf ", style={
+                "color": dot_color, "fontSize": "16px", "margin": "0 2px"}))
+
+        return header, orig, item["name"], item["auto_category"], item["qty"], item["auto_location"], dots
+
+    # ── Handle PDF Upload ──────────────────────────────────────────────────
+    if "receipt-upload" in trigger:
+        if not contents or not filename:
+            raise dash.exceptions.PreventUpdate
+
+        # Decode base64 PDF
+        content_type, content_string = contents.split(",")
+        decoded = base64.b64decode(content_string)
+
+        # Save to keycomp folder initially
+        save_folder = os.path.join(BASE_DIR, "data", "invoices", "keycomp")
+        save_path = os.path.join(save_folder, filename)
+        try:
+            with open(save_path, "wb") as f:
+                f.write(decoded)
+        except Exception as e:
+            return (None, _HIDE, "", "", "", None, 1, None, "",
+                    html.Div(f"Error saving file: {e}", style={"color": RED, "fontSize": "13px"}),
+                    _SHOW_FLEX, _NAV_FLEX, _HIDE, True)
+
+        # Parse with _parse_invoices
+        try:
+            from _parse_invoices import parse_pdf_file
+            order = parse_pdf_file(save_path)
+        except Exception as e:
+            try:
+                os.remove(save_path)
+            except Exception:
+                pass
+            return (None, _HIDE, "", "", "", None, 1, None, "",
+                    html.Div(f"Error parsing PDF: {e}", style={"color": RED, "fontSize": "13px"}),
+                    _SHOW_FLEX, _NAV_FLEX, _HIDE, True)
+
+        if not order or not order.get("items"):
+            try:
+                os.remove(save_path)
+            except Exception:
+                pass
+            return (None, _HIDE, "", "", "", None, 1, None, "",
+                    html.Div("Could not parse any items from this PDF.",
+                             style={"color": RED, "fontSize": "13px"}),
+                    _SHOW_FLEX, _NAV_FLEX, _HIDE, True)
+
+        # Check for duplicate order_num
+        for inv in INVOICES:
+            if inv["order_num"] == order["order_num"]:
+                try:
+                    os.remove(save_path)
+                except Exception:
+                    pass
+                return (None, _HIDE, "", "", "", None, 1, None, "",
+                        html.Div(f"Order #{order['order_num']} already exists!",
+                                 style={"color": ORANGE, "fontSize": "13px", "fontWeight": "bold"}),
+                        _SHOW_FLEX, _NAV_FLEX, _HIDE, True)
+
+        # Move to personal_amazon folder if source matches
+        if order.get("source") == "Personal Amazon":
+            new_folder = os.path.join(BASE_DIR, "data", "invoices", "personal_amazon")
+            new_path = os.path.join(new_folder, filename)
+            if save_path != new_path:
+                try:
+                    os.rename(save_path, new_path)
+                except Exception:
+                    pass
+
+        # Append to INVOICES and persist
+        INVOICES.append(order)
+
+        # Save to local JSON (fallback)
+        try:
+            out_path = os.path.join(BASE_DIR, "data", "generated", "inventory_orders.json")
+            with open(out_path, "w") as f:
+                json.dump(INVOICES, f, indent=2)
+        except Exception:
+            pass
+
+        # Push to Supabase
+        _save_new_order(order)
+
+        # Build INV_ITEMS rows for this new order
+        try:
+            dt = pd.to_datetime(order["date"], format="%B %d, %Y")
+        except Exception:
+            try:
+                dt = pd.to_datetime(order["date"])
+            except Exception:
+                dt = pd.NaT
+        month = dt.to_period("M").strftime("%Y-%m") if pd.notna(dt) else "Unknown"
+        new_inv_rows = []
+        for item in order["items"]:
+            item_name = item["name"]
+            if item_name.startswith("Your package was left near the front door or porch."):
+                item_name = item_name.replace("Your package was left near the front door or porch.", "").strip()
+            new_inv_rows.append({
+                "order_num": order["order_num"],
+                "date": order["date"],
+                "date_parsed": dt,
+                "month": month,
+                "name": item_name,
+                "qty": item["qty"],
+                "price": item["price"],
+                "total": item["price"] * item["qty"],
+                "source": order["source"],
+                "seller": item.get("seller", "Unknown"),
+                "ship_to": item.get("ship_to", order.get("ship_address", "")),
+                "payment_method": order.get("payment_method", "Unknown"),
+                "image_url": item.get("image_url", ""),
+                "category": categorize_item(item_name),
+                "_orig_name": item_name,
+                "_override_location": "",
+            })
+        if new_inv_rows:
+            global INV_ITEMS
+            new_df = pd.DataFrame(new_inv_rows)
+            # Allocate tax
+            if order["subtotal"] > 0:
+                new_df["total_with_tax"] = (
+                    new_df["total"] * (order["grand_total"] / order["subtotal"])
+                ).round(2)
+            else:
+                new_df["total_with_tax"] = new_df["total"]
+            INV_ITEMS = pd.concat([INV_ITEMS, new_df], ignore_index=True)
+
+        # Build wizard state
+        ship_addr = order.get("ship_address", "")
+        auto_loc = classify_location(ship_addr)
+        items_for_wizard = []
+        for item in order["items"]:
+            name = item["name"]
+            auto_cat = categorize_item(name)
+            ship_to = item.get("ship_to", ship_addr)
+            if ship_to.count(",") >= 2:
+                parts = ship_to.split(",")
+                short_ship = parts[1].strip() + ", " + parts[2].strip().split(" ")[0]
+            else:
+                short_ship = ship_to
+            items_for_wizard.append({
+                "name": name,
+                "qty": item["qty"],
+                "price": item["price"],
+                "seller": item.get("seller", "Unknown"),
+                "ship_to": ship_to,
+                "ship_to_short": short_ship,
+                "auto_category": auto_cat,
+                "auto_location": auto_loc,
+            })
+
+        new_state = {
+            "order_num": order["order_num"],
+            "order_date": order["date"],
+            "source": order["source"],
+            "items": items_for_wizard,
+            "current_index": 0,
+            "total": len(items_for_wizard),
+            "saved_count": 0,
+        }
+
+        header, orig, name, cat, qty, loc, dots = _build_wizard_display(new_state)
+        status = html.Div([
+            html.Span("\u2713 ", style={"color": GREEN, "fontWeight": "bold"}),
+            html.Span(f"Parsed {filename}: {len(items_for_wizard)} item(s) found. "
+                       f"Order #{order['order_num']}",
+                       style={"color": GREEN, "fontSize": "13px"}),
+        ])
+
+        return (new_state, _SHOW_BLOCK, header, orig, name, cat, qty, loc, dots,
+                status, _SHOW_FLEX, _NAV_FLEX, _HIDE, True)
+
+    # ── Handle Back ───────────────────────────────────────────────────────
+    if "wizard-back-btn" in trigger:
+        if not state or state.get("current_index", 0) <= 0:
+            raise dash.exceptions.PreventUpdate
+        state["current_index"] = max(0, state["current_index"] - 1)
+        header, orig, name, cat, qty, loc, dots = _build_wizard_display(state)
+        _back_disabled = state["current_index"] <= 0
+        return (state, _SHOW_BLOCK, header, orig, name, cat, qty, loc, dots,
+                _NO, _SHOW_FLEX, _NAV_FLEX, _HIDE, _back_disabled)
+
+    # ── Handle Save & Next / Skip ──────────────────────────────────────────
+    if "wizard-save-btn" in trigger or "wizard-skip-btn" in trigger:
+        if not state:
+            raise dash.exceptions.PreventUpdate
+
+        idx = state["current_index"]
+        item = state["items"][idx]
+
+        if "wizard-save-btn" in trigger:
+            display_name = (wiz_name or "").strip() or item["name"]
+            category = wiz_cat or "Other"
+            true_qty = int(wiz_qty) if wiz_qty else item["qty"]
+            location = wiz_loc or ""
+
+            details = [{"display_name": display_name, "category": category,
+                        "true_qty": true_qty, "location": location}]
+
+            ok = _save_item_details(state["order_num"], item["name"], details)
+            if ok:
+                key = (state["order_num"], item["name"])
+                _ITEM_DETAILS[key] = details
+                # Update _UPLOADED_INVENTORY
+                loc = _norm_loc(location)
+                if loc:
+                    inv_key = (loc, display_name, category)
+                    _UPLOADED_INVENTORY[inv_key] = _UPLOADED_INVENTORY.get(inv_key, 0) + true_qty
+                state["saved_count"] = state.get("saved_count", 0) + 1
+
+        # Advance to next item
+        state["current_index"] = idx + 1
+
+        if state["current_index"] >= state["total"]:
+            # All items done — show summary
+            saved = state["saved_count"]
+            total = state["total"]
+            summary_header = html.Div([
+                html.H4([
+                    html.Span("\u2713 ", style={"color": GREEN}),
+                    "Receipt Complete!",
+                ], style={"color": GREEN, "margin": "0 0 8px 0", "fontSize": "16px"}),
+                html.P(f"Saved {saved} of {total} item(s) from Order #{state['order_num']}.",
+                       style={"color": WHITE, "fontSize": "13px", "margin": "0 0 4px 0"}),
+                html.P("Click 'Done' to close, then refresh the page to see updated stock.",
+                       style={"color": GRAY, "fontSize": "12px", "margin": "0"}),
+            ])
+
+            done_style = {"display": "inline-block", "fontSize": "12px", "padding": "8px 24px",
+                          "backgroundColor": GREEN, "color": WHITE,
+                          "border": "none", "borderRadius": "6px",
+                          "cursor": "pointer", "fontWeight": "bold",
+                          "marginBottom": "10px"}
+
+            return (state, _SHOW_BLOCK, summary_header, "", "", None, 1, None, "",
+                    _NO, _HIDE, _HIDE, done_style, True)
+
+        # Show next item
+        _back_disabled = state["current_index"] <= 0
+        header, orig, name, cat, qty, loc, dots = _build_wizard_display(state)
+        return (state, _SHOW_BLOCK, header, orig, name, cat, qty, loc, dots,
+                _NO, _SHOW_FLEX, _NAV_FLEX, _HIDE, _back_disabled)
+
+    # ── Handle Done ────────────────────────────────────────────────────────
+    if "wizard-done-btn" in trigger:
+        return (None, _HIDE, "", "", "", None, 1, None, "", "",
+                _SHOW_FLEX, _NAV_FLEX, _HIDE, True)
+
+    raise dash.exceptions.PreventUpdate
+
+
+# ── Location Item Image Override ──────────────────────────────────────────────
+
+@app.callback(
+    Output({"type": "loc-img-status", "index": MATCH}, "children"),
+    Input({"type": "loc-img-set", "index": MATCH}, "n_clicks"),
+    State({"type": "loc-img-url", "index": MATCH}, "value"),
+    State({"type": "loc-img-name", "index": MATCH}, "data"),
+    prevent_initial_call=True,
+)
+def set_location_item_image(n_clicks, url, item_name):
+    """Save a per-item image override from location inventory lists."""
+    if not n_clicks or not url or not url.strip():
+        raise dash.exceptions.PreventUpdate
+    from supabase_loader import save_image_override as _save_img_override
+    _save_img_override(item_name, url.strip())
+    _IMAGE_URLS[item_name] = url.strip()
+    return "Saved!"
+
+
+# ── Location Inventory Refresh ────────────────────────────────────────────────
+
+@app.callback(
+    Output("location-inventory-display", "children"),
+    Input("loc-inv-refresh-btn", "n_clicks"),
+    prevent_initial_call=True,
+)
+def refresh_location_display(n_clicks):
+    """Rebuild the Tulsa/Texas display from uploaded items."""
+    if not n_clicks:
+        raise dash.exceptions.PreventUpdate
+    tulsa_pct = (tulsa_spend / true_inventory_cost * 100) if true_inventory_cost else 0
+    texas_pct = (texas_spend / true_inventory_cost * 100) if true_inventory_cost else 0
+    return [
+        _build_warehouse_card("TJ (Tulsa, OK)", "Tulsa", TEAL,
+                               tulsa_spend, tulsa_orders, tulsa_subtotal, tulsa_tax, tulsa_pct),
+        _build_warehouse_card("BRADEN (Texas)", "Texas", ORANGE,
+                               texas_spend, texas_orders, texas_subtotal, texas_tax, texas_pct),
+    ]
+
+
+# ── Image Upload / URL / Paste Callbacks ──────────────────────────────────────
+
+def _save_item_image(display_name, orig_item_name, image_url=None, file_data=None, filename=None):
+    """Save an image for an item. Accepts either a URL or base64 file data.
+    Returns (status_message, asset_url)."""
+    from supabase_loader import save_image_override as _save_img_override
+
+    if image_url:
+        # Direct URL — just save the override, no local file needed
+        url = image_url.strip()
+        if not url:
+            return ("No URL provided", "")
+        _save_img_override(orig_item_name, url)
+        if display_name and display_name != orig_item_name:
+            _save_img_override(display_name, url)
+        _IMAGE_URLS[orig_item_name] = url
+        if display_name:
+            _IMAGE_URLS[display_name] = url
+        return ("Image set!", url)
+
+    if file_data:
+        # Base64 file data (from upload or clipboard paste)
+        try:
+            if "," in file_data:
+                content_type, content_string = file_data.split(",", 1)
+            else:
+                content_string = file_data
+            decoded = base64.b64decode(content_string)
+        except Exception:
+            return ("Upload failed", "")
+
+        ext = os.path.splitext(filename or "img.png")[1].lower()
+        if ext not in (".png", ".jpg", ".jpeg", ".gif", ".webp"):
+            ext = ".png"
+
+        safe_name = re.sub(r'[^\w\s-]', '', (display_name or orig_item_name or "item")[:50]).strip()
+        safe_name = re.sub(r'[\s]+', '_', safe_name).lower()
+        img_filename = f"{safe_name}{ext}"
+
+        img_dir = os.path.join(BASE_DIR, "assets", "product_images")
+        os.makedirs(img_dir, exist_ok=True)
+        img_path = os.path.join(img_dir, img_filename)
+        with open(img_path, "wb") as f:
+            f.write(decoded)
+
+        asset_url = f"/assets/product_images/{img_filename}"
+        _save_img_override(orig_item_name, asset_url)
+        if display_name and display_name != orig_item_name:
+            _save_img_override(display_name, asset_url)
+        _IMAGE_URLS[orig_item_name] = asset_url
+        if display_name:
+            _IMAGE_URLS[display_name] = asset_url
+        return ("Image saved!", asset_url)
+
+    return ("No image data", "")
+
+
+# ── Quick Add Toggle ─────────────────────────────────────────────────────────
+
+@app.callback(
+    Output("qa-panel", "style"),
+    Input("qa-toggle-btn", "n_clicks"),
+    State("qa-panel", "style"),
+    prevent_initial_call=True,
+)
+def toggle_quick_add(n_clicks, current_style):
+    """Toggle Quick Add panel visibility."""
+    if not n_clicks:
+        raise dash.exceptions.PreventUpdate
+    style = dict(current_style) if current_style else {}
+    if style.get("display") == "none":
+        style["display"] = "block"
+    else:
+        style["display"] = "none"
+    return style
+
+
+# ── Jump to Next Unsaved (clientside) ────────────────────────────────────────
+
+app.clientside_callback(
+    """
+    function(n_clicks) {
+        if (!n_clicks) return '';
+        var cards = document.querySelectorAll('#editor-items-container > div');
+        for (var i = 0; i < cards.length; i++) {
+            if (!cards[i].classList.contains('order-card-saved')) {
+                cards[i].scrollIntoView({behavior: 'smooth', block: 'center'});
+                cards[i].style.boxShadow = '0 0 20px #f39c1244';
+                setTimeout(function(c){ c.style.boxShadow = ''; }, 2000, cards[i]);
+                return 'Scrolled!';
+            }
+        }
+        return 'All done!';
+    }
+    """,
+    Output("editor-jump-unsaved", "title"),
+    Input("editor-jump-unsaved", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+
+# ── Stock Management Callbacks ────────────────────────────────────────────────
+
+@app.callback(
+    Output("stock-table-container", "children"),
+    Input("stock-filter-input", "value"),
+    Input("stock-filter-cat", "value"),
+    Input("stock-filter-status", "value"),
+    Input("stock-include-tax", "value"),
+    Input("stock-sort-by", "value"),
+    prevent_initial_call=True,
+)
+def filter_stock_table(search, cat_filter, status_filter, include_tax, sort_by):
+    """Rebuild stock table based on filter inputs."""
+    with_tax = bool(include_tax and "tax" in include_tax)
+    return _build_stock_table_html(STOCK_SUMMARY, search or "", cat_filter or "All",
+                                   status_filter or "All", show_with_tax=with_tax,
+                                   sort_by=sort_by or "Category")
+
+
+@app.callback(
+    Output({"type": "use-stock-status", "index": MATCH}, "children"),
+    Input({"type": "use-stock-btn", "index": MATCH}, "n_clicks"),
+    State({"type": "use-stock-qty", "index": MATCH}, "value"),
+    prevent_initial_call=True,
+)
+def handle_use_stock(n_clicks, use_qty):
+    """Log N units used for the clicked item."""
+    if not n_clicks:
+        raise dash.exceptions.PreventUpdate
+
+    ctx = callback_context
+    if not ctx.triggered:
+        raise dash.exceptions.PreventUpdate
+
+    qty = max(1, int(use_qty or 1))
+
+    # Extract item name from the pattern-match id
+    trigger = ctx.triggered[0]
+    prop_id = trigger["prop_id"]
+    try:
+        id_obj = json.loads(prop_id.split(".")[0])
+        item_name = id_obj["index"]
+    except (json.JSONDecodeError, KeyError):
+        return "Error"
+
+    result = _save_usage(item_name, qty, "Quick use")
+    if result:
+        # Update in-memory usage tracking
+        _usage_by_item[item_name] = _usage_by_item.get(item_name, 0) + qty
+        _USAGE_LOG.insert(0, result)
+        # Update STOCK_SUMMARY in-memory
+        if len(STOCK_SUMMARY) > 0:
+            mask = STOCK_SUMMARY["display_name"] == item_name
+            if mask.any():
+                sidx = STOCK_SUMMARY.index[mask][0]
+                STOCK_SUMMARY.at[sidx, "total_used"] = _usage_by_item[item_name]
+                STOCK_SUMMARY.at[sidx, "in_stock"] = (
+                    STOCK_SUMMARY.at[sidx, "total_purchased"] - _usage_by_item[item_name])
+        new_stock = STOCK_SUMMARY.loc[STOCK_SUMMARY["display_name"] == item_name, "in_stock"]
+        stock_val = int(new_stock.values[0]) if len(new_stock) > 0 else "?"
+        return f"-{qty}! ({stock_val})"
+    return "Error"
+
+
+@app.callback(
+    Output("usage-log-container", "children"),
+    Input({"type": "undo-usage-btn", "index": ALL}, "n_clicks"),
+    prevent_initial_call=True,
+)
+def handle_undo_usage(all_clicks):
+    """Undo a usage entry."""
+    ctx = callback_context
+    if not ctx.triggered:
+        raise dash.exceptions.PreventUpdate
+
+    trigger = ctx.triggered[0]
+    if not trigger["value"]:
+        raise dash.exceptions.PreventUpdate
+
+    prop_id = trigger["prop_id"]
+    try:
+        id_obj = json.loads(prop_id.split(".")[0])
+        usage_id = int(id_obj["index"])
+    except (json.JSONDecodeError, KeyError, ValueError):
+        raise dash.exceptions.PreventUpdate
+
+    # Find the usage entry to undo
+    entry = None
+    for u in _USAGE_LOG:
+        if u.get("id") == usage_id:
+            entry = u
+            break
+
+    if entry is None:
+        raise dash.exceptions.PreventUpdate
+
+    ok = _delete_usage(usage_id)
+    if ok:
+        # Update in-memory
+        item_name = entry["item_name"]
+        qty = entry.get("qty", 1)
+        _usage_by_item[item_name] = max(0, _usage_by_item.get(item_name, 0) - qty)
+        _USAGE_LOG.remove(entry)
+        # Update STOCK_SUMMARY
+        if len(STOCK_SUMMARY) > 0:
+            mask = STOCK_SUMMARY["display_name"] == item_name
+            if mask.any():
+                idx = STOCK_SUMMARY.index[mask][0]
+                STOCK_SUMMARY.at[idx, "total_used"] = _usage_by_item[item_name]
+                STOCK_SUMMARY.at[idx, "in_stock"] = (
+                    STOCK_SUMMARY.at[idx, "total_purchased"] - _usage_by_item[item_name])
+
+    return _build_usage_log_html()
+
+
+@app.callback(
+    Output("qa-status", "children"),
+    Output("qa-list", "children"),
+    Input("qa-add-btn", "n_clicks"),
+    State("qa-name", "value"),
+    State("qa-category", "value"),
+    State("qa-qty", "value"),
+    State("qa-price", "value"),
+    State("qa-location", "value"),
+    prevent_initial_call=True,
+)
+def handle_quick_add(n_clicks, name, category, qty, price, location):
+    """Add a new quick-add inventory item."""
+    if not n_clicks:
+        raise dash.exceptions.PreventUpdate
+
+    name = (name or "").strip()
+    if not name:
+        return "Enter an item name", dash.no_update
+
+    qty = int(qty or 1)
+    price = float(price or 0)
+    category = category or "Other"
+    location = location or ""
+
+    data = {
+        "item_name": name,
+        "category": category,
+        "qty": qty,
+        "unit_price": price,
+        "location": location,
+        "source": "Manual",
+    }
+    result = _save_quick_add(data)
+    if result:
+        _QUICK_ADDS.insert(0, result)
+        # Build updated list
+        qa_rows = []
+        for qa in _QUICK_ADDS[:20]:
+            created = qa.get("created_at", "")[:10] if qa.get("created_at") else ""
+            qa_rows.append(html.Tr([
+                html.Td(created, style={"color": GRAY, "padding": "3px 6px", "fontSize": "11px"}),
+                html.Td(qa.get("item_name", ""), style={"color": WHITE, "padding": "3px 8px", "fontSize": "12px"}),
+                html.Td(qa.get("category", ""), style={"color": TEAL, "padding": "3px 6px", "fontSize": "11px"}),
+                html.Td(str(qa.get("qty", 1)), style={"textAlign": "center", "color": WHITE, "padding": "3px 6px", "fontSize": "11px"}),
+                html.Td(f"${float(qa.get('unit_price', 0)):,.2f}", style={"textAlign": "right", "color": ORANGE, "padding": "3px 6px", "fontSize": "11px"}),
+                html.Td(qa.get("location", ""), style={"color": GRAY, "padding": "3px 6px", "fontSize": "11px"}),
+                html.Td(
+                    html.Button("Del", id={"type": "del-qa-btn", "index": str(qa["id"])},
+                                n_clicks=0,
+                                style={"backgroundColor": "transparent", "color": RED, "border": f"1px solid {RED}44",
+                                       "borderRadius": "4px", "padding": "2px 6px", "fontSize": "10px",
+                                       "cursor": "pointer"}),
+                    style={"padding": "3px 4px"}),
+            ], style={"borderBottom": "1px solid #ffffff08"}))
+
+        table = html.Table([
+            html.Thead(html.Tr([
+                html.Th("Date", style={"textAlign": "left", "padding": "4px 6px"}),
+                html.Th("Item", style={"textAlign": "left", "padding": "4px 8px"}),
+                html.Th("Category", style={"textAlign": "left", "padding": "4px 6px"}),
+                html.Th("Qty", style={"textAlign": "center", "padding": "4px 6px"}),
+                html.Th("Price", style={"textAlign": "right", "padding": "4px 6px"}),
+                html.Th("Location", style={"textAlign": "left", "padding": "4px 6px"}),
+                html.Th("", style={"width": "50px"}),
+            ], style={"borderBottom": f"1px solid {GREEN}44"})),
+            html.Tbody(qa_rows),
+        ], style={"width": "100%", "borderCollapse": "collapse", "color": WHITE})
+
+        return f"Added {name}! Refresh page to see in stock table.", table
+    return "Error saving", dash.no_update
+
+
+@app.callback(
+    Output("qa-list", "children", allow_duplicate=True),
+    Input({"type": "del-qa-btn", "index": ALL}, "n_clicks"),
+    prevent_initial_call=True,
+)
+def handle_delete_quick_add(all_clicks):
+    """Delete a quick-add entry."""
+    ctx = callback_context
+    if not ctx.triggered:
+        raise dash.exceptions.PreventUpdate
+
+    trigger = ctx.triggered[0]
+    if not trigger["value"]:
+        raise dash.exceptions.PreventUpdate
+
+    prop_id = trigger["prop_id"]
+    try:
+        id_obj = json.loads(prop_id.split(".")[0])
+        qa_id = int(id_obj["index"])
+    except (json.JSONDecodeError, KeyError, ValueError):
+        raise dash.exceptions.PreventUpdate
+
+    ok = _delete_quick_add(qa_id)
+    if ok:
+        # Remove from in-memory list
+        _QUICK_ADDS[:] = [qa for qa in _QUICK_ADDS if qa.get("id") != qa_id]
+
+    # Rebuild list
+    qa_rows = []
+    for qa in _QUICK_ADDS[:20]:
+        created = qa.get("created_at", "")[:10] if qa.get("created_at") else ""
+        qa_rows.append(html.Tr([
+            html.Td(created, style={"color": GRAY, "padding": "3px 6px", "fontSize": "11px"}),
+            html.Td(qa.get("item_name", ""), style={"color": WHITE, "padding": "3px 8px", "fontSize": "12px"}),
+            html.Td(qa.get("category", ""), style={"color": TEAL, "padding": "3px 6px", "fontSize": "11px"}),
+            html.Td(str(qa.get("qty", 1)), style={"textAlign": "center", "color": WHITE, "padding": "3px 6px", "fontSize": "11px"}),
+            html.Td(f"${float(qa.get('unit_price', 0)):,.2f}", style={"textAlign": "right", "color": ORANGE, "padding": "3px 6px", "fontSize": "11px"}),
+            html.Td(qa.get("location", ""), style={"color": GRAY, "padding": "3px 6px", "fontSize": "11px"}),
+            html.Td(
+                html.Button("Del", id={"type": "del-qa-btn", "index": str(qa["id"])},
+                            n_clicks=0,
+                            style={"backgroundColor": "transparent", "color": RED, "border": f"1px solid {RED}44",
+                                   "borderRadius": "4px", "padding": "2px 6px", "fontSize": "10px",
+                                   "cursor": "pointer"}),
+                style={"padding": "3px 4px"}),
+        ], style={"borderBottom": "1px solid #ffffff08"}))
+
+    if not qa_rows:
+        return html.Div()
+
+    return html.Table([
+        html.Thead(html.Tr([
+            html.Th("Date", style={"textAlign": "left", "padding": "4px 6px"}),
+            html.Th("Item", style={"textAlign": "left", "padding": "4px 8px"}),
+            html.Th("Category", style={"textAlign": "left", "padding": "4px 6px"}),
+            html.Th("Qty", style={"textAlign": "center", "padding": "4px 6px"}),
+            html.Th("Price", style={"textAlign": "right", "padding": "4px 6px"}),
+            html.Th("Location", style={"textAlign": "left", "padding": "4px 6px"}),
+            html.Th("", style={"width": "50px"}),
+        ], style={"borderBottom": f"1px solid {GREEN}44"})),
+        html.Tbody(qa_rows),
+    ], style={"width": "100%", "borderCollapse": "collapse", "color": WHITE})
+
 
 # ── Chatbot Callback ─────────────────────────────────────────────────────────
 
@@ -5915,11 +11363,12 @@ def handle_chat(n_clicks, n_submit, quick_clicks, user_input, history_data, curr
             "Full summary", "Net profit", "Best sellers",
             "Shipping P/L", "Monthly breakdown", "Refunds",
             "Growth trend", "Best month", "Fees breakdown",
-            "Inventory / COGS",
+            "Inventory / COGS", "Unit economics",
+            "Patterns", "Cash flow", "Valuation", "Debt",
         ]
         try:
             idx_data = json.loads(trigger_id.split(".")[0])
-            idx = idx_data["index"]
+            idx = int(idx_data["index"])
             question = quick_questions[idx]
         except Exception:
             raise dash.exceptions.PreventUpdate
@@ -5974,6 +11423,436 @@ def handle_chat(n_clicks, n_submit, quick_clicks, user_input, history_data, curr
     return children, history_data, ""
 
 
+# ── Data Hub: Initial file list populator ───────────────────────────────────
+
+@app.callback(
+    Output("datahub-etsy-files", "children"),
+    Output("datahub-receipt-files", "children"),
+    Output("datahub-bank-files", "children"),
+    Output("datahub-etsy-stats", "children"),
+    Output("datahub-receipt-stats", "children"),
+    Output("datahub-bank-stats", "children"),
+    Input("datahub-init-trigger", "data"),
+)
+def init_datahub_files(_trigger):
+    """Populate existing file lists and initial stats on page load."""
+    etsy_files = _get_existing_files("etsy")
+    receipt_files = _get_existing_files("receipt")
+    bank_files = _get_existing_files("bank")
+
+    etsy_stats = html.Div(f"{len(DATA)} transactions  |  {order_count} orders  |  "
+                           f"Gross: ${gross_sales:,.2f}",
+                           style={"color": TEAL, "fontSize": "12px", "fontFamily": "monospace"})
+    receipt_stats = html.Div(f"{len(INVOICES)} orders  |  ${total_inventory_cost:,.2f} total spend",
+                              style={"color": PURPLE, "fontSize": "12px", "fontFamily": "monospace"})
+    bank_stats = html.Div(f"{len(BANK_TXNS)} transactions  |  Net: ${bank_net_cash:,.2f}",
+                           style={"color": CYAN, "fontSize": "12px", "fontFamily": "monospace"})
+
+    return (_render_file_list(etsy_files, TEAL),
+            _render_file_list(receipt_files, PURPLE),
+            _render_file_list(bank_files, CYAN),
+            etsy_stats, receipt_stats, bank_stats)
+
+
+# ── Data Hub: Upload Callback ───────────────────────────────────────────────
+
+@app.callback(
+    Output("datahub-etsy-status", "children"),
+    Output("datahub-etsy-files", "children", allow_duplicate=True),
+    Output("datahub-etsy-stats", "children", allow_duplicate=True),
+    Output("datahub-receipt-status", "children"),
+    Output("datahub-receipt-files", "children", allow_duplicate=True),
+    Output("datahub-receipt-stats", "children", allow_duplicate=True),
+    Output("datahub-bank-status", "children"),
+    Output("datahub-bank-files", "children", allow_duplicate=True),
+    Output("datahub-bank-stats", "children", allow_duplicate=True),
+    Output("datahub-activity-log", "children"),
+    Output("datahub-summary-strip", "children"),
+    Output("app-header-content", "children"),
+    Input("datahub-etsy-upload", "contents"),
+    Input("datahub-receipt-upload", "contents"),
+    Input("datahub-bank-upload", "contents"),
+    State("datahub-etsy-upload", "filename"),
+    State("datahub-receipt-upload", "filename"),
+    State("datahub-bank-upload", "filename"),
+    State("datahub-activity-log", "children"),
+    prevent_initial_call=True,
+)
+def handle_datahub_upload(etsy_contents, receipt_contents, bank_contents,
+                          etsy_filename, receipt_filename, bank_filename,
+                          activity_log):
+    """Handle file uploads from all 3 Data Hub zones."""
+    import datetime as _dt
+
+    trigger = callback_context.triggered[0]["prop_id"] if callback_context.triggered else ""
+    now_str = _dt.datetime.now().strftime("%I:%M:%S %p")
+    nu = dash.no_update  # shorthand
+
+    # Initialize outputs — all no_update by default
+    etsy_status, etsy_file_list, etsy_stats = nu, nu, nu
+    rcpt_status, rcpt_file_list, rcpt_stats = nu, nu, nu
+    bank_status, bank_file_list, bank_stats = nu, nu, nu
+    new_log = activity_log or []
+    summary = nu
+    header = nu
+
+    # ── Etsy CSV Upload ──────────────────────────────────────────────────
+    if "datahub-etsy-upload" in trigger and etsy_contents:
+        try:
+            content_type, content_string = etsy_contents.split(",")
+            decoded = base64.b64decode(content_string)
+
+            valid, msg, df = _validate_etsy_csv(decoded)
+            if not valid:
+                etsy_status = html.Div([
+                    html.Span("\u2717 ", style={"color": RED, "fontWeight": "bold"}),
+                    html.Span(f"Invalid CSV: {msg}", style={"color": RED, "fontSize": "13px"}),
+                ])
+            else:
+                # Auto-name: use filename as-is, or generate etsy_statement_YYYY_MM.csv
+                fname = etsy_filename or "etsy_upload.csv"
+                if not fname.startswith("etsy_statement"):
+                    try:
+                        dates = pd.to_datetime(df["Date"], format="%B %d, %Y", errors="coerce")
+                        min_d = dates.min()
+                        if pd.notna(min_d):
+                            fname = f"etsy_statement_{min_d.year}_{min_d.month:02d}.csv"
+                    except Exception:
+                        pass
+
+                # Check for overlap with existing files
+                has_overlap, overlap_file, overlap_msg = _check_etsy_csv_overlap(df, fname)
+                if has_overlap and overlap_file:
+                    old_path = os.path.join(BASE_DIR, "data", "etsy_statements", overlap_file)
+                    try:
+                        os.remove(old_path)
+                    except Exception:
+                        pass
+
+                save_path = os.path.join(BASE_DIR, "data", "etsy_statements", fname)
+                with open(save_path, "wb") as f:
+                    f.write(decoded)
+
+                stats = _reload_etsy_data()
+                _cascade_reload("etsy")
+
+                if has_overlap:
+                    etsy_status = html.Div([
+                        html.Span("\u26a0 ", style={"color": ORANGE, "fontWeight": "bold"}),
+                        html.Span(f"Replaced {overlap_file} — {overlap_msg}. {msg}",
+                                  style={"color": ORANGE, "fontSize": "13px"}),
+                    ])
+                    log_icon, log_color = "\u26a0", ORANGE
+                    log_text = f"Etsy CSV: Replaced {overlap_file} with {fname} ({msg})"
+                else:
+                    etsy_status = html.Div([
+                        html.Span("\u2713 ", style={"color": GREEN, "fontWeight": "bold"}),
+                        html.Span(f"Uploaded {fname} — {msg}", style={"color": GREEN, "fontSize": "13px"}),
+                    ])
+                    log_icon, log_color = "\u2713", GREEN
+                    log_text = f"Etsy CSV: {fname} ({msg})"
+
+                etsy_stats = html.Div(
+                    f"{stats['transactions']} transactions  |  {stats['orders']} orders  |  "
+                    f"Gross: ${stats['gross_sales']:,.2f}",
+                    style={"color": TEAL, "fontSize": "12px", "fontFamily": "monospace"})
+                etsy_file_list = _render_file_list(_get_existing_files("etsy"), TEAL)
+                summary = _build_datahub_summary()
+                header = _header_text()
+                new_log = [html.Div([
+                    html.Span(f"[{now_str}] ", style={"color": DARKGRAY, "fontSize": "11px"}),
+                    html.Span(f"{log_icon} {log_text}",
+                              style={"color": log_color, "fontSize": "12px"}),
+                ], style={"padding": "3px 0", "borderBottom": "1px solid #ffffff08"})] + (
+                    new_log if isinstance(new_log, list) else [])
+        except Exception as e:
+            etsy_status = html.Div(f"Error: {e}", style={"color": RED, "fontSize": "13px"})
+
+    # ── Receipt PDF Upload ───────────────────────────────────────────────
+    elif "datahub-receipt-upload" in trigger and receipt_contents:
+        try:
+            content_type, content_string = receipt_contents.split(",")
+            decoded = base64.b64decode(content_string)
+
+            fname = receipt_filename or "receipt.pdf"
+            save_folder = os.path.join(BASE_DIR, "data", "invoices", "keycomp")
+            save_path = os.path.join(save_folder, fname)
+            with open(save_path, "wb") as f:
+                f.write(decoded)
+
+            # Parse with _parse_invoices
+            from _parse_invoices import parse_pdf_file
+            order = parse_pdf_file(save_path)
+
+            if not order or not order.get("items"):
+                try:
+                    os.remove(save_path)
+                except Exception:
+                    pass
+                rcpt_status = html.Div([
+                    html.Span("\u2717 ", style={"color": RED, "fontWeight": "bold"}),
+                    html.Span("Could not parse any items from this PDF.",
+                              style={"color": RED, "fontSize": "13px"}),
+                ])
+            else:
+                # Check for duplicate order numbers
+                dup = any(inv["order_num"] == order["order_num"] for inv in INVOICES)
+                if dup:
+                    try:
+                        os.remove(save_path)
+                    except Exception:
+                        pass
+                    rcpt_status = html.Div([
+                        html.Span("\u26a0 ", style={"color": ORANGE, "fontWeight": "bold"}),
+                        html.Span(f"Order #{order['order_num']} already exists!",
+                                  style={"color": ORANGE, "fontSize": "13px", "fontWeight": "bold"}),
+                    ])
+                else:
+                    # Move to personal_amazon folder if source matches
+                    if order.get("source") == "Personal Amazon":
+                        new_folder = os.path.join(BASE_DIR, "data", "invoices", "personal_amazon")
+                        new_path = os.path.join(new_folder, fname)
+                        if save_path != new_path:
+                            try:
+                                os.rename(save_path, new_path)
+                            except Exception:
+                                pass
+
+                    stats = _reload_inventory_data(order)
+                    _cascade_reload("inventory")
+                    rcpt_status = html.Div([
+                        html.Div([
+                            html.Span("\u2713 ", style={"color": GREEN, "fontWeight": "bold"}),
+                            html.Span(f"Parsed {fname}: Order #{stats['order_num']} — "
+                                      f"{stats['item_count']} item(s), ${stats['grand_total']:.2f}",
+                                      style={"color": GREEN, "fontSize": "13px"}),
+                        ]),
+                        html.Div([
+                            html.Span("\u2192 ", style={"color": CYAN, "fontWeight": "bold"}),
+                            html.Span("Next: Go to the Inventory tab to review and name these items.",
+                                      style={"color": CYAN, "fontSize": "12px", "fontStyle": "italic"}),
+                        ], style={"marginTop": "4px"}),
+                    ])
+                    rcpt_stats = html.Div(
+                        f"{len(INVOICES)} orders  |  ${total_inventory_cost:,.2f} total spend",
+                        style={"color": PURPLE, "fontSize": "12px", "fontFamily": "monospace"})
+                    rcpt_file_list = _render_file_list(_get_existing_files("receipt"), PURPLE)
+                    summary = _build_datahub_summary()
+                    header = _header_text()
+                    new_log = [html.Div([
+                        html.Span(f"[{now_str}] ", style={"color": DARKGRAY, "fontSize": "11px"}),
+                        html.Span(f"\u2713 Receipt: {fname} (Order #{stats['order_num']}, "
+                                  f"{stats['item_count']} items)",
+                                  style={"color": GREEN, "fontSize": "12px"}),
+                    ], style={"padding": "3px 0", "borderBottom": "1px solid #ffffff08"})] + (
+                        new_log if isinstance(new_log, list) else [])
+        except Exception as e:
+            rcpt_status = html.Div(f"Error: {e}", style={"color": RED, "fontSize": "13px"})
+
+    # ── Bank PDF/CSV Upload ─────────────────────────────────────────────
+    elif "datahub-bank-upload" in trigger and bank_contents:
+        try:
+            content_type, content_string = bank_contents.split(",")
+            decoded = base64.b64decode(content_string)
+
+            # Check for duplicate before saving
+            is_dup, dup_file = _check_bank_file_duplicate(decoded, bank_filename)
+            if is_dup:
+                bank_status = html.Div([
+                    html.Span("\u26a0 ", style={"color": ORANGE, "fontWeight": "bold"}),
+                    html.Span(f"This file is already uploaded (matches {dup_file})",
+                              style={"color": ORANGE, "fontSize": "13px", "fontWeight": "bold"}),
+                ])
+                new_log = [html.Div([
+                    html.Span(f"[{now_str}] ", style={"color": DARKGRAY, "fontSize": "11px"}),
+                    html.Span(f"\u26a0 Bank: Duplicate of {dup_file}, skipped",
+                              style={"color": ORANGE, "fontSize": "12px"}),
+                ], style={"padding": "3px 0", "borderBottom": "1px solid #ffffff08"})] + (
+                    new_log if isinstance(new_log, list) else [])
+            else:
+                fname = bank_filename or "bank_statement.pdf"
+                save_folder = os.path.join(BASE_DIR, "data", "bank_statements")
+                os.makedirs(save_folder, exist_ok=True)
+                save_path = os.path.join(save_folder, fname)
+                with open(save_path, "wb") as f:
+                    f.write(decoded)
+
+                stats = _reload_bank_data()
+                _cascade_reload("bank")
+                bank_status = html.Div([
+                    html.Span("\u2713 ", style={"color": GREEN, "fontWeight": "bold"}),
+                    html.Span(f"Uploaded {fname} — {stats['transactions']} total transactions, "
+                              f"Net: ${stats['net_cash']:,.2f}",
+                              style={"color": GREEN, "fontSize": "13px"}),
+                ])
+                bank_stats = html.Div(
+                    f"{stats['transactions']} transactions  |  Net: ${stats['net_cash']:,.2f}",
+                    style={"color": CYAN, "fontSize": "12px", "fontFamily": "monospace"})
+                bank_file_list = _render_file_list(_get_existing_files("bank"), CYAN)
+                summary = _build_datahub_summary()
+                header = _header_text()
+                new_log = [html.Div([
+                    html.Span(f"[{now_str}] ", style={"color": DARKGRAY, "fontSize": "11px"}),
+                    html.Span(f"\u2713 Bank: {fname} ({stats['transactions']} txns)",
+                              style={"color": GREEN, "fontSize": "12px"}),
+                ], style={"padding": "3px 0", "borderBottom": "1px solid #ffffff08"})] + (
+                    new_log if isinstance(new_log, list) else [])
+        except Exception as e:
+            bank_status = html.Div(f"Error: {e}", style={"color": RED, "fontSize": "13px"})
+
+    return (etsy_status, etsy_file_list, etsy_stats,
+            rcpt_status, rcpt_file_list, rcpt_stats,
+            bank_status, bank_file_list, bank_stats,
+            new_log, summary, header)
+
+
+# ── Category Manager Callbacks ────────────────────────────────────────────────
+
+@app.callback(
+    Output({"type": "catmgr-status", "index": MATCH}, "children"),
+    Input({"type": "catmgr-cat", "index": MATCH}, "value"),
+    Input({"type": "catmgr-loc", "index": MATCH}, "value"),
+    State({"type": "catmgr-cat", "index": MATCH}, "id"),
+    prevent_initial_call=True,
+)
+def catmgr_save(new_cat, new_loc, component_id):
+    """Save category/location change from Category Manager instantly."""
+    global INV_ITEMS, STOCK_SUMMARY
+    item_key = component_id["index"]  # "order_num||orig_name"
+    parts = item_key.split("||", 1)
+    if len(parts) != 2:
+        raise dash.exceptions.PreventUpdate
+    order_num, orig_name = parts
+
+    if not new_cat:
+        raise dash.exceptions.PreventUpdate
+
+    # Find matching rows in INV_ITEMS
+    if "_orig_name" in INV_ITEMS.columns:
+        mask = (INV_ITEMS["order_num"] == order_num) & (
+            (INV_ITEMS["_orig_name"] == orig_name) | (INV_ITEMS["name"] == orig_name)
+        )
+    else:
+        mask = (INV_ITEMS["order_num"] == order_num) & (INV_ITEMS["name"] == orig_name)
+
+    if mask.sum() == 0:
+        raise dash.exceptions.PreventUpdate
+
+    # Get current item info
+    first_row = INV_ITEMS.loc[mask].iloc[0]
+    item_name_for_db = orig_name  # Use orig_name for the DB key
+    display_name = first_row["name"]
+
+    # Update INV_ITEMS in memory
+    INV_ITEMS.loc[mask, "category"] = new_cat
+    if new_loc:
+        INV_ITEMS.loc[mask, "location"] = new_loc
+        INV_ITEMS.loc[mask, "_override_location"] = new_loc
+
+    # Save to Supabase via item_details
+    key = (order_num, item_name_for_db)
+    if key in _ITEM_DETAILS:
+        # Update existing details
+        for det in _ITEM_DETAILS[key]:
+            det["category"] = new_cat
+            if new_loc:
+                det["location"] = new_loc
+        _save_item_details(order_num, item_name_for_db, _ITEM_DETAILS[key])
+    else:
+        # Create new detail entry
+        true_qty = int(first_row["qty"])
+        loc = new_loc or first_row.get("location", "")
+        details = [{"display_name": display_name, "category": new_cat,
+                     "true_qty": true_qty, "location": loc}]
+        ok = _save_item_details(order_num, item_name_for_db, details)
+        if ok:
+            _ITEM_DETAILS[key] = details
+
+    # Recompute globals
+    _recompute_stock_summary()
+
+    return "\u2713"
+
+
+# ── CSV Download Callbacks ────────────────────────────────────────────────────
+
+@app.callback(
+    Output("download-etsy-csv", "data"),
+    Input("btn-download-etsy", "n_clicks"),
+    prevent_initial_call=True,
+)
+def download_etsy(n):
+    if not n:
+        raise dash.exceptions.PreventUpdate
+    return dcc.send_data_frame(DATA.to_csv, "etsy_transactions.csv", index=False)
+
+
+@app.callback(
+    Output("download-bank-csv", "data"),
+    Input("btn-download-bank", "n_clicks"),
+    prevent_initial_call=True,
+)
+def download_bank(n):
+    if not n:
+        raise dash.exceptions.PreventUpdate
+    if not BANK_TXNS:
+        raise dash.exceptions.PreventUpdate
+    df = pd.DataFrame(BANK_TXNS)
+    return dcc.send_data_frame(df.to_csv, "bank_transactions.csv", index=False)
+
+
+@app.callback(
+    Output("download-inventory-csv", "data"),
+    Input("btn-download-inventory", "n_clicks"),
+    prevent_initial_call=True,
+)
+def download_inventory(n):
+    if not n or len(INV_ITEMS) == 0:
+        raise dash.exceptions.PreventUpdate
+    export = INV_ITEMS[["order_num", "date", "month", "name", "category", "qty", "price",
+                         "total", "source", "location"]].copy()
+    return dcc.send_data_frame(export.to_csv, "inventory_items.csv", index=False)
+
+
+@app.callback(
+    Output("download-stock-csv", "data"),
+    Input("btn-download-stock", "n_clicks"),
+    prevent_initial_call=True,
+)
+def download_stock(n):
+    if not n or len(STOCK_SUMMARY) == 0:
+        raise dash.exceptions.PreventUpdate
+    export = STOCK_SUMMARY[["display_name", "category", "total_purchased", "total_used",
+                             "in_stock", "unit_cost", "total_cost", "location"]].copy()
+    return dcc.send_data_frame(export.to_csv, "stock_summary.csv", index=False)
+
+
+@app.callback(
+    Output("download-pl-csv", "data"),
+    Input("btn-download-pl", "n_clicks"),
+    prevent_initial_call=True,
+)
+def download_pl(n):
+    if not n:
+        raise dash.exceptions.PreventUpdate
+    rows = [
+        {"Line": "Gross Sales", "Amount": gross_sales},
+        {"Line": "Etsy Fees", "Amount": -total_fees},
+        {"Line": "Shipping Labels", "Amount": -total_shipping_cost},
+        {"Line": "Marketing/Ads", "Amount": -total_marketing},
+        {"Line": "Refunds", "Amount": -total_refunds},
+        {"Line": "Sales Tax", "Amount": -total_taxes},
+        {"Line": "= After Etsy Fees", "Amount": etsy_net},
+        {"Line": "Supply Costs", "Amount": -true_inventory_cost},
+        {"Line": "Business Expenses", "Amount": -bank_biz_expense_total},
+        {"Line": "Owner Draws", "Amount": -bank_owner_draw_total},
+        {"Line": "= Cash on Hand", "Amount": bank_cash_on_hand},
+        {"Line": "= Profit", "Amount": profit},
+    ]
+    df = pd.DataFrame(rows)
+    return dcc.send_data_frame(df.to_csv, "profit_and_loss.csv", index=False)
+
+
 # ── Run ──────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
@@ -5984,4 +11863,4 @@ if __name__ == "__main__":
     print(f"  Open: http://127.0.0.1:{port}")
     print("=" * 50)
     print()
-    app.run(debug=False, host="0.0.0.0", port=port)
+    app.run(debug=True, host="0.0.0.0", port=port, use_reloader=False)

@@ -1,0 +1,281 @@
+/* ── Dark theme for ALL Dash dropdowns ── */
+
+/* The closed dropdown box */
+.dash-dropdown .Select-control {
+    background-color: #1a1a2e !important;
+    border: 1px solid #666 !important;
+    color: #ffffff !important;
+}
+
+/* Text of the selected value */
+.dash-dropdown .Select-value-label {
+    color: #ffffff !important;
+}
+.dash-dropdown .Select--single > .Select-control .Select-value .Select-value-label {
+    color: #ffffff !important;
+}
+
+/* Placeholder text */
+.dash-dropdown .Select-placeholder {
+    color: #aaaaaa !important;
+}
+
+/* The open dropdown menu */
+.dash-dropdown .Select-menu-outer {
+    background-color: #1a1a2e !important;
+    border: 1px solid #666 !important;
+    z-index: 9999 !important;
+}
+
+.dash-dropdown .Select-menu {
+    background-color: #1a1a2e !important;
+}
+
+/* Each option row */
+.dash-dropdown .VirtualizedSelectOption {
+    background-color: #1a1a2e !important;
+    color: #ffffff !important;
+    cursor: pointer;
+}
+
+/* Hovered / focused option */
+.dash-dropdown .VirtualizedSelectFocusedOption {
+    background-color: #0f3460 !important;
+    color: #00d4ff !important;
+}
+
+/* Selected option */
+.dash-dropdown .VirtualizedSelectSelectedOption {
+    background-color: #16213e !important;
+    color: #2ecc71 !important;
+}
+
+/* Fallback for non-virtualized options */
+.dash-dropdown .Select-option {
+    background-color: #1a1a2e !important;
+    color: #ffffff !important;
+}
+.dash-dropdown .Select-option.is-focused {
+    background-color: #0f3460 !important;
+    color: #00d4ff !important;
+}
+.dash-dropdown .Select-option.is-selected {
+    background-color: #16213e !important;
+    color: #2ecc71 !important;
+}
+
+/* No results message */
+.dash-dropdown .Select-noresults {
+    background-color: #1a1a2e !important;
+    color: #aaaaaa !important;
+}
+
+/* Input field (when typing to search) */
+.dash-dropdown .Select-input > input {
+    color: #ffffff !important;
+}
+
+/* Arrow & clear button */
+.dash-dropdown .Select-arrow {
+    border-color: #aaaaaa transparent transparent !important;
+}
+.dash-dropdown .Select-clear {
+    color: #aaaaaa !important;
+}
+
+/* Multi-value (tags) */
+.dash-dropdown .Select-value {
+    background-color: #0f3460 !important;
+    border-color: #00d4ff44 !important;
+    color: #ffffff !important;
+}
+.dash-dropdown .Select-value-icon {
+    border-right-color: #00d4ff44 !important;
+}
+.dash-dropdown .Select-value-icon:hover {
+    background-color: #e74c3c !important;
+    color: #ffffff !important;
+}
+
+/* Multi-value wrapper background */
+.dash-dropdown .Select-multi-value-wrapper {
+    background-color: #1a1a2e !important;
+}
+
+/* ── Thin dark scrollbars ── */
+*::-webkit-scrollbar { width: 6px; height: 6px; }
+*::-webkit-scrollbar-track { background: #0d0d1a; border-radius: 3px; }
+*::-webkit-scrollbar-thumb { background: #333355; border-radius: 3px; }
+*::-webkit-scrollbar-thumb:hover { background: #4a4a7a; }
+* { scrollbar-width: thin; scrollbar-color: #333355 #0d0d1a; }
+
+/* ── Elevation system ── */
+.card-elevated {
+    box-shadow: 0 4px 20px rgba(0,0,0,0.35), 0 1px 6px rgba(0,0,0,0.2);
+    transition: all 0.2s ease;
+}
+.card-elevated:hover {
+    box-shadow: 0 6px 28px rgba(0,0,0,0.45), 0 2px 8px rgba(0,0,0,0.25);
+    transform: translateY(-1px);
+}
+
+/* ── KPI pill hover ── */
+.kpi-pill {
+    transition: all 0.2s ease;
+}
+.kpi-pill:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.07) !important;
+    filter: brightness(1.08);
+}
+
+/* ── Stock table row hover ── */
+.stock-row {
+    transition: all 0.15s ease;
+    border-left: 3px solid transparent;
+}
+.stock-row:hover {
+    background-color: #ffffff0c !important;
+    border-left: 3px solid #00d4ff66;
+}
+
+/* ── Gauge card hover ── */
+.gauge-card {
+    transition: all 0.2s ease;
+}
+.gauge-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 18px rgba(0,0,0,0.35) !important;
+    filter: brightness(1.05);
+}
+
+/* ── Progress bar shimmer ── */
+@keyframes shimmer {
+    0% { background-position: -200% center; }
+    100% { background-position: 200% center; }
+}
+.progress-bar-shimmer {
+    background-size: 200% 100%;
+    animation: shimmer 2.5s ease-in-out infinite;
+}
+
+/* ── Celebration pulse for complete states ── */
+@keyframes pulse-green {
+    0%, 100% { box-shadow: 0 0 8px #2ecc7122; }
+    50% { box-shadow: 0 0 18px #2ecc7133, 0 0 30px #2ecc7111; }
+}
+.pulse-complete {
+    animation: pulse-green 2.5s ease-in-out infinite;
+}
+
+/* ── Button hover states ── */
+button {
+    transition: all 0.15s ease !important;
+}
+button:hover {
+    filter: brightness(1.15);
+    transform: translateY(-1px);
+}
+button:active {
+    transform: translateY(0);
+    filter: brightness(0.95);
+}
+
+/* ── Action button glow ── */
+.btn-glow:hover {
+    box-shadow: 0 4px 15px rgba(0,0,0,0.3), 0 0 12px currentColor;
+}
+
+/* ── Warehouse card hover ── */
+.warehouse-card {
+    transition: all 0.2s ease;
+}
+.warehouse-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4) !important;
+}
+
+/* ── Order card hover ── */
+.order-card {
+    transition: all 0.2s ease;
+}
+.order-card:hover {
+    box-shadow: 0 6px 24px rgba(0,0,0,0.35) !important;
+}
+
+/* ── Status pill glow ── */
+.status-pill-saved {
+    text-shadow: 0 0 8px #2ecc7144;
+}
+.status-pill-unsaved {
+    text-shadow: 0 0 8px #f39c1244;
+}
+
+/* ── Details/Summary polish ── */
+details > summary { transition: color 0.15s ease; }
+details[open] > summary { margin-bottom: 8px; }
+details > summary::-webkit-details-marker { display: none; }
+
+/* ── Saved order green glow ── */
+.order-card-saved {
+    border: 1px solid #2ecc7155 !important;
+    box-shadow: 0 0 16px #2ecc7122, 0 4px 16px rgba(0,0,0,0.3) !important;
+    background-color: #2ecc7106 !important;
+}
+
+/* ── Item card hover ── */
+details.item-card {
+    transition: all 0.15s ease;
+}
+details.item-card:hover {
+    box-shadow: 0 4px 16px rgba(0,0,0,0.35) !important;
+    filter: brightness(1.03);
+}
+
+/* ── Table header tint ── */
+.stock-table-header th {
+    background-color: #ffffff06;
+    padding: 8px !important;
+}
+
+/* ── Summary strip shadow ── */
+.summary-strip {
+    box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+    transition: all 0.2s ease;
+}
+
+/* ── Quick Add gradient button ── */
+.btn-gradient-green {
+    background: linear-gradient(135deg, #2ecc71, #27ae60) !important;
+    border: none !important;
+    box-shadow: 0 2px 10px #2ecc7133;
+    transition: all 0.2s ease !important;
+}
+.btn-gradient-green:hover {
+    box-shadow: 0 4px 18px #2ecc7155 !important;
+    transform: translateY(-2px);
+}
+
+/* ── Toast notifications ── */
+@keyframes toast-slide-in {
+    from { transform: translateX(120%); opacity: 0; }
+    to { transform: translateX(0); opacity: 1; }
+}
+.toast-msg {
+    animation: toast-slide-in 0.3s ease-out;
+    padding: 12px 20px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 600;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+    max-width: 350px;
+}
+
+/* ── NEW badge pulse ── */
+@keyframes pulse-new {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.6; }
+}
+.new-badge {
+    animation: pulse-new 1.5s ease-in-out infinite;
+}

@@ -1,5 +1,5 @@
-"""Parse Capital One bank statement PDFs → data/generated/bank_transactions.json"""
-import fitz, os, re, json
+"""Parse Capital One bank statement PDFs and CSVs → data/generated/bank_transactions.json"""
+import fitz, os, re, json, csv
 from datetime import datetime
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -55,7 +55,7 @@ def auto_categorize(desc, txn_type):
         return "Subscriptions"
     # Restaurants / clothing — personal spending = Owner Draw - Tulsa
     if any(w in d for w in ["REASORS", "CHIPOTLE", "WILDFLOWERCAFE",
-                             "ANTHROPOLOGIE", "LULULEMON"]):
+                             "ANTHROPOLOGIE", "LULULEMON", "QT "]):
         return "Owner Draw - Tulsa"
     return "Uncategorized"
 
@@ -315,6 +315,13 @@ def _build_short_desc(raw_desc):
         name_part = f" {m2.group(1)}" if m2 else ""
         return f"BEST BUY AUTO PYMT{name_part}"
 
+    # QuikTrip
+    if "QT " in d and re.search(r"QT\s+\d+", d):
+        city_m = re.search(r"QT\s+\d+\s+(\w+)\s+(\w{2})", d)
+        if city_m:
+            return f"QT {city_m.group(1)} {city_m.group(2)}"
+        return "QT"
+
     # Various restaurants/stores — extract merchant + city
     for merchant in ["REASORS", "WILDFLOWERCAFE", "ANTHROPOLOGIE",
                      "LULULEMON", "CHIPOTLE"]:
@@ -328,6 +335,82 @@ def _build_short_desc(raw_desc):
 
     # Fallback: first 50 chars
     return raw_desc[:50].strip()
+
+
+# ── CSV Parsing ──────────────────────────────────────────────────────────────
+
+def parse_bank_csv(filepath):
+    """Parse a Capital One CSV transaction download into transactions.
+    CSV format: Account Number, Credit, Debit, Description, Posted Date
+    Note: Capital One CSVs have double-quoted descriptions with embedded commas
+    (e.g. ETSY, INC.) that confuse Python's csv module, so we parse manually.
+    Returns (transactions_list, covered_months_set)."""
+    fname = os.path.basename(filepath)
+    transactions = []
+    covered_months = set()
+
+    with open(filepath, "r", encoding="utf-8-sig") as f:
+        lines = f.readlines()
+
+    if not lines:
+        return transactions, covered_months
+
+    # Skip header
+    for line in lines[1:]:
+        line = line.strip()
+        if not line:
+            continue
+
+        # Extract Posted Date from the end: ,"MM/DD/YYYY"
+        date_match = re.search(r',\s*"(\d{2}/\d{2}/\d{4})"\s*$', line)
+        if not date_match:
+            continue
+        posted_date = date_match.group(1)
+
+        # Remove the date portion from the end
+        remainder = line[:date_match.start()]
+
+        # Parse first 3 fields: "AcctNum","Credit","Debit"
+        # Use csv to parse just these reliable fields + description
+        parsed = list(csv.reader([remainder]))[0]
+        if len(parsed) < 4:
+            continue
+
+        credit = parsed[1].strip()
+        debit = parsed[2].strip()
+        # Description is everything from field 4 onward (may have been split by commas)
+        raw_desc = ",".join(parsed[3:]).strip().strip('"').strip()
+
+        # Parse amount and type
+        if credit:
+            amount = float(credit.replace(",", ""))
+            txn_type = "deposit"
+        elif debit:
+            amount = float(debit.replace(",", ""))
+            txn_type = "debit"
+        else:
+            continue
+
+        date_str = posted_date
+        parts = date_str.split("/")
+        if len(parts) != 3:
+            continue
+        covered_months.add(f"{parts[2]}-{parts[0]}")
+
+        short_desc = _build_short_desc(raw_desc)
+        category = auto_categorize(short_desc, txn_type)
+
+        transactions.append({
+            "date": date_str,
+            "desc": short_desc,
+            "amount": amount,
+            "type": txn_type,
+            "category": category,
+            "source_file": fname,
+            "raw_desc": raw_desc,
+        })
+
+    return transactions, covered_months
 
 
 # ── Apply overrides ──────────────────────────────────────────────────────────
@@ -380,10 +463,13 @@ def main():
 
     pdf_files = sorted(f for f in os.listdir(BANK_DIR)
                        if f.lower().endswith(".pdf"))
+    csv_files = sorted(f for f in os.listdir(BANK_DIR)
+                       if f.lower().endswith(".csv"))
 
-    if not pdf_files:
-        print("  No bank statement PDFs found in data/bank_statements/")
-        # Write empty output so dashboard doesn't crash
+    all_source_files = csv_files + pdf_files
+
+    if not all_source_files:
+        print("  No bank statements found in data/bank_statements/")
         output = {
             "metadata": {
                 "generated_at": datetime.now().isoformat(),
@@ -400,19 +486,52 @@ def main():
 
     all_transactions = []
     all_covered_months = set()
+
+    # Parse PDFs first — official statements are the primary source
     for fname in pdf_files:
         path = os.path.join(BANK_DIR, fname)
-        print(f"  Parsing {fname}...")
+        print(f"  Parsing PDF: {fname}...")
         txns, covered = parse_bank_pdf(path)
         print(f"    Found {len(txns)} transactions (covers {sorted(covered)})")
         all_transactions.extend(txns)
         all_covered_months.update(covered)
 
+    # Parse ALL CSVs, combine and dedup (newer downloads are supersets of older ones)
+    csv_txns = []
+    csv_covered = set()
+    for fname in csv_files:
+        path = os.path.join(BANK_DIR, fname)
+        print(f"  Parsing CSV: {fname}...")
+        txns, covered = parse_bank_csv(path)
+        print(f"    Found {len(txns)} transactions (covers {sorted(covered)})")
+        csv_txns.extend(txns)
+        csv_covered.update(covered)
+
+    # Dedup CSV transactions by (date, amount, type, description)
+    if csv_txns:
+        seen = {}
+        for t in csv_txns:
+            key = (t["date"], t["amount"], t["type"], t.get("raw_desc", t["desc"]))
+            seen[key] = t
+        csv_deduped = list(seen.values())
+        print(f"    CSV dedup: {len(csv_txns)} raw -> {len(csv_deduped)} unique")
+
+        # Only use CSV data for months NOT already covered by PDFs
+        new_months = csv_covered - all_covered_months
+        if new_months:
+            filtered = [t for t in csv_deduped
+                        if f"{t['date'].split('/')[2]}-{t['date'].split('/')[0]}" in new_months]
+            print(f"    Using {len(filtered)} CSV transactions for new months {sorted(new_months)}")
+            all_transactions.extend(filtered)
+            all_covered_months.update(new_months)
+        else:
+            print(f"    All CSV months already covered by PDFs — skipping")
+
     # Apply overrides (splits, recategorizations)
     all_transactions = apply_overrides(all_transactions)
 
     # Append manual transactions from config — skip any whose month is already
-    # covered by a parsed PDF (prevents double-counting when new statements arrive)
+    # covered by a parsed statement (prevents double-counting)
     manual_added = 0
     manual_skipped = 0
     for mt in MANUAL_TRANSACTIONS:
@@ -433,9 +552,9 @@ def main():
         manual_added += 1
 
     if manual_added:
-        print(f"  Added {manual_added} manual transactions (months not yet covered by PDFs)")
+        print(f"  Added {manual_added} manual transactions (months not yet covered)")
     if manual_skipped:
-        print(f"  Skipped {manual_skipped} manual transactions (months already covered by PDFs)")
+        print(f"  Skipped {manual_skipped} manual transactions (months already covered)")
 
     # Compute totals
     total_deposits = sum(t["amount"] for t in all_transactions if t["type"] == "deposit")
@@ -444,7 +563,7 @@ def main():
     output = {
         "metadata": {
             "generated_at": datetime.now().isoformat(),
-            "source_files": pdf_files,
+            "source_files": all_source_files,
             "total_deposits": round(total_deposits, 2),
             "total_debits": round(total_debits, 2),
         },
@@ -459,9 +578,11 @@ def main():
     print(f"  Total debits:   ${total_debits:,.2f}")
     print(f"  Net:            ${total_deposits - total_debits:,.2f}")
 
-    # Validate against PDF totals
-    for fname in pdf_files:
+    # Per-source breakdown
+    for fname in all_source_files:
         file_txns = [t for t in all_transactions if t.get("source_file") == fname]
+        if not file_txns:
+            continue
         file_deps = sum(t["amount"] for t in file_txns if t["type"] == "deposit")
         file_debs = sum(t["amount"] for t in file_txns if t["type"] == "debit")
         print(f"\n  {fname}: {len(file_txns)} txns, deposits=${file_deps:,.2f}, debits=${file_debs:,.2f}")

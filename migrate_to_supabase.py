@@ -83,8 +83,57 @@ def migrate_etsy_transactions():
 
 # ── 2. Inventory orders + items ─────────────────────────────────────────────
 
+def _save_image_urls() -> dict[str, str]:
+    """Snapshot existing image_url values before clearing inventory_items."""
+    try:
+        rows = []
+        page_size = 1000
+        offset = 0
+        while True:
+            resp = (
+                sb.table("inventory_items")
+                .select("name, image_url")
+                .order("id")
+                .range(offset, offset + page_size - 1)
+                .execute()
+            )
+            batch = resp.data
+            rows.extend(batch)
+            if len(batch) < page_size:
+                break
+            offset += page_size
+        mapping = {}
+        for r in rows:
+            url = r.get("image_url") or ""
+            if url:
+                mapping[r["name"]] = url
+        print(f"  Saved {len(mapping)} image_url mappings")
+        return mapping
+    except Exception as e:
+        print(f"  Could not save image_urls ({e}), continuing without them")
+        return {}
+
+
+def _restore_image_urls(mapping: dict[str, str]):
+    """Re-apply saved image_url values after re-inserting inventory_items."""
+    if not mapping:
+        return
+    restored = 0
+    for name, url in mapping.items():
+        try:
+            sb.table("inventory_items").update({"image_url": url}).eq("name", name).execute()
+            restored += 1
+        except Exception:
+            pass
+    print(f"  Restored {restored}/{len(mapping)} image_url mappings")
+
+
 def migrate_inventory():
     print("\n[2/5] Inventory Orders")
+
+    # Save image_url mappings before clearing
+    image_urls = _save_image_urls()
+
     clear_table("inventory_items")  # clear child first (no FK but good practice)
     clear_table("inventory_orders")
 
@@ -123,6 +172,10 @@ def migrate_inventory():
     batch_insert("inventory_orders", order_rows)
     print("\n[3/5] Inventory Items")
     batch_insert("inventory_items", item_rows)
+
+    # Restore image_url mappings
+    _restore_image_urls(image_urls)
+
     return len(order_rows), len(item_rows)
 
 
