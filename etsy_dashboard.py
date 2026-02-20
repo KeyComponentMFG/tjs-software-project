@@ -621,7 +621,7 @@ def _reload_etsy_data():
     """
     global DATA, sales_df, fee_df, ship_df, mkt_df, refund_df, tax_df
     global deposit_df, buyer_fee_df
-    global gross_sales, total_refunds, net_sales, total_fees
+    global gross_sales, total_refunds, net_sales, total_fees, total_fees_gross
     global total_shipping_cost, total_marketing, total_taxes
     global etsy_net, order_count, avg_order, etsy_net_margin
     global total_buyer_fees, etsy_net_earned, etsy_total_deposited
@@ -729,6 +729,7 @@ def _reload_etsy_data():
     credit_processing = fee_df[fee_df["Title"].str.startswith("Credit for processing fee", na=False)]["Net_Clean"].sum()
     share_save = fee_df[fee_df["Title"].str.contains("Share & Save", na=False)]["Net_Clean"].sum()
     total_credits = credit_transaction + credit_listing + credit_processing + share_save
+    total_fees_gross = listing_fees + transaction_fees_product + transaction_fees_shipping + processing_fees
 
     # Marketing breakdown
     etsy_ads = abs(mkt_df[mkt_df["Title"].str.contains("Etsy Ads", na=False)]["Net_Clean"].sum())
@@ -1656,6 +1657,11 @@ credit_processing = fee_df[fee_df["Title"].str.startswith("Credit for processing
 share_save = fee_df[fee_df["Title"].str.contains("Share & Save", na=False)]["Net_Clean"].sum()
 total_credits = credit_transaction + credit_listing + credit_processing + share_save
 
+# Gross fees = sum of charge-only components (before credits)
+# total_fees (= abs(fee_df.sum())) is already NET of credits because credit rows
+# have positive Net_Clean that partially cancels the negative charge rows.
+total_fees_gross = listing_fees + transaction_fees_product + transaction_fees_shipping + processing_fees
+
 # Marketing breakdown
 etsy_ads = abs(mkt_df[mkt_df["Title"].str.contains("Etsy Ads", na=False)]["Net_Clean"].sum())
 offsite_ads_fees = abs(
@@ -2226,9 +2232,9 @@ def run_analytics():
 
     # 9. FEE OPTIMIZATION
     fee_rate = total_fees / gross_sales * 100 if gross_sales else 0
-    listing_pct = listing_fees / total_fees * 100 if total_fees else 0
-    trans_pct = (transaction_fees_product + transaction_fees_shipping) / total_fees * 100 if total_fees else 0
-    proc_pct = processing_fees / total_fees * 100 if total_fees else 0
+    listing_pct = listing_fees / total_fees_gross * 100 if total_fees_gross else 0
+    trans_pct = (transaction_fees_product + transaction_fees_shipping) / total_fees_gross * 100 if total_fees_gross else 0
+    proc_pct = processing_fees / total_fees_gross * 100 if total_fees_gross else 0
     credit_savings = abs(total_credits) if total_credits else 0
 
     insights.append((9, "FEES",
@@ -2343,7 +2349,7 @@ def _chatbot_answer_inner(question):
             f"= Cash On Hand ${bank_cash_on_hand:,.2f} + Owner Draws ${bank_owner_draw_total:,.2f} - Credit Card Supplies ${receipt_cogs_outside_bank:,.2f}\n\n"
             f"**How we get there:**\n"
             f"- Gross Sales: ${gross_sales:,.2f}\n"
-            f"- Etsy takes (fees/ship/ads/refunds): -${total_fees + total_shipping_cost + total_marketing + total_refunds:,.2f}\n"
+            f"- Etsy takes (fees/ship/ads/refunds/tax): -${total_fees + total_shipping_cost + total_marketing + total_refunds + total_taxes + total_buyer_fees:,.2f}\n"
             f"- = After Etsy Fees: ${etsy_net:,.2f}\n"
             f"- Bank Expenses (inventory, supplies, etc): -${bank_all_expenses:,.2f}\n"
             f"- Owner Draws: -${bank_owner_draw_total:,.2f}\n"
@@ -2449,9 +2455,9 @@ def _chatbot_answer_inner(question):
     # ── Fee questions ──
     if any(w in q for w in ["fee", "etsy fee", "transaction fee", "listing fee", "processing fee",
                              "how much does etsy take", "etsy take", "etsy charge"]):
-        fee_pct = total_fees / gross_sales * 100 if gross_sales else 0
+        fee_pct = total_fees_gross / gross_sales * 100 if gross_sales else 0
         return (
-            f"**Total Fees:** ${total_fees:,.2f} ({fee_pct:.1f}% of gross sales)\n\n"
+            f"**Total Fees (gross):** ${total_fees_gross:,.2f} ({fee_pct:.1f}% of gross sales)\n\n"
             f"**Breakdown:**\n"
             f"- Listing fees: ${listing_fees:,.2f}\n"
             f"- Transaction fees (product): ${transaction_fees_product:,.2f}\n"
@@ -2462,7 +2468,8 @@ def _chatbot_answer_inner(question):
             f"- Listing fee credits: ${abs(credit_listing):,.2f}\n"
             f"- Processing fee credits: ${abs(credit_processing):,.2f}\n"
             f"- Share & Save: ${abs(share_save):,.2f}\n"
-            f"- **Total credits: ${abs(total_credits):,.2f}**"
+            f"- **Total credits: ${abs(total_credits):,.2f}**\n\n"
+            f"**Net fees after credits: ${total_fees:,.2f}** ({total_fees / gross_sales * 100:.1f}% of sales)"
         )
 
     # ── Refund / Return questions ──
@@ -2698,7 +2705,8 @@ def _chatbot_answer_inner(question):
             f"**Profit: ${profit:,.2f}** ({profit_margin:.1f}%) = Cash ${bank_cash_on_hand:,.2f} + Draws ${bank_owner_draw_total:,.2f} - Credit Card Supplies ${receipt_cogs_outside_bank:,.2f}\n\n"
             f"**Revenue:** ${gross_sales:,.2f} gross | {order_count} orders | ${avg_order:,.2f} avg\n\n"
             f"**Etsy Deductions:** Fees ${total_fees:,.2f} | Shipping ${total_shipping_cost:,.2f} | "
-            f"Marketing ${total_marketing:,.2f} | Refunds ${total_refunds:,.2f}\n\n"
+            f"Marketing ${total_marketing:,.2f} | Refunds ${total_refunds:,.2f} | "
+            f"Tax ${total_taxes:,.2f} | Buyer Fees ${total_buyer_fees:,.2f}\n\n"
             f"**Bank Expenses:** Inventory ${bank_by_cat.get('Amazon Inventory', 0):,.2f} | "
             f"AliExpress ${bank_by_cat.get('AliExpress Supplies', 0):,.2f} | "
             f"Other ${bank_biz_expense_total - bank_by_cat.get('AliExpress Supplies', 0):,.2f}\n\n"
@@ -2925,7 +2933,15 @@ for _yr in (2025, 2026):
     yr_credit_proc = _fc[_fc["Title"].str.startswith("Credit for processing fee", na=False)]["Net_Clean"].sum()
     yr_share_save = _fc[_fc["Title"].str.contains("Share & Save", na=False)]["Net_Clean"].sum()
     yr_total_credits = abs(yr_credit_txn + yr_credit_list + yr_credit_proc + yr_share_save)
-    yr_net_fees = yr_fees - yr_total_credits
+
+    # yr_fees is already net of credits (abs(sum) includes positive credit rows).
+    # Compute gross fees from charge-only rows for correct net_fees calculation.
+    yr_listing = abs(_fc[_fc["Title"].str.contains("Listing fee", na=False)]["Net_Clean"].sum())
+    yr_tx_prod = abs(_fc[_fc["Title"].str.startswith("Transaction fee:", na=False) & ~_fc["Title"].str.contains("Shipping", na=False)]["Net_Clean"].sum())
+    yr_tx_ship = abs(_fc[_fc["Title"].str.contains("Transaction fee: Shipping", na=False)]["Net_Clean"].sum())
+    yr_proc = abs(_fc[_fc["Title"].str.contains("Processing fee", na=False)]["Net_Clean"].sum())
+    yr_fees_gross = yr_listing + yr_tx_prod + yr_tx_ship + yr_proc
+    yr_net_fees = yr_fees_gross - yr_total_credits
 
     yr_etsy_net = yr_gross - yr_fees - yr_shipping - yr_marketing - yr_refunds - yr_taxes - yr_buyer_fees
 
@@ -3088,7 +3104,7 @@ if bank_owner_draw_total > 0:
     val_strengths.append(("Owner Compensation", f"${bank_owner_draw_total:,.0f} in draws taken"))
 
 # Burn rate (monthly expenses)
-val_monthly_expenses = (total_fees + total_shipping_cost + total_marketing + total_refunds + bank_all_expenses) / _val_months_operating
+val_monthly_expenses = (total_fees + total_shipping_cost + total_marketing + total_refunds + total_taxes + total_buyer_fees + bank_all_expenses) / _val_months_operating
 val_runway_months = bank_cash_on_hand / val_monthly_expenses if val_monthly_expenses > 0 else 99
 
 
@@ -7617,13 +7633,19 @@ def build_tab6_valuation():
     ], GREEN))
 
     # ── SECTION E: REVENUE TO VALUE BRIDGE (Waterfall) ──
-    wf_labels = ["Gross Sales", "Fees", "Shipping", "Ads", "Refunds", "= After Etsy Fees",
-                  "Bank Expenses", "= PROFIT", "Owner Draws", "= SDE"]
-    wf_values = [gross_sales, -total_fees, -total_shipping_cost, -total_marketing, -total_refunds, 0,
-                 -bank_all_expenses, 0, bank_owner_draw_total, 0]
-    wf_measures = ["absolute", "relative", "relative", "relative", "relative", "total",
-                   "relative", "total", "relative", "total"]
-    wf_colors = [GREEN, RED, RED, RED, RED, TEAL, RED, GREEN, ORANGE, CYAN]
+    wf_labels = ["Gross Sales", "Fees", "Shipping", "Ads", "Refunds", "Taxes"]
+    wf_values = [gross_sales, -total_fees, -total_shipping_cost, -total_marketing, -total_refunds, -total_taxes]
+    wf_measures = ["absolute", "relative", "relative", "relative", "relative", "relative"]
+    wf_colors = [GREEN, RED, RED, RED, RED, RED]
+    if total_buyer_fees > 0:
+        wf_labels.append("Buyer Fees")
+        wf_values.append(-total_buyer_fees)
+        wf_measures.append("relative")
+        wf_colors.append(RED)
+    wf_labels += ["= After Etsy Fees", "Bank Expenses", "= PROFIT", "Owner Draws", "= SDE"]
+    wf_values += [0, -bank_all_expenses, 0, bank_owner_draw_total, 0]
+    wf_measures += ["total", "relative", "total", "relative", "total"]
+    wf_colors += [TEAL, RED, GREEN, ORANGE, CYAN]
 
     waterfall_fig = go.Figure(go.Waterfall(
         orientation="v", measure=wf_measures,
@@ -7641,7 +7663,7 @@ def build_tab6_valuation():
     # Efficiency KPIs
     _profit_per_order = profit / order_count if order_count else 0
     _revenue_per_day = gross_sales / days_active if days_active else 0
-    _etsy_take_rate = (total_fees + total_shipping_cost + total_marketing) / gross_sales * 100 if gross_sales else 0
+    _etsy_take_rate = (total_fees + total_shipping_cost + total_marketing + total_taxes + total_buyer_fees) / gross_sales * 100 if gross_sales else 0
 
     children.append(section("E. REVENUE TO VALUE BRIDGE", [
         chart_context("Waterfall chart tracing every dollar from gross sales to SDE (Seller's Discretionary Earnings).",
@@ -7654,8 +7676,8 @@ def build_tab6_valuation():
                      f"Average monthly gross sales: {money(gross_sales)} over {_val_months_operating} months. This is what you'd expect to earn in a typical month at current pace. Annualized: {money(val_annual_revenue)}."),
             kpi_card("Revenue / Day", money(_revenue_per_day), BLUE, f"{days_active} days active",
                      f"Gross sales ({money(gross_sales)}) divided by {days_active} days of operation. This is your daily earning rate. At this pace, you'd earn {money(_revenue_per_day * 365)} per year."),
-            kpi_card("Etsy Take Rate", f"{_etsy_take_rate:.1f}%", ORANGE if _etsy_take_rate < 20 else RED, "Fees + Ship + Ads",
-                     f"What percentage Etsy takes from each dollar of sales: Fees {money(total_fees)} + Shipping Labels {money(total_shipping_cost)} + Ads {money(total_marketing)} = {money(total_fees + total_shipping_cost + total_marketing)}. Industry typical: 15-20%. Over 25% means Etsy is taking too much."),
+            kpi_card("Etsy Take Rate", f"{_etsy_take_rate:.1f}%", ORANGE if _etsy_take_rate < 25 else RED, "All Etsy deductions",
+                     f"What percentage Etsy takes from each dollar of sales: Fees {money(total_fees)} + Shipping {money(total_shipping_cost)} + Ads {money(total_marketing)} + Tax {money(total_taxes)} + Buyer Fees {money(total_buyer_fees)} = {money(total_fees + total_shipping_cost + total_marketing + total_taxes + total_buyer_fees)}. Industry typical: 20-30%."),
         ], style={"display": "flex", "gap": "10px", "flexWrap": "wrap", "marginTop": "10px"}),
     ], ORANGE))
 
@@ -8620,7 +8642,7 @@ def build_tab2_deep_dive():
 
 def build_tab3_financials():
     """Tab 3 - Financials: Full P&L + Cash Flow + Shipping + Monthly + Fees + Ledger"""
-    net_fees_after_credits = total_fees - abs(total_credits)
+    net_fees_after_credits = total_fees_gross - abs(total_credits)
 
     # Shipping data needed
     usps_labels = ship_df[ship_df["Title"] == "USPS shipping label"]["Net_Clean"].abs()
@@ -8631,7 +8653,21 @@ def build_tab3_financials():
     # Reconciliation waterfall
     _wf_labels = [
         "Gross Sales",
-        "Fees", "Ship Labels", "Ads", "Refunds",
+        "Fees", "Ship Labels", "Ads", "Refunds", "Taxes",
+    ]
+    _wf_values = [
+        gross_sales,
+        -total_fees, -total_shipping_cost, -total_marketing, -total_refunds, -total_taxes,
+    ]
+    _wf_measures = [
+        "absolute",
+        "relative", "relative", "relative", "relative", "relative",
+    ]
+    if total_buyer_fees > 0:
+        _wf_labels.append("Buyer Fees")
+        _wf_values.append(-total_buyer_fees)
+        _wf_measures.append("relative")
+    _wf_labels += [
         "AFTER ETSY FEES",
         "Amazon Inv.", "AliExpress", "Craft", "Etsy Fees",
         "Subscriptions", "Ship Supplies", "Best Buy CC",
@@ -8640,9 +8676,7 @@ def build_tab3_financials():
         "Prior Bank Inv.", "Unmatched Bank", "Untracked Etsy",
         "ACCOUNTED",
     ]
-    _wf_values = [
-        gross_sales,
-        -total_fees, -total_shipping_cost, -total_marketing, -total_refunds,
+    _wf_values += [
         0,
         -bank_by_cat.get("Amazon Inventory", 0), -bank_by_cat.get("AliExpress Supplies", 0),
         -bank_by_cat.get("Craft Supplies", 0), -bank_by_cat.get("Etsy Fees", 0),
@@ -8653,9 +8687,7 @@ def build_tab3_financials():
         -old_bank_receipted, -bank_unaccounted, -etsy_csv_gap,
         0,
     ]
-    _wf_measures = [
-        "absolute",
-        "relative", "relative", "relative", "relative",
+    _wf_measures += [
         "total",
         "relative", "relative", "relative", "relative",
         "relative", "relative", "relative",
@@ -8714,11 +8746,13 @@ def build_tab3_financials():
             row_item("Gross Sales", gross_sales, color=GREEN),
             html.Div("ETSY DEDUCTIONS:", style={"color": RED, "fontWeight": "bold", "fontSize": "12px",
                       "marginTop": "8px", "marginBottom": "4px"}),
-            row_item("  Fees (listing + transaction + processing)", -total_fees, indent=1, color=GRAY),
-            row_item("  Fee Credits (refunds on fees)", abs(total_credits), indent=1, color=GREEN),
+            row_item("  Fees (listing + transaction + processing)", -total_fees_gross, indent=1, color=GRAY),
+            row_item("  Fee Credits", abs(total_credits), indent=1, color=GREEN),
             row_item("  Shipping Labels", -total_shipping_cost, indent=1, color=GRAY),
             row_item("  Ads & Marketing", -total_marketing, indent=1, color=GRAY),
             row_item("  Refunds to Customers", -total_refunds, indent=1, color=GRAY),
+            row_item("  Sales Tax Collected & Remitted", -total_taxes, indent=1, color=GRAY),
+            row_item("  Buyer Fees", -total_buyer_fees, indent=1, color=GRAY) if total_buyer_fees > 0 else html.Div(),
             html.Div(style={"borderTop": f"2px solid {ORANGE}44", "margin": "6px 0"}),
             row_item("AFTER ETSY FEES (what Etsy pays you)", etsy_net, bold=True, color=ORANGE),
             html.Div("BANK EXPENSES (from Cap One statement):", style={"color": RED, "fontWeight": "bold", "fontSize": "12px",
@@ -9085,7 +9119,7 @@ def build_tab3_financials():
             row_item("  Transaction Fees (product)", -transaction_fees_product, indent=1, color=GRAY),
             row_item("  Transaction Fees (shipping)", -transaction_fees_shipping, indent=1, color=GRAY),
             row_item("  Processing Fees", -processing_fees, indent=1, color=GRAY),
-            row_item("Total Fees", -total_fees, bold=True),
+            row_item("Total Fees (gross)", -total_fees_gross, bold=True),
             html.Div(style={"height": "8px"}),
             html.Div("CREDITS RECEIVED", style={"color": GREEN, "fontWeight": "bold", "fontSize": "13px", "marginBottom": "4px"}),
             row_item("  Transaction Credits", credit_transaction, indent=1, color=GREEN),
@@ -11838,11 +11872,12 @@ def download_pl(n):
         raise dash.exceptions.PreventUpdate
     rows = [
         {"Line": "Gross Sales", "Amount": gross_sales},
-        {"Line": "Etsy Fees", "Amount": -total_fees},
+        {"Line": "Etsy Fees (net of credits)", "Amount": -total_fees},
         {"Line": "Shipping Labels", "Amount": -total_shipping_cost},
         {"Line": "Marketing/Ads", "Amount": -total_marketing},
         {"Line": "Refunds", "Amount": -total_refunds},
         {"Line": "Sales Tax", "Amount": -total_taxes},
+        {"Line": "Buyer Fees", "Amount": -total_buyer_fees},
         {"Line": "= After Etsy Fees", "Amount": etsy_net},
         {"Line": "Supply Costs", "Amount": -true_inventory_cost},
         {"Line": "Business Expenses", "Amount": -bank_biz_expense_total},
