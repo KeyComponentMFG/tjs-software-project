@@ -8971,8 +8971,9 @@ def build_tab3_financials():
             row_item(f"USPS Return Labels ({usps_return_count})", -usps_return, indent=1),
             row_item(f"Asendia / International ({asendia_count})", -asendia_labels, indent=1),
             row_item(f"Label Adjustments ({ship_adjust_count})", -ship_adjustments, indent=1),
+            row_item(f"Insurance ({ship_insurance_count})", -ship_insurance, indent=1) if ship_insurance > 0 else html.Div(),
             row_item(f"Label Credits ({ship_credit_count})", ship_credits, indent=1, color=GREEN),
-            row_item("TOTAL SHIPPING COST", -(total_shipping_cost + transaction_fees_shipping), bold=True),
+            row_item("TOTAL SHIPPING COST", -total_shipping_cost, bold=True),
             html.Div(style={"borderTop": f"3px solid {ORANGE}", "marginTop": "8px"}),
             html.Div([
                 html.Span("NET SHIPPING P&L", style={"color": GREEN if shipping_profit >= 0 else RED, "fontWeight": "bold", "fontSize": "20px"}),
