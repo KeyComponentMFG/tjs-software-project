@@ -184,7 +184,10 @@ draw_reasons = CONFIG.get("draw_reasons", {})
 _bb_cc = CONFIG.get("best_buy_cc", {})
 bb_cc_limit = _bb_cc.get("credit_limit", 0)
 bb_cc_purchases = _bb_cc.get("purchases", [])
-bb_cc_payments = _bb_cc.get("payments", [])
+# Auto-detect CC payments from bank transactions (BEST BUY AUTO PYMT)
+bb_cc_payments = [{"date": t["date"], "desc": t["desc"], "amount": t["amount"]}
+                  for t in BANK_TXNS if t["category"] == "Business Credit Card"
+                  and "BEST BUY" in t.get("desc", "").upper()]
 bb_cc_total_charged = sum(p["amount"] for p in bb_cc_purchases)
 bb_cc_total_paid = sum(p["amount"] for p in bb_cc_payments)
 bb_cc_balance = bb_cc_total_charged - bb_cc_total_paid
@@ -886,6 +889,7 @@ def _reload_bank_data():
     global tulsa_draws, texas_draws, tulsa_draw_total, texas_draw_total
     global draw_diff, draw_owed_to
     global bank_txns_sorted, bank_running
+    global bb_cc_payments, bb_cc_total_paid, bb_cc_balance, bb_cc_available
     global _bank_cat_color_map, _bank_acct_gap, _bank_no_receipt, _bank_amazon_txns
 
     bank_dir = os.path.join(BASE_DIR, "data", "bank_statements")
@@ -1013,6 +1017,14 @@ def _reload_bank_data():
 
     # Recompute derived bank variables used by Financials tab
     _bank_cat_color_map, _bank_acct_gap, _bank_no_receipt, _bank_amazon_txns = _get_bank_computed()
+
+    # Auto-detect Best Buy CC payments from bank transactions
+    bb_cc_payments = [{"date": t["date"], "desc": t["desc"], "amount": t["amount"]}
+                      for t in BANK_TXNS if t["category"] == "Business Credit Card"
+                      and "BEST BUY" in t.get("desc", "").upper()]
+    bb_cc_total_paid = sum(p["amount"] for p in bb_cc_payments)
+    bb_cc_balance = bb_cc_total_charged - bb_cc_total_paid
+    bb_cc_available = bb_cc_limit - bb_cc_balance
 
     return {
         "transactions": len(BANK_TXNS),
