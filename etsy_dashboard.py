@@ -1182,6 +1182,12 @@ def _cascade_reload(source="etsy"):
     profit = real_profit - receipt_cogs_outside_bank
     profit_margin = (profit / gross_sales * 100) if gross_sales else 0
 
+    # Recompute all derived metrics and charts
+    _recompute_analytics()
+    _recompute_tax_years()
+    _recompute_valuation()
+    _rebuild_all_charts()
+
 
 def _validate_etsy_csv(decoded_bytes):
     """Validate that uploaded bytes are a valid Etsy statement CSV.
@@ -2314,7 +2320,13 @@ def run_analytics():
     return insights, projections
 
 
-analytics_insights, analytics_projections = run_analytics()
+
+def _recompute_analytics():
+    global analytics_insights, analytics_projections
+    analytics_insights, analytics_projections = run_analytics()
+
+
+_recompute_analytics()
 
 
 # ── Chatbot Engine ──────────────────────────────────────────────────────────
@@ -2907,205 +2919,219 @@ def _bank_txn_year(t):
     """Extract year from bank txn date (MM/DD/YYYY)."""
     return int(t["date"].split("/")[2])
 
-TAX_YEARS = {}
-for _yr in (2025, 2026):
-    # --- Etsy transaction splits ---
-    _s = sales_df[sales_df["Date_Parsed"].dt.year == _yr]
-    _f = fee_df[fee_df["Date_Parsed"].dt.year == _yr]
-    _sh = ship_df[ship_df["Date_Parsed"].dt.year == _yr]
-    _mk = mkt_df[mkt_df["Date_Parsed"].dt.year == _yr]
-    _rf = refund_df[refund_df["Date_Parsed"].dt.year == _yr]
-    _tx = tax_df[tax_df["Date_Parsed"].dt.year == _yr]
-    _bf = buyer_fee_df[buyer_fee_df["Date_Parsed"].dt.year == _yr]
 
-    yr_gross = _s["Net_Clean"].sum()
-    yr_refunds = abs(_rf["Net_Clean"].sum())
-    yr_fees = abs(_f["Net_Clean"].sum())
-    yr_shipping = abs(_sh["Net_Clean"].sum())
-    yr_marketing = abs(_mk["Net_Clean"].sum())
-    yr_taxes = abs(_tx["Net_Clean"].sum())
-    yr_buyer_fees = abs(_bf["Net_Clean"].sum()) if len(_bf) else 0.0
+def _recompute_tax_years():
+    global TAX_YEARS
 
-    # Fee credits for this year
-    _fc = fee_df[fee_df["Date_Parsed"].dt.year == _yr]
-    yr_credit_txn = _fc[_fc["Title"].str.startswith("Credit for transaction fee", na=False)]["Net_Clean"].sum()
-    yr_credit_list = _fc[_fc["Title"].str.startswith("Credit for listing fee", na=False)]["Net_Clean"].sum()
-    yr_credit_proc = _fc[_fc["Title"].str.startswith("Credit for processing fee", na=False)]["Net_Clean"].sum()
-    yr_share_save = _fc[_fc["Title"].str.contains("Share & Save", na=False)]["Net_Clean"].sum()
-    yr_total_credits = abs(yr_credit_txn + yr_credit_list + yr_credit_proc + yr_share_save)
+    TAX_YEARS = {}
+    for _yr in (2025, 2026):
+        # --- Etsy transaction splits ---
+        _s = sales_df[sales_df["Date_Parsed"].dt.year == _yr]
+        _f = fee_df[fee_df["Date_Parsed"].dt.year == _yr]
+        _sh = ship_df[ship_df["Date_Parsed"].dt.year == _yr]
+        _mk = mkt_df[mkt_df["Date_Parsed"].dt.year == _yr]
+        _rf = refund_df[refund_df["Date_Parsed"].dt.year == _yr]
+        _tx = tax_df[tax_df["Date_Parsed"].dt.year == _yr]
+        _bf = buyer_fee_df[buyer_fee_df["Date_Parsed"].dt.year == _yr]
 
-    # yr_fees is already net of credits (abs(sum) includes positive credit rows).
-    # Compute gross fees from charge-only rows for correct net_fees calculation.
-    yr_listing = abs(_fc[_fc["Title"].str.contains("Listing fee", na=False)]["Net_Clean"].sum())
-    yr_tx_prod = abs(_fc[_fc["Title"].str.startswith("Transaction fee:", na=False) & ~_fc["Title"].str.contains("Shipping", na=False)]["Net_Clean"].sum())
-    yr_tx_ship = abs(_fc[_fc["Title"].str.contains("Transaction fee: Shipping", na=False)]["Net_Clean"].sum())
-    yr_proc = abs(_fc[_fc["Title"].str.contains("Processing fee", na=False)]["Net_Clean"].sum())
-    yr_fees_gross = yr_listing + yr_tx_prod + yr_tx_ship + yr_proc
-    yr_net_fees = yr_fees_gross - yr_total_credits
+        yr_gross = _s["Net_Clean"].sum()
+        yr_refunds = abs(_rf["Net_Clean"].sum())
+        yr_fees = abs(_f["Net_Clean"].sum())
+        yr_shipping = abs(_sh["Net_Clean"].sum())
+        yr_marketing = abs(_mk["Net_Clean"].sum())
+        yr_taxes = abs(_tx["Net_Clean"].sum())
+        yr_buyer_fees = abs(_bf["Net_Clean"].sum()) if len(_bf) else 0.0
 
-    yr_etsy_net = yr_gross - yr_fees - yr_shipping - yr_marketing - yr_refunds - yr_taxes - yr_buyer_fees
+        # Fee credits for this year
+        _fc = fee_df[fee_df["Date_Parsed"].dt.year == _yr]
+        yr_credit_txn = _fc[_fc["Title"].str.startswith("Credit for transaction fee", na=False)]["Net_Clean"].sum()
+        yr_credit_list = _fc[_fc["Title"].str.startswith("Credit for listing fee", na=False)]["Net_Clean"].sum()
+        yr_credit_proc = _fc[_fc["Title"].str.startswith("Credit for processing fee", na=False)]["Net_Clean"].sum()
+        yr_share_save = _fc[_fc["Title"].str.contains("Share & Save", na=False)]["Net_Clean"].sum()
+        yr_total_credits = abs(yr_credit_txn + yr_credit_list + yr_credit_proc + yr_share_save)
 
-    # --- Bank transaction splits ---
-    _bank_debits_yr = [t for t in bank_debits if _bank_txn_year(t) == _yr]
-    _bank_deposits_yr = [t for t in bank_deposits if _bank_txn_year(t) == _yr]
+        # yr_fees is already net of credits (abs(sum) includes positive credit rows).
+        # Compute gross fees from charge-only rows for correct net_fees calculation.
+        yr_listing = abs(_fc[_fc["Title"].str.contains("Listing fee", na=False)]["Net_Clean"].sum())
+        yr_tx_prod = abs(_fc[_fc["Title"].str.startswith("Transaction fee:", na=False) & ~_fc["Title"].str.contains("Shipping", na=False)]["Net_Clean"].sum())
+        yr_tx_ship = abs(_fc[_fc["Title"].str.contains("Transaction fee: Shipping", na=False)]["Net_Clean"].sum())
+        yr_proc = abs(_fc[_fc["Title"].str.contains("Processing fee", na=False)]["Net_Clean"].sum())
+        yr_fees_gross = yr_listing + yr_tx_prod + yr_tx_ship + yr_proc
+        yr_net_fees = yr_fees_gross - yr_total_credits
 
-    yr_bank_by_cat = {}
-    for t in _bank_debits_yr:
-        cat = t["category"]
-        yr_bank_by_cat[cat] = yr_bank_by_cat.get(cat, 0) + t["amount"]
+        yr_etsy_net = yr_gross - yr_fees - yr_shipping - yr_marketing - yr_refunds - yr_taxes - yr_buyer_fees
 
-    yr_bank_deposits = sum(t["amount"] for t in _bank_deposits_yr)
-    yr_bank_debits = sum(t["amount"] for t in _bank_debits_yr)
+        # --- Bank transaction splits ---
+        _bank_debits_yr = [t for t in bank_debits if _bank_txn_year(t) == _yr]
+        _bank_deposits_yr = [t for t in bank_deposits if _bank_txn_year(t) == _yr]
 
-    # --- Inventory splits ---
-    _inv_yr = BIZ_INV_DF[BIZ_INV_DF["date_parsed"].dt.year == _yr] if len(BIZ_INV_DF) else BIZ_INV_DF
-    yr_inventory_cost = _inv_yr["grand_total"].sum() if len(_inv_yr) else 0.0
+        yr_bank_by_cat = {}
+        for t in _bank_debits_yr:
+            cat = t["category"]
+            yr_bank_by_cat[cat] = yr_bank_by_cat.get(cat, 0) + t["amount"]
 
-    # Bank inventory (Amazon Inventory category from bank)
-    yr_bank_inv = yr_bank_by_cat.get("Amazon Inventory", 0)
+        yr_bank_deposits = sum(t["amount"] for t in _bank_deposits_yr)
+        yr_bank_debits = sum(t["amount"] for t in _bank_debits_yr)
 
-    # COGS = receipts + any bank Amazon spending NOT already covered by receipts
-    # Receipts and bank overlap (same purchases seen from both sides), so we
-    # only add the bank gap — spending the bank sees that receipts don't explain.
-    yr_bank_inv_gap = max(0, yr_bank_inv - yr_inventory_cost)
-    yr_cogs = yr_inventory_cost + yr_bank_inv_gap
+        # --- Inventory splits ---
+        _inv_yr = BIZ_INV_DF[BIZ_INV_DF["date_parsed"].dt.year == _yr] if len(BIZ_INV_DF) else BIZ_INV_DF
+        yr_inventory_cost = _inv_yr["grand_total"].sum() if len(_inv_yr) else 0.0
 
-    # --- Draw splits ---
-    yr_tulsa_draws = sum(t["amount"] for t in tulsa_draws if _bank_txn_year(t) == _yr)
-    yr_texas_draws = sum(t["amount"] for t in texas_draws if _bank_txn_year(t) == _yr)
-    yr_total_draws = yr_tulsa_draws + yr_texas_draws
+        # Bank inventory (Amazon Inventory category from bank)
+        yr_bank_inv = yr_bank_by_cat.get("Amazon Inventory", 0)
 
-    # Operating expenses (non-inventory bank expenses)
-    _biz_cats = ["Shipping", "Craft Supplies", "Etsy Fees", "Subscriptions",
-                 "AliExpress Supplies", "Business Credit Card"]
-    yr_bank_biz_expense = sum(yr_bank_by_cat.get(c, 0) for c in _biz_cats)
+        # COGS = receipts + any bank Amazon spending NOT already covered by receipts
+        # Receipts and bank overlap (same purchases seen from both sides), so we
+        # only add the bank gap — spending the bank sees that receipts don't explain.
+        yr_bank_inv_gap = max(0, yr_bank_inv - yr_inventory_cost)
+        yr_cogs = yr_inventory_cost + yr_bank_inv_gap
 
-    # Net income (Etsy net minus bank operating expenses minus inventory)
-    yr_net_income = yr_etsy_net - yr_bank_biz_expense - yr_inventory_cost
+        # --- Draw splits ---
+        yr_tulsa_draws = sum(t["amount"] for t in tulsa_draws if _bank_txn_year(t) == _yr)
+        yr_texas_draws = sum(t["amount"] for t in texas_draws if _bank_txn_year(t) == _yr)
+        yr_total_draws = yr_tulsa_draws + yr_texas_draws
 
-    TAX_YEARS[_yr] = {
-        "gross_sales": yr_gross,
-        "refunds": yr_refunds,
-        "fees": yr_fees,
-        "net_fees": yr_net_fees,
-        "total_credits": yr_total_credits,
-        "shipping": yr_shipping,
-        "marketing": yr_marketing,
-        "taxes_collected": yr_taxes,
-        "buyer_fees": yr_buyer_fees,
-        "etsy_net": yr_etsy_net,
-        "cogs": yr_cogs,
-        "inventory_cost": yr_inventory_cost,
-        "bank_inv": yr_bank_inv,
-        "bank_inv_gap": yr_bank_inv_gap,
-        "bank_by_cat": yr_bank_by_cat,
-        "bank_deposits": yr_bank_deposits,
-        "bank_debits": yr_bank_debits,
-        "bank_biz_expense": yr_bank_biz_expense,
-        "net_income": yr_net_income,
-        "tulsa_draws": yr_tulsa_draws,
-        "texas_draws": yr_texas_draws,
-        "total_draws": yr_total_draws,
-        "order_count": len(_s),
-    }
+        # Operating expenses (non-inventory bank expenses)
+        _biz_cats = ["Shipping", "Craft Supplies", "Etsy Fees", "Subscriptions",
+                     "AliExpress Supplies", "Business Credit Card"]
+        yr_bank_biz_expense = sum(yr_bank_by_cat.get(c, 0) for c in _biz_cats)
+
+        # Net income (Etsy net minus bank operating expenses minus inventory)
+        yr_net_income = yr_etsy_net - yr_bank_biz_expense - yr_inventory_cost
+
+        TAX_YEARS[_yr] = {
+            "gross_sales": yr_gross,
+            "refunds": yr_refunds,
+            "fees": yr_fees,
+            "net_fees": yr_net_fees,
+            "total_credits": yr_total_credits,
+            "shipping": yr_shipping,
+            "marketing": yr_marketing,
+            "taxes_collected": yr_taxes,
+            "buyer_fees": yr_buyer_fees,
+            "etsy_net": yr_etsy_net,
+            "cogs": yr_cogs,
+            "inventory_cost": yr_inventory_cost,
+            "bank_inv": yr_bank_inv,
+            "bank_inv_gap": yr_bank_inv_gap,
+            "bank_by_cat": yr_bank_by_cat,
+            "bank_deposits": yr_bank_deposits,
+            "bank_debits": yr_bank_debits,
+            "bank_biz_expense": yr_bank_biz_expense,
+            "net_income": yr_net_income,
+            "tulsa_draws": yr_tulsa_draws,
+            "texas_draws": yr_texas_draws,
+            "total_draws": yr_total_draws,
+            "order_count": len(_s),
+        }
 
 
+
+
+_recompute_tax_years()
 # ── Business Valuation Pre-Computations ──────────────────────────────────────
 
-_val_months_operating = max(len(months_sorted), 1)
-_val_annualize = 12 / _val_months_operating
 
-# Annual metrics
-val_annual_revenue = gross_sales * _val_annualize
-val_annual_etsy_net = etsy_net * _val_annualize
-val_annual_real_profit = real_profit * _val_annualize
+def _recompute_valuation():
+    global _hs_cash, _hs_debt, _hs_diversity, _hs_growth, _hs_profit, _hs_shipping, _prod_count, _top3_conc, _val_annualize, _val_growth_pct, _val_months_operating, _val_r2, _val_sales_trend, val_annual_etsy_net, val_annual_real_profit, val_annual_revenue, val_annual_sde, val_asset_val, val_blended_high, val_blended_low, val_blended_mid, val_equity, val_health_color, val_health_grade, val_health_score, val_monthly_expenses, val_monthly_profit_rate, val_monthly_run_rate, val_proj_12mo_revenue, val_rev_high, val_rev_low, val_rev_mid, val_risks, val_runway_months, val_sde, val_sde_high, val_sde_low, val_sde_mid, val_strengths, val_total_assets, val_total_liabilities
 
-# SDE = real_profit + owner_draws (owner draws are discretionary, added back)
-val_sde = profit + bank_owner_draw_total
-val_annual_sde = val_sde * _val_annualize
+    _val_months_operating = max(len(months_sorted), 1)
+    _val_annualize = 12 / _val_months_operating
 
-# Method 1: SDE Multiple (small Etsy biz = 1.0x-2.5x)
-val_sde_low = val_annual_sde * 1.0
-val_sde_mid = val_annual_sde * 1.5
-val_sde_high = val_annual_sde * 2.5
+    # Annual metrics
+    val_annual_revenue = gross_sales * _val_annualize
+    val_annual_etsy_net = etsy_net * _val_annualize
+    val_annual_real_profit = real_profit * _val_annualize
 
-# Method 2: Revenue Multiple (handmade/Etsy = 0.3x-1.0x)
-val_rev_low = val_annual_revenue * 0.3
-val_rev_mid = val_annual_revenue * 0.5
-val_rev_high = val_annual_revenue * 1.0
+    # SDE = real_profit + owner_draws (owner draws are discretionary, added back)
+    val_sde = profit + bank_owner_draw_total
+    val_annual_sde = val_sde * _val_annualize
 
-# Method 3: Asset-Based
-val_total_assets = bank_cash_on_hand + bb_cc_asset_value + true_inventory_cost
-val_total_liabilities = bb_cc_balance
-val_asset_val = val_total_assets - val_total_liabilities
+    # Method 1: SDE Multiple (small Etsy biz = 1.0x-2.5x)
+    val_sde_low = val_annual_sde * 1.0
+    val_sde_mid = val_annual_sde * 1.5
+    val_sde_high = val_annual_sde * 2.5
 
-# Blended valuation (50% SDE + 25% Revenue + 25% Asset)
-val_blended_low = val_sde_low * 0.50 + val_rev_low * 0.25 + val_asset_val * 0.25
-val_blended_mid = val_sde_mid * 0.50 + val_rev_mid * 0.25 + val_asset_val * 0.25
-val_blended_high = val_sde_high * 0.50 + val_rev_high * 0.25 + val_asset_val * 0.25
+    # Method 2: Revenue Multiple (handmade/Etsy = 0.3x-1.0x)
+    val_rev_low = val_annual_revenue * 0.3
+    val_rev_mid = val_annual_revenue * 0.5
+    val_rev_high = val_annual_revenue * 1.0
 
-# Monthly run rate
-val_monthly_run_rate = gross_sales / _val_months_operating
-val_monthly_profit_rate = profit / _val_months_operating
+    # Method 3: Asset-Based
+    val_total_assets = bank_cash_on_hand + bb_cc_asset_value + true_inventory_cost
+    val_total_liabilities = bb_cc_balance
+    val_asset_val = val_total_assets - val_total_liabilities
 
-# Growth
-_val_growth_pct = analytics_projections.get("growth_pct", 0)
-_val_r2 = analytics_projections.get("r2_sales", 0)
-_val_sales_trend = analytics_projections.get("sales_trend", 0)
+    # Blended valuation (50% SDE + 25% Revenue + 25% Asset)
+    val_blended_low = val_sde_low * 0.50 + val_rev_low * 0.25 + val_asset_val * 0.25
+    val_blended_mid = val_sde_mid * 0.50 + val_rev_mid * 0.25 + val_asset_val * 0.25
+    val_blended_high = val_sde_high * 0.50 + val_rev_high * 0.25 + val_asset_val * 0.25
 
-# Projected 12-month revenue (using linear trend)
-val_proj_12mo_revenue = sum(
-    max(0, val_monthly_run_rate + _val_sales_trend * i) for i in range(1, 13)
-) if _val_sales_trend else val_annual_revenue
+    # Monthly run rate
+    val_monthly_run_rate = gross_sales / _val_months_operating
+    val_monthly_profit_rate = profit / _val_months_operating
 
-# Equity
-val_equity = val_total_assets - val_total_liabilities
+    # Growth
+    _val_growth_pct = analytics_projections.get("growth_pct", 0)
+    _val_r2 = analytics_projections.get("r2_sales", 0)
+    _val_sales_trend = analytics_projections.get("sales_trend", 0)
 
-# Health Score (0-100)
-_hs_profit = min(25, max(0, profit_margin / 2))  # 0-25 pts: 50%+ margin = full
-_hs_growth = min(25, max(0, (_val_growth_pct + 10) * 1.25)) if _val_growth_pct > -10 else 0  # 0-25 pts
-_prod_count = len(product_revenue_est) if len(product_revenue_est) > 0 else 1
-_top3_conc = product_revenue_est.head(3).sum() / product_revenue_est.sum() * 100 if product_revenue_est.sum() > 0 else 100
-_hs_diversity = min(15, max(0, (100 - _top3_conc) / 3))  # 0-15 pts
-_hs_cash = min(15, max(0, bank_cash_on_hand / val_monthly_run_rate * 5)) if val_monthly_run_rate > 0 else 0  # 0-15 pts: 3+ months runway = full
-_hs_debt = 10 if bb_cc_balance == 0 else max(0, 10 - bb_cc_balance / 500)  # 0-10 pts
-_hs_shipping = 10 if shipping_profit >= 0 else max(0, 10 + shipping_profit / 100)  # 0-10 pts
-val_health_score = round(min(100, _hs_profit + _hs_growth + _hs_diversity + _hs_cash + _hs_debt + _hs_shipping))
-val_health_grade = "A" if val_health_score >= 80 else "B" if val_health_score >= 60 else "C" if val_health_score >= 40 else "D"
-val_health_color = GREEN if val_health_score >= 80 else TEAL if val_health_score >= 60 else ORANGE if val_health_score >= 40 else RED
+    # Projected 12-month revenue (using linear trend)
+    val_proj_12mo_revenue = sum(
+        max(0, val_monthly_run_rate + _val_sales_trend * i) for i in range(1, 13)
+    ) if _val_sales_trend else val_annual_revenue
 
-# Risk factors list
-val_risks = []
-val_risks.append(("Young Business", f"Only {_val_months_operating} months of data — valuations are speculative", "HIGH" if _val_months_operating < 6 else "MED"))
-if _top3_conc > 60:
-    val_risks.append(("Product Concentration", f"Top 3 products = {_top3_conc:.0f}% of revenue", "HIGH" if _top3_conc > 80 else "MED"))
-if bb_cc_balance > 0:
-    val_risks.append(("Credit Card Debt", f"${bb_cc_balance:,.0f} outstanding on Best Buy CC", "HIGH" if bb_cc_balance > 1000 else "MED"))
-if shipping_profit < 0:
-    val_risks.append(("Shipping Loss", f"Losing ${abs(shipping_profit):,.0f} on shipping", "MED"))
-val_risks.append(("Platform Dependency", "100% revenue from Etsy — single platform risk", "MED"))
-if gross_sales and total_refunds / gross_sales > 0.05:
-    val_risks.append(("Refund Rate", f"{total_refunds / gross_sales * 100:.1f}% refund rate", "MED"))
+    # Equity
+    val_equity = val_total_assets - val_total_liabilities
 
-# Strengths list
-val_strengths = []
-if profit_margin > 20:
-    val_strengths.append(("Strong Margins", f"{profit_margin:.1f}% profit margin"))
-if _val_growth_pct > 5:
-    val_strengths.append(("Growing Revenue", f"{_val_growth_pct:+.1f}% monthly growth"))
-if bank_cash_on_hand > val_monthly_run_rate:
-    _runway = bank_cash_on_hand / val_monthly_run_rate if val_monthly_run_rate > 0 else 0
-    val_strengths.append(("Cash Reserves", f"${bank_cash_on_hand:,.0f} — {_runway:.1f} months runway"))
-if _prod_count > 10:
-    val_strengths.append(("Product Diversity", f"{_prod_count} active products"))
-if bb_cc_asset_value > 0:
-    val_strengths.append(("Equipment Assets", f"${bb_cc_asset_value:,.0f} in equipment"))
-if bank_owner_draw_total > 0:
-    val_strengths.append(("Owner Compensation", f"${bank_owner_draw_total:,.0f} in draws taken"))
+    # Health Score (0-100)
+    _hs_profit = min(25, max(0, profit_margin / 2))  # 0-25 pts: 50%+ margin = full
+    _hs_growth = min(25, max(0, (_val_growth_pct + 10) * 1.25)) if _val_growth_pct > -10 else 0  # 0-25 pts
+    _prod_count = len(product_revenue_est) if len(product_revenue_est) > 0 else 1
+    _top3_conc = product_revenue_est.head(3).sum() / product_revenue_est.sum() * 100 if product_revenue_est.sum() > 0 else 100
+    _hs_diversity = min(15, max(0, (100 - _top3_conc) / 3))  # 0-15 pts
+    _hs_cash = min(15, max(0, bank_cash_on_hand / val_monthly_run_rate * 5)) if val_monthly_run_rate > 0 else 0  # 0-15 pts: 3+ months runway = full
+    _hs_debt = 10 if bb_cc_balance == 0 else max(0, 10 - bb_cc_balance / 500)  # 0-10 pts
+    _hs_shipping = 10 if shipping_profit >= 0 else max(0, 10 + shipping_profit / 100)  # 0-10 pts
+    val_health_score = round(min(100, _hs_profit + _hs_growth + _hs_diversity + _hs_cash + _hs_debt + _hs_shipping))
+    val_health_grade = "A" if val_health_score >= 80 else "B" if val_health_score >= 60 else "C" if val_health_score >= 40 else "D"
+    val_health_color = GREEN if val_health_score >= 80 else TEAL if val_health_score >= 60 else ORANGE if val_health_score >= 40 else RED
 
-# Burn rate (monthly expenses)
-val_monthly_expenses = (total_fees + total_shipping_cost + total_marketing + total_refunds + total_taxes + total_buyer_fees + bank_all_expenses) / _val_months_operating
-val_runway_months = bank_cash_on_hand / val_monthly_expenses if val_monthly_expenses > 0 else 99
+    # Risk factors list
+    val_risks = []
+    val_risks.append(("Young Business", f"Only {_val_months_operating} months of data — valuations are speculative", "HIGH" if _val_months_operating < 6 else "MED"))
+    if _top3_conc > 60:
+        val_risks.append(("Product Concentration", f"Top 3 products = {_top3_conc:.0f}% of revenue", "HIGH" if _top3_conc > 80 else "MED"))
+    if bb_cc_balance > 0:
+        val_risks.append(("Credit Card Debt", f"${bb_cc_balance:,.0f} outstanding on Best Buy CC", "HIGH" if bb_cc_balance > 1000 else "MED"))
+    if shipping_profit < 0:
+        val_risks.append(("Shipping Loss", f"Losing ${abs(shipping_profit):,.0f} on shipping", "MED"))
+    val_risks.append(("Platform Dependency", "100% revenue from Etsy — single platform risk", "MED"))
+    if gross_sales and total_refunds / gross_sales > 0.05:
+        val_risks.append(("Refund Rate", f"{total_refunds / gross_sales * 100:.1f}% refund rate", "MED"))
+
+    # Strengths list
+    val_strengths = []
+    if profit_margin > 20:
+        val_strengths.append(("Strong Margins", f"{profit_margin:.1f}% profit margin"))
+    if _val_growth_pct > 5:
+        val_strengths.append(("Growing Revenue", f"{_val_growth_pct:+.1f}% monthly growth"))
+    if bank_cash_on_hand > val_monthly_run_rate:
+        _runway = bank_cash_on_hand / val_monthly_run_rate if val_monthly_run_rate > 0 else 0
+        val_strengths.append(("Cash Reserves", f"${bank_cash_on_hand:,.0f} — {_runway:.1f} months runway"))
+    if _prod_count > 10:
+        val_strengths.append(("Product Diversity", f"{_prod_count} active products"))
+    if bb_cc_asset_value > 0:
+        val_strengths.append(("Equipment Assets", f"${bb_cc_asset_value:,.0f} in equipment"))
+    if bank_owner_draw_total > 0:
+        val_strengths.append(("Owner Compensation", f"${bank_owner_draw_total:,.0f} in draws taken"))
+
+    # Burn rate (monthly expenses)
+    val_monthly_expenses = (total_fees + total_shipping_cost + total_marketing + total_refunds + total_taxes + total_buyer_fees + bank_all_expenses) / _val_months_operating
+    val_runway_months = bank_cash_on_hand / val_monthly_expenses if val_monthly_expenses > 0 else 99
+
+
+_recompute_valuation()
 
 
 # ── Helper Functions ─────────────────────────────────────────────────────────
@@ -3257,839 +3283,862 @@ def chart_context(description, metrics=None, legend=None, look_for=None, simple=
     })
 
 
-# ── Build Charts ─────────────────────────────────────────────────────────────
 
-# --- TAB 1: OVERVIEW CHARTS ---
+def _rebuild_all_charts():
+    global BANK_MONTH_NAMES, _anomaly_high, _anomaly_low, _aov_best_week, _aov_worst_week, _best_day_rev, _best_dow, _breakeven_daily
+    global _breakeven_monthly, _breakeven_orders, _cf_cum, _cf_debits, _cf_deposits, _cf_months, _cf_net, _contrib_margin_pct
+    global _corr_ad_vals, _corr_rev_vals, _current_14d_profit_avg, _daily_orders_avg, _daily_profit_avg, _daily_rev_avg, _daily_rev_mean, _daily_rev_std
+    global _dow_names, _dow_ord_vals, _dow_orders, _dow_prof_vals, _dow_profit, _dow_rev_vals, _dow_revenue, _etsy_took
+    global _growth_pct, _inv_cogs_ratio, _inv_months, _inv_rev_vals, _inv_spend_vals, _last_aov_val, _last_fee_pct, _last_margin_pct
+    global _last_mkt_pct, _last_ppo_m, _last_ppo_val, _last_ratio_m, _last_ref_pct, _last_ship_pct, _latest_month_net, _latest_month_rev
+    global _month_abbr, _monthly_fixed, _net_margin_overall, _peak_orders_day, _prod_monthly, _r2_sales, _supplier_spend, _top_n_products
+    global _top_prod_names, _total_costs, _unit_ads, _unit_cogs, _unit_fees, _unit_margin, _unit_profit, _unit_refund
+    global _unit_rev, _unit_ship, _worst_dow, _zero_days, all_inv_months, all_loc_months, anomaly_fig, aov_fig
+    global aov_vals, bank_month_debs, bank_month_deps, bank_month_labels, bank_month_nets, bank_monthly_fig, bank_months_sorted, cashflow_fig
+    global corr_fig, cost_ratio_fig, cum_fig, daily_fig, dow_fig, expense_colors_list, expense_labels_list, expense_pie
+    global expense_values_list, fee_pcts, intl_fig, inv_cat_bar, inv_cat_fig, inv_monthly_fig, inv_months_sorted, loc_fig
+    global loc_monthly_fig, margin_pcts, mkt_pcts_list, monthly_fig, net_by_month, orders_day_fig, ppo_fig, ppo_months
+    global ppo_vals, prod_name, product_fig, profit_rolling_fig, proj_chart, ratio_months, ref_pcts, rev_cogs_fig
+    global rev_inv_fig, sankey_fig, sankey_link_colors, sankey_node_colors, sankey_node_labels, sankey_sources, sankey_targets, sankey_values
+    global ship_pcts, ship_type_colors, ship_type_fig, ship_type_names, ship_type_vals, shipping_compare, texas_cat_fig, top_n
+    global top_products, trend_profit_rev, true_profit_monthly, tulsa_cat_fig, unit_wf
 
-# Expense donut
-expense_labels_list = []
-expense_values_list = []
-expense_colors_list = []
-for name, val, clr in [
-    ("Listing Fees", listing_fees, "#e74c3c"), ("Transaction Fees (Product)", transaction_fees_product, "#c0392b"),
-    ("Transaction Fees (Shipping)", transaction_fees_shipping, "#a93226"), ("Processing Fees", processing_fees, "#d35400"),
-    ("Shipping Labels", total_shipping_cost, BLUE), ("Etsy Ads", etsy_ads, PURPLE),
-    ("Offsite Ads", offsite_ads_fees, "#8e44ad"), ("Refunds", total_refunds, ORANGE),
-    ("Amazon Inventory", bank_by_cat.get("Amazon Inventory", 0), "#ff8a65"),
-    ("AliExpress Supplies", bank_by_cat.get("AliExpress Supplies", 0), "#e91e63"),
-    ("Craft Supplies", bank_by_cat.get("Craft Supplies", 0), TEAL),
-    ("Subscriptions", bank_by_cat.get("Subscriptions", 0), CYAN),
-    ("Shipping Supplies (Bank)", bank_by_cat.get("Shipping", 0), "#5dade2"),
-    ("Etsy Bank Fees", bank_by_cat.get("Etsy Fees", 0), "#7d3c98"),
-    ("Best Buy CC", bank_by_cat.get("Business Credit Card", 0), "#2e86c1"),
-    ("Owner Draws", bank_owner_draw_total, "#ffb74d"),
-]:
-    if val > 0:
-        expense_labels_list.append(name)
-        expense_values_list.append(val)
-        expense_colors_list.append(clr)
+    # ── Build Charts ─────────────────────────────────────────────────────────────
 
-expense_pie = go.Figure(go.Pie(
-    labels=expense_labels_list, values=expense_values_list, hole=0.45,
-    marker_colors=expense_colors_list, textinfo="label+percent", textposition="outside",
-))
-make_chart(expense_pie, 380, False)
-expense_pie.update_layout(title="Where Your Money Goes", showlegend=False)
+    # --- TAB 1: OVERVIEW CHARTS ---
 
-# Monthly stacked bar + net profit line
-monthly_fig = make_subplots(specs=[[{"secondary_y": True}]])
-monthly_fig.add_trace(go.Bar(name="Gross Sales", x=months_sorted,
-    y=[monthly_sales.get(m, 0) for m in months_sorted], marker_color=GREEN))
-monthly_fig.add_trace(go.Bar(name="Fees", x=months_sorted,
-    y=[-monthly_fees.get(m, 0) for m in months_sorted], marker_color=RED))
-monthly_fig.add_trace(go.Bar(name="Shipping", x=months_sorted,
-    y=[-monthly_shipping.get(m, 0) for m in months_sorted], marker_color=BLUE))
-monthly_fig.add_trace(go.Bar(name="Marketing", x=months_sorted,
-    y=[-monthly_marketing.get(m, 0) for m in months_sorted], marker_color=PURPLE))
-monthly_fig.add_trace(go.Bar(name="Refunds", x=months_sorted,
-    y=[-monthly_refunds.get(m, 0) for m in months_sorted], marker_color=ORANGE))
+    # Expense donut
+    expense_labels_list = []
+    expense_values_list = []
+    expense_colors_list = []
+    for name, val, clr in [
+        ("Listing Fees", listing_fees, "#e74c3c"), ("Transaction Fees (Product)", transaction_fees_product, "#c0392b"),
+        ("Transaction Fees (Shipping)", transaction_fees_shipping, "#a93226"), ("Processing Fees", processing_fees, "#d35400"),
+        ("Shipping Labels", total_shipping_cost, BLUE), ("Etsy Ads", etsy_ads, PURPLE),
+        ("Offsite Ads", offsite_ads_fees, "#8e44ad"), ("Refunds", total_refunds, ORANGE),
+        ("Amazon Inventory", bank_by_cat.get("Amazon Inventory", 0), "#ff8a65"),
+        ("AliExpress Supplies", bank_by_cat.get("AliExpress Supplies", 0), "#e91e63"),
+        ("Craft Supplies", bank_by_cat.get("Craft Supplies", 0), TEAL),
+        ("Subscriptions", bank_by_cat.get("Subscriptions", 0), CYAN),
+        ("Shipping Supplies (Bank)", bank_by_cat.get("Shipping", 0), "#5dade2"),
+        ("Etsy Bank Fees", bank_by_cat.get("Etsy Fees", 0), "#7d3c98"),
+        ("Best Buy CC", bank_by_cat.get("Business Credit Card", 0), "#2e86c1"),
+        ("Owner Draws", bank_owner_draw_total, "#ffb74d"),
+    ]:
+        if val > 0:
+            expense_labels_list.append(name)
+            expense_values_list.append(val)
+            expense_colors_list.append(clr)
 
-net_by_month = [
-    monthly_sales.get(m, 0) - monthly_fees.get(m, 0) - monthly_shipping.get(m, 0)
-    - monthly_marketing.get(m, 0) - monthly_refunds.get(m, 0)
-    for m in months_sorted
-]
-monthly_fig.add_trace(go.Scatter(
-    name="Net Profit", x=months_sorted, y=net_by_month,
-    mode="lines+markers+text", text=[f"${v:,.0f}" for v in net_by_month],
-    textposition="top center", textfont=dict(color=ORANGE),
-    line=dict(color=ORANGE, width=3), marker=dict(size=10),
-), secondary_y=True)
-make_chart(monthly_fig, 380)
-monthly_fig.update_layout(title="Monthly Performance", barmode="relative")
-monthly_fig.update_yaxes(title_text="Amount ($)", secondary_y=False)
-monthly_fig.update_yaxes(title_text="Net Profit ($)", secondary_y=True, showgrid=False)
-
-# Daily sales trend (compact for overview)
-daily_fig = make_subplots(specs=[[{"secondary_y": True}]])
-daily_fig.add_trace(go.Bar(name="Daily Revenue", x=list(daily_sales.index), y=list(daily_sales.values),
-    marker_color=GREEN, opacity=0.6))
-daily_fig.add_trace(go.Scatter(name="Orders", x=list(daily_orders.index), y=list(daily_orders.values),
-    mode="lines", line=dict(color=BLUE, width=2)), secondary_y=True)
-if len(daily_sales) >= 7:
-    rolling = daily_sales.rolling(7).mean()
-    daily_fig.add_trace(go.Scatter(name="7-day Avg Revenue", x=list(rolling.index), y=list(rolling.values),
-        mode="lines", line=dict(color=ORANGE, width=3)))
-make_chart(daily_fig, 320)
-daily_fig.update_layout(title="Daily Sales Trend")
-daily_fig.update_yaxes(title_text="Revenue ($)", secondary_y=False)
-daily_fig.update_yaxes(title_text="# Orders", secondary_y=True, showgrid=False)
-
-
-# --- TAB 2: TRENDS & PATTERNS CHARTS ---
-
-# 1) Daily profit/revenue with 7-day and 30-day rolling averages
-trend_profit_rev = go.Figure()
-trend_profit_rev.add_trace(go.Bar(
-    name="Daily Revenue", x=daily_df.index, y=daily_df["revenue"],
-    marker_color=GREEN, opacity=0.3,
-))
-trend_profit_rev.add_trace(go.Bar(
-    name="Daily Profit", x=daily_df.index, y=daily_df["profit"],
-    marker_color=ORANGE, opacity=0.3,
-))
-if len(daily_df) >= 7:
-    rev_7 = daily_df["revenue"].rolling(7, min_periods=1).mean()
-    prof_7 = daily_df["profit"].rolling(7, min_periods=1).mean()
-    trend_profit_rev.add_trace(go.Scatter(name="Revenue 7d Avg", x=daily_df.index, y=rev_7,
-        mode="lines", line=dict(color=GREEN, width=3)))
-    trend_profit_rev.add_trace(go.Scatter(name="Profit 7d Avg", x=daily_df.index, y=prof_7,
-        mode="lines", line=dict(color=ORANGE, width=3)))
-if len(daily_df) >= 30:
-    rev_30 = daily_df["revenue"].rolling(30, min_periods=1).mean()
-    prof_30 = daily_df["profit"].rolling(30, min_periods=1).mean()
-    trend_profit_rev.add_trace(go.Scatter(name="Revenue 30d Avg", x=daily_df.index, y=rev_30,
-        mode="lines", line=dict(color=GREEN, width=2, dash="dash")))
-    trend_profit_rev.add_trace(go.Scatter(name="Profit 30d Avg", x=daily_df.index, y=prof_30,
-        mode="lines", line=dict(color=ORANGE, width=2, dash="dash")))
-make_chart(trend_profit_rev, 380)
-trend_profit_rev.update_layout(title="Daily Revenue & Profit with Rolling Averages", barmode="overlay")
-
-# 2) Cost ratios over time (fees%, shipping%, marketing%, refunds% as % of monthly sales)
-cost_ratio_fig = go.Figure()
-ratio_months = [m for m in months_sorted if monthly_sales.get(m, 0) > 0]
-fee_pcts = [monthly_fees.get(m, 0) / monthly_sales.get(m, 1) * 100 for m in ratio_months]
-ship_pcts = [monthly_shipping.get(m, 0) / monthly_sales.get(m, 1) * 100 for m in ratio_months]
-mkt_pcts_list = [monthly_marketing.get(m, 0) / monthly_sales.get(m, 1) * 100 for m in ratio_months]
-ref_pcts = [monthly_refunds.get(m, 0) / monthly_sales.get(m, 1) * 100 for m in ratio_months]
-margin_pcts = [monthly_net_revenue.get(m, 0) / monthly_sales.get(m, 1) * 100 for m in ratio_months]
-
-cost_ratio_fig.add_trace(go.Scatter(name="Fees %", x=ratio_months, y=fee_pcts,
-    mode="lines+markers", line=dict(color=RED, width=3), marker=dict(size=8)))
-cost_ratio_fig.add_trace(go.Scatter(name="Shipping %", x=ratio_months, y=ship_pcts,
-    mode="lines+markers", line=dict(color=BLUE, width=3), marker=dict(size=8)))
-cost_ratio_fig.add_trace(go.Scatter(name="Marketing %", x=ratio_months, y=mkt_pcts_list,
-    mode="lines+markers", line=dict(color=PURPLE, width=3), marker=dict(size=8)))
-cost_ratio_fig.add_trace(go.Scatter(name="Refunds %", x=ratio_months, y=ref_pcts,
-    mode="lines+markers", line=dict(color=ORANGE, width=3), marker=dict(size=8)))
-cost_ratio_fig.add_trace(go.Scatter(name="Net Margin %", x=ratio_months, y=margin_pcts,
-    mode="lines+markers", line=dict(color=TEAL, width=3, dash="dash"), marker=dict(size=10, symbol="diamond")))
-make_chart(cost_ratio_fig, 380)
-cost_ratio_fig.update_layout(title="Cost Ratios Over Time (% of Monthly Sales)", yaxis_title="% of Sales")
-
-# Extract latest-month cost ratios for context blocks
-_last_ratio_m = ratio_months[-1] if ratio_months else "N/A"
-_last_fee_pct = fee_pcts[-1] if fee_pcts else 0
-_last_ship_pct = ship_pcts[-1] if ship_pcts else 0
-_last_mkt_pct = mkt_pcts_list[-1] if mkt_pcts_list else 0
-_last_ref_pct = ref_pcts[-1] if ref_pcts else 0
-_last_margin_pct = margin_pcts[-1] if margin_pcts else 0
-
-# 3) Avg order value trend by week
-aov_fig = go.Figure()
-aov_fig.add_trace(go.Scatter(
-    name="Weekly AOV", x=weekly_aov.index, y=weekly_aov["aov"],
-    mode="lines+markers", line=dict(color=TEAL, width=2), marker=dict(size=6),
-))
-if len(weekly_aov) >= 4:
-    aov_rolling = weekly_aov["aov"].rolling(4, min_periods=1).mean()
-    aov_fig.add_trace(go.Scatter(name="4-week Avg", x=weekly_aov.index, y=aov_rolling,
-        mode="lines", line=dict(color=ORANGE, width=3)))
-# Add overall average line
-aov_fig.add_hline(y=avg_order, line_dash="dot", line_color=GRAY,
-    annotation_text=f"Overall Avg: ${avg_order:.2f}", annotation_position="top left")
-make_chart(aov_fig, 340)
-aov_fig.update_layout(title="Average Order Value by Week", yaxis_title="AOV ($)")
-
-# 4) Orders per day trend with rolling avg
-orders_day_fig = go.Figure()
-orders_day_fig.add_trace(go.Bar(
-    name="Orders/Day", x=daily_df.index, y=daily_df["orders"],
-    marker_color=BLUE, opacity=0.5,
-))
-if len(daily_df) >= 7:
-    ord_7 = daily_df["orders"].rolling(7, min_periods=1).mean()
-    orders_day_fig.add_trace(go.Scatter(name="7-day Avg", x=daily_df.index, y=ord_7,
-        mode="lines", line=dict(color=ORANGE, width=3)))
-if len(daily_df) >= 14:
-    ord_14 = daily_df["orders"].rolling(14, min_periods=1).mean()
-    orders_day_fig.add_trace(go.Scatter(name="14-day Avg", x=daily_df.index, y=ord_14,
-        mode="lines", line=dict(color=GREEN, width=2, dash="dash")))
-make_chart(orders_day_fig, 320)
-orders_day_fig.update_layout(title="Orders Per Day", yaxis_title="# Orders")
-
-# 5) Cumulative revenue + cumulative profit
-cum_fig = go.Figure()
-cum_fig.add_trace(go.Scatter(
-    name="Cumulative Revenue", x=daily_df.index, y=daily_df["cum_revenue"],
-    mode="lines", line=dict(color=GREEN, width=3), fill="tozeroy", fillcolor="rgba(46,204,113,0.1)",
-))
-cum_fig.add_trace(go.Scatter(
-    name="Cumulative Profit", x=daily_df.index, y=daily_df["cum_profit"],
-    mode="lines", line=dict(color=ORANGE, width=3), fill="tozeroy", fillcolor="rgba(243,156,18,0.1)",
-))
-make_chart(cum_fig, 360)
-cum_fig.update_layout(title="Cumulative Revenue & Profit Over Time", yaxis_title="Amount ($)")
-
-# 6) Profit per day rolling 14-day average
-profit_rolling_fig = go.Figure()
-if len(daily_df) >= 14:
-    prof_14 = daily_df["profit"].rolling(14, min_periods=1).mean()
-    profit_rolling_fig.add_trace(go.Scatter(
-        name="14-day Avg Profit/Day", x=daily_df.index, y=prof_14,
-        mode="lines", line=dict(color=ORANGE, width=3),
-        fill="tozeroy", fillcolor="rgba(243,156,18,0.15)",
+    expense_pie = go.Figure(go.Pie(
+        labels=expense_labels_list, values=expense_values_list, hole=0.45,
+        marker_colors=expense_colors_list, textinfo="label+percent", textposition="outside",
     ))
-    profit_rolling_fig.add_hline(y=0, line_dash="dot", line_color=RED, line_width=1)
-else:
-    profit_rolling_fig.add_trace(go.Scatter(
+    make_chart(expense_pie, 380, False)
+    expense_pie.update_layout(title="Where Your Money Goes", showlegend=False)
+
+    # Monthly stacked bar + net profit line
+    monthly_fig = make_subplots(specs=[[{"secondary_y": True}]])
+    monthly_fig.add_trace(go.Bar(name="Gross Sales", x=months_sorted,
+        y=[monthly_sales.get(m, 0) for m in months_sorted], marker_color=GREEN))
+    monthly_fig.add_trace(go.Bar(name="Fees", x=months_sorted,
+        y=[-monthly_fees.get(m, 0) for m in months_sorted], marker_color=RED))
+    monthly_fig.add_trace(go.Bar(name="Shipping", x=months_sorted,
+        y=[-monthly_shipping.get(m, 0) for m in months_sorted], marker_color=BLUE))
+    monthly_fig.add_trace(go.Bar(name="Marketing", x=months_sorted,
+        y=[-monthly_marketing.get(m, 0) for m in months_sorted], marker_color=PURPLE))
+    monthly_fig.add_trace(go.Bar(name="Refunds", x=months_sorted,
+        y=[-monthly_refunds.get(m, 0) for m in months_sorted], marker_color=ORANGE))
+
+    net_by_month = [
+        monthly_sales.get(m, 0) - monthly_fees.get(m, 0) - monthly_shipping.get(m, 0)
+        - monthly_marketing.get(m, 0) - monthly_refunds.get(m, 0)
+        for m in months_sorted
+    ]
+    monthly_fig.add_trace(go.Scatter(
+        name="Net Profit", x=months_sorted, y=net_by_month,
+        mode="lines+markers+text", text=[f"${v:,.0f}" for v in net_by_month],
+        textposition="top center", textfont=dict(color=ORANGE),
+        line=dict(color=ORANGE, width=3), marker=dict(size=10),
+    ), secondary_y=True)
+    make_chart(monthly_fig, 380)
+    monthly_fig.update_layout(title="Monthly Performance", barmode="relative")
+    monthly_fig.update_yaxes(title_text="Amount ($)", secondary_y=False)
+    monthly_fig.update_yaxes(title_text="Net Profit ($)", secondary_y=True, showgrid=False)
+
+    # Daily sales trend (compact for overview)
+    daily_fig = make_subplots(specs=[[{"secondary_y": True}]])
+    daily_fig.add_trace(go.Bar(name="Daily Revenue", x=list(daily_sales.index), y=list(daily_sales.values),
+        marker_color=GREEN, opacity=0.6))
+    daily_fig.add_trace(go.Scatter(name="Orders", x=list(daily_orders.index), y=list(daily_orders.values),
+        mode="lines", line=dict(color=BLUE, width=2)), secondary_y=True)
+    if len(daily_sales) >= 7:
+        rolling = daily_sales.rolling(7).mean()
+        daily_fig.add_trace(go.Scatter(name="7-day Avg Revenue", x=list(rolling.index), y=list(rolling.values),
+            mode="lines", line=dict(color=ORANGE, width=3)))
+    make_chart(daily_fig, 320)
+    daily_fig.update_layout(title="Daily Sales Trend")
+    daily_fig.update_yaxes(title_text="Revenue ($)", secondary_y=False)
+    daily_fig.update_yaxes(title_text="# Orders", secondary_y=True, showgrid=False)
+
+
+    # --- TAB 2: TRENDS & PATTERNS CHARTS ---
+
+    # 1) Daily profit/revenue with 7-day and 30-day rolling averages
+    trend_profit_rev = go.Figure()
+    trend_profit_rev.add_trace(go.Bar(
+        name="Daily Revenue", x=daily_df.index, y=daily_df["revenue"],
+        marker_color=GREEN, opacity=0.3,
+    ))
+    trend_profit_rev.add_trace(go.Bar(
         name="Daily Profit", x=daily_df.index, y=daily_df["profit"],
-        mode="lines+markers", line=dict(color=ORANGE, width=2),
+        marker_color=ORANGE, opacity=0.3,
     ))
-make_chart(profit_rolling_fig, 320)
-profit_rolling_fig.update_layout(title="Profit Per Day (14-day Rolling Average)", yaxis_title="Profit ($)")
+    if len(daily_df) >= 7:
+        rev_7 = daily_df["revenue"].rolling(7, min_periods=1).mean()
+        prof_7 = daily_df["profit"].rolling(7, min_periods=1).mean()
+        trend_profit_rev.add_trace(go.Scatter(name="Revenue 7d Avg", x=daily_df.index, y=rev_7,
+            mode="lines", line=dict(color=GREEN, width=3)))
+        trend_profit_rev.add_trace(go.Scatter(name="Profit 7d Avg", x=daily_df.index, y=prof_7,
+            mode="lines", line=dict(color=ORANGE, width=3)))
+    if len(daily_df) >= 30:
+        rev_30 = daily_df["revenue"].rolling(30, min_periods=1).mean()
+        prof_30 = daily_df["profit"].rolling(30, min_periods=1).mean()
+        trend_profit_rev.add_trace(go.Scatter(name="Revenue 30d Avg", x=daily_df.index, y=rev_30,
+            mode="lines", line=dict(color=GREEN, width=2, dash="dash")))
+        trend_profit_rev.add_trace(go.Scatter(name="Profit 30d Avg", x=daily_df.index, y=prof_30,
+            mode="lines", line=dict(color=ORANGE, width=2, dash="dash")))
+    make_chart(trend_profit_rev, 380)
+    trend_profit_rev.update_layout(title="Daily Revenue & Profit with Rolling Averages", barmode="overlay")
 
-# 7) Avg profit per order over time by month
-ppo_fig = go.Figure()
-ppo_months = [m for m in months_sorted if monthly_order_counts.get(m, 0) > 0]
-ppo_vals = [monthly_profit_per_order.get(m, 0) for m in ppo_months]
-ppo_fig.add_trace(go.Bar(
-    name="Profit/Order", x=ppo_months, y=ppo_vals,
-    marker_color=[GREEN if v >= 0 else RED for v in ppo_vals],
-    text=[f"${v:,.2f}" for v in ppo_vals], textposition="outside",
-))
-aov_vals = [monthly_aov.get(m, 0) for m in ppo_months]
-ppo_fig.add_trace(go.Scatter(
-    name="Avg Order Value", x=ppo_months, y=aov_vals,
-    mode="lines+markers", line=dict(color=TEAL, width=2, dash="dash"), marker=dict(size=6),
-    yaxis="y2",
-))
-make_chart(ppo_fig, 360)
-ppo_fig.update_layout(
-    title="Avg Profit Per Order & AOV by Month", yaxis_title="Profit/Order ($)",
-    yaxis2=dict(title="AOV ($)", overlaying="y", side="right", showgrid=False),
-)
+    # 2) Cost ratios over time (fees%, shipping%, marketing%, refunds% as % of monthly sales)
+    cost_ratio_fig = go.Figure()
+    ratio_months = [m for m in months_sorted if monthly_sales.get(m, 0) > 0]
+    fee_pcts = [monthly_fees.get(m, 0) / monthly_sales.get(m, 1) * 100 for m in ratio_months]
+    ship_pcts = [monthly_shipping.get(m, 0) / monthly_sales.get(m, 1) * 100 for m in ratio_months]
+    mkt_pcts_list = [monthly_marketing.get(m, 0) / monthly_sales.get(m, 1) * 100 for m in ratio_months]
+    ref_pcts = [monthly_refunds.get(m, 0) / monthly_sales.get(m, 1) * 100 for m in ratio_months]
+    margin_pcts = [monthly_net_revenue.get(m, 0) / monthly_sales.get(m, 1) * 100 for m in ratio_months]
 
-# Extract latest PPO and daily profit metrics for context blocks
-_last_ppo_m = ppo_months[-1] if ppo_months else "N/A"
-_last_ppo_val = ppo_vals[-1] if ppo_vals else 0
-_last_aov_val = aov_vals[-1] if aov_vals else 0
-_daily_profit_avg = etsy_net / days_active if days_active else 0
-_daily_rev_avg = gross_sales / days_active if days_active else 0
-_daily_orders_avg = order_count / days_active if days_active else 0
-_best_day_rev = daily_df["revenue"].max() if len(daily_df) else 0
-_peak_orders_day = daily_df["orders"].max() if len(daily_df) else 0
-_total_costs = gross_sales - etsy_net
-_current_14d_profit_avg = daily_df["profit"].rolling(14, min_periods=1).mean().iloc[-1] if len(daily_df) >= 1 else 0
-_aov_best_week = weekly_aov["aov"].max() if len(weekly_aov) else 0
-_aov_worst_week = weekly_aov["aov"].min() if len(weekly_aov) else 0
-_growth_pct = analytics_projections.get("growth_pct", 0)
-_r2_sales = analytics_projections.get("r2_sales", 0)
-_latest_month_rev = monthly_sales.get(months_sorted[-1], 0) if months_sorted else 0
-_latest_month_net = monthly_net_revenue.get(months_sorted[-1], 0) if months_sorted else 0
-_net_margin_overall = (etsy_net / gross_sales * 100) if gross_sales else 0
+    cost_ratio_fig.add_trace(go.Scatter(name="Fees %", x=ratio_months, y=fee_pcts,
+        mode="lines+markers", line=dict(color=RED, width=3), marker=dict(size=8)))
+    cost_ratio_fig.add_trace(go.Scatter(name="Shipping %", x=ratio_months, y=ship_pcts,
+        mode="lines+markers", line=dict(color=BLUE, width=3), marker=dict(size=8)))
+    cost_ratio_fig.add_trace(go.Scatter(name="Marketing %", x=ratio_months, y=mkt_pcts_list,
+        mode="lines+markers", line=dict(color=PURPLE, width=3), marker=dict(size=8)))
+    cost_ratio_fig.add_trace(go.Scatter(name="Refunds %", x=ratio_months, y=ref_pcts,
+        mode="lines+markers", line=dict(color=ORANGE, width=3), marker=dict(size=8)))
+    cost_ratio_fig.add_trace(go.Scatter(name="Net Margin %", x=ratio_months, y=margin_pcts,
+        mode="lines+markers", line=dict(color=TEAL, width=3, dash="dash"), marker=dict(size=10, symbol="diamond")))
+    make_chart(cost_ratio_fig, 380)
+    cost_ratio_fig.update_layout(title="Cost Ratios Over Time (% of Monthly Sales)", yaxis_title="% of Sales")
 
-# --- TAB 2: DEEP DIVE ADVANCED ANALYTICS ---
+    # Extract latest-month cost ratios for context blocks
+    _last_ratio_m = ratio_months[-1] if ratio_months else "N/A"
+    _last_fee_pct = fee_pcts[-1] if fee_pcts else 0
+    _last_ship_pct = ship_pcts[-1] if ship_pcts else 0
+    _last_mkt_pct = mkt_pcts_list[-1] if mkt_pcts_list else 0
+    _last_ref_pct = ref_pcts[-1] if ref_pcts else 0
+    _last_margin_pct = margin_pcts[-1] if margin_pcts else 0
 
-# 8) Day-of-week analysis
-_dow_names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
-_dow_revenue = daily_df.groupby(daily_df.index.map(lambda d: d.weekday()))["revenue"].mean()
-_dow_orders = daily_df.groupby(daily_df.index.map(lambda d: d.weekday()))["orders"].mean()
-_dow_profit = daily_df.groupby(daily_df.index.map(lambda d: d.weekday()))["profit"].mean()
-_dow_rev_vals = [_dow_revenue.get(i, 0) for i in range(7)]
-_dow_ord_vals = [_dow_orders.get(i, 0) for i in range(7)]
-_dow_prof_vals = [_dow_profit.get(i, 0) for i in range(7)]
-_best_dow = _dow_names[np.argmax(_dow_rev_vals)]
-_worst_dow = _dow_names[np.argmin(_dow_rev_vals)]
-
-dow_fig = make_subplots(specs=[[{"secondary_y": True}]])
-dow_fig.add_trace(go.Bar(name="Avg Revenue", x=_dow_names, y=_dow_rev_vals,
-    marker_color=[GREEN if v == max(_dow_rev_vals) else f"{GREEN}" for v in _dow_rev_vals],
-    text=[f"${v:,.0f}" for v in _dow_rev_vals], textposition="outside"))
-dow_fig.add_trace(go.Scatter(name="Avg Orders", x=_dow_names, y=_dow_ord_vals,
-    mode="lines+markers", line=dict(color=BLUE, width=2), marker=dict(size=8)), secondary_y=True)
-dow_fig.add_trace(go.Scatter(name="Avg Profit", x=_dow_names, y=_dow_prof_vals,
-    mode="lines+markers", line=dict(color=ORANGE, width=2, dash="dot"), marker=dict(size=6)), secondary_y=True)
-make_chart(dow_fig, 320)
-dow_fig.update_layout(title="Day-of-Week Performance")
-dow_fig.update_yaxes(title_text="Revenue ($)", secondary_y=False)
-dow_fig.update_yaxes(title_text="Orders / Profit ($)", secondary_y=True, showgrid=False)
-
-# 9) Revenue vs Inventory Spend overlay (monthly)
-rev_inv_fig = make_subplots(specs=[[{"secondary_y": True}]])
-_inv_months = sorted(set(months_sorted) | set(monthly_inv_spend.index.tolist()))
-_inv_months = [m for m in months_sorted]  # keep to Etsy months for alignment
-_inv_spend_vals = [monthly_inv_spend.get(m, 0) for m in _inv_months]
-_inv_rev_vals = [monthly_sales.get(m, 0) for m in _inv_months]
-_inv_cogs_ratio = [monthly_inv_spend.get(m, 0) / monthly_sales.get(m, 1) * 100 for m in _inv_months]
-
-rev_inv_fig.add_trace(go.Bar(name="Monthly Revenue", x=_inv_months, y=_inv_rev_vals,
-    marker_color=GREEN, opacity=0.6))
-rev_inv_fig.add_trace(go.Bar(name="Inventory Spend", x=_inv_months, y=_inv_spend_vals,
-    marker_color=PURPLE, opacity=0.8))
-rev_inv_fig.add_trace(go.Scatter(name="Supply Cost Ratio %", x=_inv_months, y=_inv_cogs_ratio,
-    mode="lines+markers+text", text=[f"{v:.1f}%" for v in _inv_cogs_ratio],
-    textposition="top center", textfont=dict(color=ORANGE, size=10),
-    line=dict(color=ORANGE, width=3), marker=dict(size=8)), secondary_y=True)
-make_chart(rev_inv_fig, 360)
-rev_inv_fig.update_layout(title="Revenue vs Inventory Spend by Month", barmode="group")
-rev_inv_fig.update_yaxes(title_text="Amount ($)", secondary_y=False)
-rev_inv_fig.update_yaxes(title_text="Supply Cost Ratio (%)", secondary_y=True, showgrid=False)
-
-# 10) Inventory category breakdown (what you're spending on)
-inv_cat_bar = go.Figure()
-if len(biz_inv_by_category) > 0:
-    _cat_names = biz_inv_by_category.index.tolist()
-    _cat_vals = biz_inv_by_category.values.tolist()
-    _cat_colors = [PURPLE, TEAL, BLUE, GREEN, ORANGE, RED, PINK, CYAN, GRAY, DARKGRAY]
-    inv_cat_bar.add_trace(go.Bar(
-        x=_cat_names, y=_cat_vals,
-        marker_color=_cat_colors[:len(_cat_names)],
-        text=[f"${v:,.0f}" for v in _cat_vals], textposition="outside",
+    # 3) Avg order value trend by week
+    aov_fig = go.Figure()
+    aov_fig.add_trace(go.Scatter(
+        name="Weekly AOV", x=weekly_aov.index, y=weekly_aov["aov"],
+        mode="lines+markers", line=dict(color=TEAL, width=2), marker=dict(size=6),
     ))
-make_chart(inv_cat_bar, 320, False)
-inv_cat_bar.update_layout(title="Inventory Spend by Category", yaxis_title="Amount ($)",
-                          xaxis_tickangle=-25, xaxis_tickfont=dict(size=10))
+    if len(weekly_aov) >= 4:
+        aov_rolling = weekly_aov["aov"].rolling(4, min_periods=1).mean()
+        aov_fig.add_trace(go.Scatter(name="4-week Avg", x=weekly_aov.index, y=aov_rolling,
+            mode="lines", line=dict(color=ORANGE, width=3)))
+    # Add overall average line
+    aov_fig.add_hline(y=avg_order, line_dash="dot", line_color=GRAY,
+        annotation_text=f"Overall Avg: ${avg_order:.2f}", annotation_position="top left")
+    make_chart(aov_fig, 340)
+    aov_fig.update_layout(title="Average Order Value by Week", yaxis_title="AOV ($)")
 
-# 11) Anomaly detection (z-score on daily revenue)
-_daily_rev_mean = daily_df["revenue"].mean()
-_daily_rev_std = daily_df["revenue"].std() if len(daily_df) > 1 else 1
-daily_df["_z_score"] = (daily_df["revenue"] - _daily_rev_mean) / max(_daily_rev_std, 0.01)
-_anomaly_high = daily_df[daily_df["_z_score"] > 2.0]
-_anomaly_low = daily_df[(daily_df["_z_score"] < -1.5) & (daily_df["revenue"] > 0)]
-_zero_days = daily_df[daily_df["revenue"] == 0]
-
-anomaly_fig = go.Figure()
-anomaly_fig.add_trace(go.Scatter(
-    name="Daily Revenue", x=daily_df.index, y=daily_df["revenue"],
-    mode="lines", line=dict(color=GRAY, width=1),
-))
-anomaly_fig.add_hline(y=_daily_rev_mean, line_dash="dash", line_color=TEAL, line_width=1,
-    annotation_text=f"Mean: ${_daily_rev_mean:,.0f}", annotation_position="top left")
-anomaly_fig.add_hline(y=_daily_rev_mean + 2 * _daily_rev_std, line_dash="dot", line_color=GREEN, line_width=1,
-    annotation_text="+2σ (spike)", annotation_position="top right")
-anomaly_fig.add_hline(y=max(0, _daily_rev_mean - 1.5 * _daily_rev_std), line_dash="dot", line_color=RED, line_width=1,
-    annotation_text="-1.5σ (drop)", annotation_position="bottom right")
-if len(_anomaly_high) > 0:
-    anomaly_fig.add_trace(go.Scatter(
-        name=f"Spikes ({len(_anomaly_high)})", x=_anomaly_high.index, y=_anomaly_high["revenue"],
-        mode="markers", marker=dict(color=GREEN, size=12, symbol="triangle-up"),
+    # 4) Orders per day trend with rolling avg
+    orders_day_fig = go.Figure()
+    orders_day_fig.add_trace(go.Bar(
+        name="Orders/Day", x=daily_df.index, y=daily_df["orders"],
+        marker_color=BLUE, opacity=0.5,
     ))
-if len(_anomaly_low) > 0:
-    anomaly_fig.add_trace(go.Scatter(
-        name=f"Drops ({len(_anomaly_low)})", x=_anomaly_low.index, y=_anomaly_low["revenue"],
-        mode="markers", marker=dict(color=RED, size=12, symbol="triangle-down"),
+    if len(daily_df) >= 7:
+        ord_7 = daily_df["orders"].rolling(7, min_periods=1).mean()
+        orders_day_fig.add_trace(go.Scatter(name="7-day Avg", x=daily_df.index, y=ord_7,
+            mode="lines", line=dict(color=ORANGE, width=3)))
+    if len(daily_df) >= 14:
+        ord_14 = daily_df["orders"].rolling(14, min_periods=1).mean()
+        orders_day_fig.add_trace(go.Scatter(name="14-day Avg", x=daily_df.index, y=ord_14,
+            mode="lines", line=dict(color=GREEN, width=2, dash="dash")))
+    make_chart(orders_day_fig, 320)
+    orders_day_fig.update_layout(title="Orders Per Day", yaxis_title="# Orders")
+
+    # 5) Cumulative revenue + cumulative profit
+    cum_fig = go.Figure()
+    cum_fig.add_trace(go.Scatter(
+        name="Cumulative Revenue", x=daily_df.index, y=daily_df["cum_revenue"],
+        mode="lines", line=dict(color=GREEN, width=3), fill="tozeroy", fillcolor="rgba(46,204,113,0.1)",
     ))
-if len(_zero_days) > 0:
-    anomaly_fig.add_trace(go.Scatter(
-        name=f"Zero Days ({len(_zero_days)})", x=_zero_days.index, y=[0] * len(_zero_days),
-        mode="markers", marker=dict(color=ORANGE, size=10, symbol="x"),
+    cum_fig.add_trace(go.Scatter(
+        name="Cumulative Profit", x=daily_df.index, y=daily_df["cum_profit"],
+        mode="lines", line=dict(color=ORANGE, width=3), fill="tozeroy", fillcolor="rgba(243,156,18,0.1)",
     ))
-make_chart(anomaly_fig, 340)
-anomaly_fig.update_layout(title="Anomaly Detection (Statistical Outliers)", yaxis_title="Revenue ($)")
+    make_chart(cum_fig, 360)
+    cum_fig.update_layout(title="Cumulative Revenue & Profit Over Time", yaxis_title="Amount ($)")
 
-# 12) Product performance heatmap (top products by month)
-_top_n_products = 8
-_top_prod_names = product_revenue_est.head(_top_n_products).index.tolist()
-# Build product-month revenue matrix from transaction fees
-_prod_monthly = {}
-for prod_name in _top_prod_names:
-    _pmask = prod_fees["Product"] == prod_name
-    _prod_month_fees = prod_fees[_pmask].groupby(
-        prod_fees[_pmask]["Date_Parsed"].dt.to_period("M").astype(str)
-    )["Net_Clean"].sum().abs()
-    _prod_monthly[prod_name[:25]] = {m: (_prod_month_fees.get(m, 0) / 0.065) for m in months_sorted}
+    # 6) Profit per day rolling 14-day average
+    profit_rolling_fig = go.Figure()
+    if len(daily_df) >= 14:
+        prof_14 = daily_df["profit"].rolling(14, min_periods=1).mean()
+        profit_rolling_fig.add_trace(go.Scatter(
+            name="14-day Avg Profit/Day", x=daily_df.index, y=prof_14,
+            mode="lines", line=dict(color=ORANGE, width=3),
+            fill="tozeroy", fillcolor="rgba(243,156,18,0.15)",
+        ))
+        profit_rolling_fig.add_hline(y=0, line_dash="dot", line_color=RED, line_width=1)
+    else:
+        profit_rolling_fig.add_trace(go.Scatter(
+            name="Daily Profit", x=daily_df.index, y=daily_df["profit"],
+            mode="lines+markers", line=dict(color=ORANGE, width=2),
+        ))
+    make_chart(profit_rolling_fig, 320)
+    profit_rolling_fig.update_layout(title="Profit Per Day (14-day Rolling Average)", yaxis_title="Profit ($)")
 
-if _prod_monthly:
-    _heat_products = list(_prod_monthly.keys())
-    _heat_z = [[_prod_monthly[p].get(m, 0) for m in months_sorted] for p in _heat_products]
-    product_heat = go.Figure(go.Heatmap(
-        z=_heat_z, x=months_sorted, y=_heat_products,
-        colorscale=[[0, "#0f0f1a"], [0.5, PURPLE], [1, GREEN]],
-        text=[[f"${v:,.0f}" for v in row] for row in _heat_z],
-        texttemplate="%{text}", textfont=dict(size=10, color=WHITE),
-        hoverongaps=False,
+    # 7) Avg profit per order over time by month
+    ppo_fig = go.Figure()
+    ppo_months = [m for m in months_sorted if monthly_order_counts.get(m, 0) > 0]
+    ppo_vals = [monthly_profit_per_order.get(m, 0) for m in ppo_months]
+    ppo_fig.add_trace(go.Bar(
+        name="Profit/Order", x=ppo_months, y=ppo_vals,
+        marker_color=[GREEN if v >= 0 else RED for v in ppo_vals],
+        text=[f"${v:,.2f}" for v in ppo_vals], textposition="outside",
     ))
-    make_chart(product_heat, 340, False)
-    product_heat.update_layout(title="Product Revenue Heatmap (Top 8 by Month)",
-                               yaxis=dict(tickfont=dict(size=10)))
-else:
-    product_heat = go.Figure()
-    product_heat.add_annotation(text="No product data available", showarrow=False)
-    make_chart(product_heat, 200, False)
-
-# 13) Correlation: Ads Spend vs Sales (monthly)
-corr_fig = go.Figure()
-_corr_ad_vals = [monthly_marketing.get(m, 0) for m in months_sorted]
-_corr_rev_vals = [monthly_sales.get(m, 0) for m in months_sorted]
-corr_fig.add_trace(go.Scatter(
-    x=_corr_ad_vals, y=_corr_rev_vals, mode="markers+text",
-    text=months_sorted, textposition="top center", textfont=dict(size=9, color=GRAY),
-    marker=dict(color=CYAN, size=14, line=dict(color=WHITE, width=1)),
-))
-# Fit line
-if len(months_sorted) >= 3 and sum(_corr_ad_vals) > 0:
-    _corr_X = np.array(_corr_ad_vals).reshape(-1, 1)
-    _corr_y = np.array(_corr_rev_vals)
-    _corr_lr = LinearRegression().fit(_corr_X, _corr_y)
-    _corr_r2 = _corr_lr.score(_corr_X, _corr_y)
-    _corr_line_x = [min(_corr_ad_vals), max(_corr_ad_vals)]
-    _corr_line_y = [_corr_lr.predict([[v]])[0] for v in _corr_line_x]
-    corr_fig.add_trace(go.Scatter(
-        x=_corr_line_x, y=_corr_line_y, mode="lines",
-        line=dict(color=ORANGE, width=2, dash="dash"), name=f"R²={_corr_r2:.2f}",
+    aov_vals = [monthly_aov.get(m, 0) for m in ppo_months]
+    ppo_fig.add_trace(go.Scatter(
+        name="Avg Order Value", x=ppo_months, y=aov_vals,
+        mode="lines+markers", line=dict(color=TEAL, width=2, dash="dash"), marker=dict(size=6),
+        yaxis="y2",
     ))
-else:
-    _corr_r2 = 0
-make_chart(corr_fig, 300, False)
-corr_fig.update_layout(title="Ad Spend vs Revenue Correlation",
-                       xaxis_title="Monthly Ad Spend ($)", yaxis_title="Monthly Revenue ($)")
-
-# 14) Unit economics waterfall (per-order breakdown)
-_unit_rev = avg_order
-_unit_fees = total_fees / order_count if order_count else 0
-_unit_ship = total_shipping_cost / order_count if order_count else 0
-_unit_ads = total_marketing / order_count if order_count else 0
-_unit_refund = total_refunds / order_count if order_count else 0
-_unit_cogs = true_inventory_cost / order_count if order_count else 0
-_unit_profit = _unit_rev - _unit_fees - _unit_ship - _unit_ads - _unit_refund - _unit_cogs
-_unit_margin = (_unit_profit / _unit_rev * 100) if _unit_rev else 0
-
-unit_wf = go.Figure(go.Waterfall(
-    orientation="v",
-    measure=["absolute", "relative", "relative", "relative", "relative", "relative", "total"],
-    x=["Revenue", "Fees", "Shipping", "Ads", "Refunds", "Supplies", "Profit"],
-    y=[_unit_rev, -_unit_fees, -_unit_ship, -_unit_ads, -_unit_refund, -_unit_cogs, 0],
-    connector={"line": {"color": GRAY, "width": 1, "dash": "dot"}},
-    increasing={"marker": {"color": GREEN}},
-    decreasing={"marker": {"color": RED}},
-    totals={"marker": {"color": CYAN}},
-    text=[f"${abs(v):,.2f}" for v in [_unit_rev, _unit_fees, _unit_ship, _unit_ads, _unit_refund, _unit_cogs, _unit_profit]],
-    textposition="outside",
-))
-make_chart(unit_wf, 340, False)
-unit_wf.update_layout(title=f"Unit Economics: Average Order Breakdown (margin: {_unit_margin:.1f}%)",
-                      showlegend=False, yaxis_title="Per Order ($)")
-
-# 15) Inventory location split (Tulsa vs Texas)
-loc_fig = go.Figure()
-if tulsa_spend > 0 or texas_spend > 0:
-    loc_fig.add_trace(go.Bar(
-        name="Tulsa, OK", x=sorted(set(tulsa_monthly.index) | set(texas_monthly.index)),
-        y=[tulsa_monthly.get(m, 0) for m in sorted(set(tulsa_monthly.index) | set(texas_monthly.index))],
-        marker_color=TEAL,
-    ))
-    loc_fig.add_trace(go.Bar(
-        name="Texas", x=sorted(set(tulsa_monthly.index) | set(texas_monthly.index)),
-        y=[texas_monthly.get(m, 0) for m in sorted(set(tulsa_monthly.index) | set(texas_monthly.index))],
-        marker_color=ORANGE,
-    ))
-    make_chart(loc_fig, 300)
-    loc_fig.update_layout(title="Inventory Orders by Location & Month", barmode="stack",
-                          yaxis_title="Spend ($)")
-else:
-    make_chart(loc_fig, 200, False)
-
-# 16) Cash flow timeline (deposits - expenses by month)
-cashflow_fig = go.Figure()
-_cf_months = sorted(bank_monthly.keys())
-_cf_deposits = [bank_monthly[m]["deposits"] for m in _cf_months]
-_cf_debits = [bank_monthly[m]["debits"] for m in _cf_months]
-_cf_net = [bank_monthly[m]["deposits"] - bank_monthly[m]["debits"] for m in _cf_months]
-_cf_cum = list(np.cumsum(_cf_net))
-cashflow_fig.add_trace(go.Bar(name="Deposits", x=_cf_months, y=_cf_deposits, marker_color=GREEN, opacity=0.7))
-cashflow_fig.add_trace(go.Bar(name="Expenses", x=_cf_months, y=[-d for d in _cf_debits], marker_color=RED, opacity=0.7))
-cashflow_fig.add_trace(go.Scatter(name="Net Cash Flow", x=_cf_months, y=_cf_net,
-    mode="lines+markers+text", text=[f"${v:,.0f}" for v in _cf_net],
-    textposition="top center", textfont=dict(color=CYAN, size=10),
-    line=dict(color=CYAN, width=3), marker=dict(size=8)))
-make_chart(cashflow_fig, 340)
-cashflow_fig.update_layout(title="Cash Flow by Month (Bank Deposits vs Expenses)", barmode="relative",
-                           yaxis_title="Amount ($)")
-
-# 17) Break-even analysis
-_monthly_fixed = (bank_biz_expense_total + total_marketing) / _val_months_operating if _val_months_operating else 0
-_contrib_margin_pct = (gross_sales - total_fees - total_shipping_cost - total_refunds - true_inventory_cost) / gross_sales if gross_sales else 0
-_breakeven_monthly = _monthly_fixed / _contrib_margin_pct if _contrib_margin_pct > 0 else 0
-_breakeven_daily = _breakeven_monthly / 30
-_breakeven_orders = _breakeven_monthly / avg_order if avg_order > 0 else 0
-
-# 18) Supplier spend analysis
-_supplier_spend = {}
-if len(INV_ITEMS) > 0:
-    for seller, grp in INV_ITEMS.groupby("seller"):
-        if seller != "Unknown":
-            _supplier_spend[seller] = {
-                "total": grp["total"].sum(),
-                "items": len(grp),
-                "avg_price": grp["price"].mean(),
-            }
-_supplier_spend = dict(sorted(_supplier_spend.items(), key=lambda x: -x[1]["total"]))
-
-
-# --- TAB 3: AI ANALYTICS BOT CHARTS ---
-
-# Revenue projection chart
-proj_chart = go.Figure()
-if "proj_sales" in analytics_projections:
-    proj_chart.add_trace(go.Scatter(
-        name="Actual Sales", x=months_sorted,
-        y=[monthly_sales.get(m, 0) for m in months_sorted],
-        mode="lines+markers", line=dict(color=GREEN, width=3), marker=dict(size=8),
-    ))
-    proj_chart.add_trace(go.Scatter(
-        name="Actual Net Revenue", x=months_sorted,
-        y=[monthly_net_revenue.get(m, 0) for m in months_sorted],
-        mode="lines+markers", line=dict(color=ORANGE, width=3), marker=dict(size=8),
-    ))
-
-    last_month_dt = pd.Period(months_sorted[-1], freq="M")
-    proj_months = [(last_month_dt + i).strftime("%Y-%m") for i in range(1, 4)]
-
-    proj_chart.add_trace(go.Scatter(
-        name="Projected Sales",
-        x=[months_sorted[-1]] + proj_months,
-        y=[monthly_sales.get(months_sorted[-1], 0)] + list(np.maximum(analytics_projections["proj_sales"], 0)),
-        mode="lines+markers", line=dict(color=GREEN, width=3, dash="dash"),
-        marker=dict(size=8, symbol="diamond"),
-    ))
-    proj_chart.add_trace(go.Scatter(
-        name="Projected Net Revenue",
-        x=[months_sorted[-1]] + proj_months,
-        y=[monthly_net_revenue.get(months_sorted[-1], 0)] + list(np.maximum(analytics_projections["proj_net"], 0)),
-        mode="lines+markers", line=dict(color=ORANGE, width=3, dash="dash"),
-        marker=dict(size=8, symbol="diamond"),
-    ))
-
-    # Confidence band
-    proj_sales_arr = analytics_projections["proj_sales"]
-    std_dev = analytics_projections.get("residual_std", np.std([monthly_sales.get(m, 0) for m in months_sorted]))
-    upper = np.maximum(proj_sales_arr + std_dev, 0)
-    lower = np.maximum(proj_sales_arr - std_dev, 0)
-    proj_chart.add_trace(go.Scatter(
-        name="Upper Bound", x=proj_months, y=list(upper),
-        mode="lines", line=dict(width=0), showlegend=False,
-    ))
-    proj_chart.add_trace(go.Scatter(
-        name="Confidence Range", x=proj_months, y=list(lower),
-        mode="lines", line=dict(width=0), fill="tonexty", fillcolor="rgba(46,204,113,0.15)",
-    ))
-make_chart(proj_chart, 380)
-proj_chart.update_layout(title="Revenue Projection (Linear Regression, 3-Month Forecast)",
-    xaxis_title="Month", yaxis_title="Amount ($)")
-
-
-# --- TAB 4: SHIPPING CHARTS ---
-
-# Buyer paid vs cost comparison
-shipping_compare = go.Figure()
-shipping_compare.add_trace(go.Bar(
-    name="Buyers Paid", x=["Shipping"], y=[buyer_paid_shipping],
-    marker_color=GREEN, text=[f"${buyer_paid_shipping:,.2f}"], textposition="outside", width=0.3, offset=-0.15,
-))
-shipping_compare.add_trace(go.Bar(
-    name="Your Label Cost", x=["Shipping"], y=[total_shipping_cost],
-    marker_color=RED, text=[f"${total_shipping_cost:,.2f}"], textposition="outside", width=0.3, offset=0.15,
-))
-shipping_compare.add_annotation(
-    x="Shipping", y=max(buyer_paid_shipping, total_shipping_cost) + 200,
-    text=f"{'Loss' if shipping_profit < 0 else 'Profit'}: ${abs(shipping_profit):,.2f}",
-    showarrow=False, font=dict(size=18, color=RED if shipping_profit < 0 else GREEN, family="Arial Black"),
-)
-make_chart(shipping_compare, 340, False)
-shipping_compare.update_layout(title="Shipping: Buyer Paid vs Your Cost",
-    showlegend=True, yaxis_title="Amount ($)")
-
-# Shipping cost by type bar chart
-ship_type_fig = go.Figure()
-ship_type_names = []
-ship_type_vals = []
-ship_type_colors = []
-for nm, val, clr in [
-    (f"USPS Outbound ({usps_outbound_count})", usps_outbound, BLUE),
-    (f"USPS Return ({usps_return_count})", usps_return, RED),
-    (f"Asendia Intl ({asendia_count})", asendia_labels, PURPLE),
-    (f"Adjustments ({ship_adjust_count})", ship_adjustments, ORANGE),
-    (f"Insurance ({ship_insurance_count})", ship_insurance, TEAL),
-]:
-    if val > 0:
-        ship_type_names.append(nm)
-        ship_type_vals.append(val)
-        ship_type_colors.append(clr)
-
-if ship_credits != 0:
-    ship_type_names.append(f"Credits ({ship_credit_count})")
-    ship_type_vals.append(abs(ship_credits))
-    ship_type_colors.append(GREEN)
-
-ship_type_fig.add_trace(go.Bar(
-    x=ship_type_names, y=ship_type_vals, marker_color=ship_type_colors,
-    text=[f"${v:,.2f}" for v in ship_type_vals], textposition="outside",
-))
-make_chart(ship_type_fig, 340, False)
-ship_type_fig.update_layout(title="Shipping Cost by Type", yaxis_title="Amount ($)")
-
-# International analysis chart
-intl_fig = go.Figure()
-if asendia_count > 0:
-    intl_avg = asendia_labels / asendia_count
-    dom_avg = avg_outbound_label
-    intl_fig.add_trace(go.Bar(
-        x=["Domestic Avg Label", "International Avg Label"],
-        y=[dom_avg, intl_avg],
-        marker_color=[BLUE, PURPLE],
-        text=[f"${dom_avg:.2f}", f"${intl_avg:.2f}"], textposition="outside",
-    ))
-    intl_fig.add_annotation(
-        x="International Avg Label", y=intl_avg + 2,
-        text=f"{intl_avg / dom_avg:.1f}x more expensive" if dom_avg > 0 else "",
-        showarrow=False, font=dict(color=PINK, size=14),
+    make_chart(ppo_fig, 360)
+    ppo_fig.update_layout(
+        title="Avg Profit Per Order & AOV by Month", yaxis_title="Profit/Order ($)",
+        yaxis2=dict(title="AOV ($)", overlaying="y", side="right", showgrid=False),
     )
-make_chart(intl_fig, 300, False)
-intl_fig.update_layout(title="Domestic vs International Shipping Cost", yaxis_title="Avg Label Cost ($)")
 
+    # Extract latest PPO and daily profit metrics for context blocks
+    _last_ppo_m = ppo_months[-1] if ppo_months else "N/A"
+    _last_ppo_val = ppo_vals[-1] if ppo_vals else 0
+    _last_aov_val = aov_vals[-1] if aov_vals else 0
+    _daily_profit_avg = etsy_net / days_active if days_active else 0
+    _daily_rev_avg = gross_sales / days_active if days_active else 0
+    _daily_orders_avg = order_count / days_active if days_active else 0
+    _best_day_rev = daily_df["revenue"].max() if len(daily_df) else 0
+    _peak_orders_day = daily_df["orders"].max() if len(daily_df) else 0
+    _total_costs = gross_sales - etsy_net
+    _current_14d_profit_avg = daily_df["profit"].rolling(14, min_periods=1).mean().iloc[-1] if len(daily_df) >= 1 else 0
+    _aov_best_week = weekly_aov["aov"].max() if len(weekly_aov) else 0
+    _aov_worst_week = weekly_aov["aov"].min() if len(weekly_aov) else 0
+    _growth_pct = analytics_projections.get("growth_pct", 0)
+    _r2_sales = analytics_projections.get("r2_sales", 0)
+    _latest_month_rev = monthly_sales.get(months_sorted[-1], 0) if months_sorted else 0
+    _latest_month_net = monthly_net_revenue.get(months_sorted[-1], 0) if months_sorted else 0
+    _net_margin_overall = (etsy_net / gross_sales * 100) if gross_sales else 0
 
-# --- TAB 5: FINANCIALS CHARTS ---
+    # --- TAB 2: DEEP DIVE ADVANCED ANALYTICS ---
 
-# Top products bar chart
-top_n = 12
-top_products = product_revenue_est.head(top_n)
-product_fig = go.Figure(go.Bar(
-    y=top_products.index, x=top_products.values, orientation="h",
-    marker_color=TEAL, text=[f"${v:,.0f}" for v in top_products.values], textposition="outside",
-))
-make_chart(product_fig, 400, False)
-product_fig.update_layout(title=f"Top {top_n} Products (Est. Revenue)",
-    yaxis=dict(autorange="reversed"), margin=dict(l=300, t=50, b=30), xaxis_title="Estimated Revenue ($)")
+    # 8) Day-of-week analysis
+    _dow_names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+    _dow_revenue = daily_df.groupby(daily_df.index.map(lambda d: d.weekday()))["revenue"].mean()
+    _dow_orders = daily_df.groupby(daily_df.index.map(lambda d: d.weekday()))["orders"].mean()
+    _dow_profit = daily_df.groupby(daily_df.index.map(lambda d: d.weekday()))["profit"].mean()
+    _dow_rev_vals = [_dow_revenue.get(i, 0) for i in range(7)]
+    _dow_ord_vals = [_dow_orders.get(i, 0) for i in range(7)]
+    _dow_prof_vals = [_dow_profit.get(i, 0) for i in range(7)]
+    _best_dow = _dow_names[np.argmax(_dow_rev_vals)]
+    _worst_dow = _dow_names[np.argmin(_dow_rev_vals)]
 
+    dow_fig = make_subplots(specs=[[{"secondary_y": True}]])
+    dow_fig.add_trace(go.Bar(name="Avg Revenue", x=_dow_names, y=_dow_rev_vals,
+        marker_color=[GREEN if v == max(_dow_rev_vals) else f"{GREEN}" for v in _dow_rev_vals],
+        text=[f"${v:,.0f}" for v in _dow_rev_vals], textposition="outside"))
+    dow_fig.add_trace(go.Scatter(name="Avg Orders", x=_dow_names, y=_dow_ord_vals,
+        mode="lines+markers", line=dict(color=BLUE, width=2), marker=dict(size=8)), secondary_y=True)
+    dow_fig.add_trace(go.Scatter(name="Avg Profit", x=_dow_names, y=_dow_prof_vals,
+        mode="lines+markers", line=dict(color=ORANGE, width=2, dash="dot"), marker=dict(size=6)), secondary_y=True)
+    make_chart(dow_fig, 320)
+    dow_fig.update_layout(title="Day-of-Week Performance")
+    dow_fig.update_yaxes(title_text="Revenue ($)", secondary_y=False)
+    dow_fig.update_yaxes(title_text="Orders / Profit ($)", secondary_y=True, showgrid=False)
 
-# --- TAB 7: INVENTORY / COGS CHARTS ---
+    # 9) Revenue vs Inventory Spend overlay (monthly)
+    rev_inv_fig = make_subplots(specs=[[{"secondary_y": True}]])
+    _inv_months = sorted(set(months_sorted) | set(monthly_inv_spend.index.tolist()))
+    _inv_months = [m for m in months_sorted]  # keep to Etsy months for alignment
+    _inv_spend_vals = [monthly_inv_spend.get(m, 0) for m in _inv_months]
+    _inv_rev_vals = [monthly_sales.get(m, 0) for m in _inv_months]
+    _inv_cogs_ratio = [monthly_inv_spend.get(m, 0) / monthly_sales.get(m, 1) * 100 for m in _inv_months]
 
-# Monthly inventory spend bar chart
-inv_monthly_fig = go.Figure()
-inv_months_sorted = sorted(monthly_inv_spend.index)
-inv_monthly_fig.add_trace(go.Bar(
-    name="Inventory Spend", x=inv_months_sorted,
-    y=[monthly_inv_spend.get(m, 0) for m in inv_months_sorted],
-    marker_color=PURPLE,
-    text=[f"${monthly_inv_spend.get(m, 0):,.0f}" for m in inv_months_sorted],
-    textposition="outside",
-))
-make_chart(inv_monthly_fig, 360)
-inv_monthly_fig.update_layout(title="Monthly Supply Costs", yaxis_title="Amount ($)")
+    rev_inv_fig.add_trace(go.Bar(name="Monthly Revenue", x=_inv_months, y=_inv_rev_vals,
+        marker_color=GREEN, opacity=0.6))
+    rev_inv_fig.add_trace(go.Bar(name="Inventory Spend", x=_inv_months, y=_inv_spend_vals,
+        marker_color=PURPLE, opacity=0.8))
+    rev_inv_fig.add_trace(go.Scatter(name="Supply Cost Ratio %", x=_inv_months, y=_inv_cogs_ratio,
+        mode="lines+markers+text", text=[f"{v:.1f}%" for v in _inv_cogs_ratio],
+        textposition="top center", textfont=dict(color=ORANGE, size=10),
+        line=dict(color=ORANGE, width=3), marker=dict(size=8)), secondary_y=True)
+    make_chart(rev_inv_fig, 360)
+    rev_inv_fig.update_layout(title="Revenue vs Inventory Spend by Month", barmode="group")
+    rev_inv_fig.update_yaxes(title_text="Amount ($)", secondary_y=False)
+    rev_inv_fig.update_yaxes(title_text="Supply Cost Ratio (%)", secondary_y=True, showgrid=False)
 
-# Category breakdown donut
-inv_cat_fig = go.Figure()
-if len(biz_inv_by_category) > 0:
-    inv_cat_fig.add_trace(go.Pie(
-        labels=biz_inv_by_category.index.tolist(),
-        values=biz_inv_by_category.values.tolist(),
-        hole=0.45,
-        marker_colors=[BLUE, TEAL, ORANGE, RED, PURPLE, PINK, GREEN, CYAN][:len(biz_inv_by_category)],
-        textinfo="label+percent",
+    # 10) Inventory category breakdown (what you're spending on)
+    inv_cat_bar = go.Figure()
+    if len(biz_inv_by_category) > 0:
+        _cat_names = biz_inv_by_category.index.tolist()
+        _cat_vals = biz_inv_by_category.values.tolist()
+        _cat_colors = [PURPLE, TEAL, BLUE, GREEN, ORANGE, RED, PINK, CYAN, GRAY, DARKGRAY]
+        inv_cat_bar.add_trace(go.Bar(
+            x=_cat_names, y=_cat_vals,
+            marker_color=_cat_colors[:len(_cat_names)],
+            text=[f"${v:,.0f}" for v in _cat_vals], textposition="outside",
+        ))
+    make_chart(inv_cat_bar, 320, False)
+    inv_cat_bar.update_layout(title="Inventory Spend by Category", yaxis_title="Amount ($)",
+                              xaxis_tickangle=-25, xaxis_tickfont=dict(size=10))
+
+    # 11) Anomaly detection (z-score on daily revenue)
+    _daily_rev_mean = daily_df["revenue"].mean()
+    _daily_rev_std = daily_df["revenue"].std() if len(daily_df) > 1 else 1
+    daily_df["_z_score"] = (daily_df["revenue"] - _daily_rev_mean) / max(_daily_rev_std, 0.01)
+    _anomaly_high = daily_df[daily_df["_z_score"] > 2.0]
+    _anomaly_low = daily_df[(daily_df["_z_score"] < -1.5) & (daily_df["revenue"] > 0)]
+    _zero_days = daily_df[daily_df["revenue"] == 0]
+
+    anomaly_fig = go.Figure()
+    anomaly_fig.add_trace(go.Scatter(
+        name="Daily Revenue", x=daily_df.index, y=daily_df["revenue"],
+        mode="lines", line=dict(color=GRAY, width=1),
+    ))
+    anomaly_fig.add_hline(y=_daily_rev_mean, line_dash="dash", line_color=TEAL, line_width=1,
+        annotation_text=f"Mean: ${_daily_rev_mean:,.0f}", annotation_position="top left")
+    anomaly_fig.add_hline(y=_daily_rev_mean + 2 * _daily_rev_std, line_dash="dot", line_color=GREEN, line_width=1,
+        annotation_text="+2σ (spike)", annotation_position="top right")
+    anomaly_fig.add_hline(y=max(0, _daily_rev_mean - 1.5 * _daily_rev_std), line_dash="dot", line_color=RED, line_width=1,
+        annotation_text="-1.5σ (drop)", annotation_position="bottom right")
+    if len(_anomaly_high) > 0:
+        anomaly_fig.add_trace(go.Scatter(
+            name=f"Spikes ({len(_anomaly_high)})", x=_anomaly_high.index, y=_anomaly_high["revenue"],
+            mode="markers", marker=dict(color=GREEN, size=12, symbol="triangle-up"),
+        ))
+    if len(_anomaly_low) > 0:
+        anomaly_fig.add_trace(go.Scatter(
+            name=f"Drops ({len(_anomaly_low)})", x=_anomaly_low.index, y=_anomaly_low["revenue"],
+            mode="markers", marker=dict(color=RED, size=12, symbol="triangle-down"),
+        ))
+    if len(_zero_days) > 0:
+        anomaly_fig.add_trace(go.Scatter(
+            name=f"Zero Days ({len(_zero_days)})", x=_zero_days.index, y=[0] * len(_zero_days),
+            mode="markers", marker=dict(color=ORANGE, size=10, symbol="x"),
+        ))
+    make_chart(anomaly_fig, 340)
+    anomaly_fig.update_layout(title="Anomaly Detection (Statistical Outliers)", yaxis_title="Revenue ($)")
+
+    # 12) Product performance heatmap (top products by month)
+    _top_n_products = 8
+    _top_prod_names = product_revenue_est.head(_top_n_products).index.tolist()
+    # Build product-month revenue matrix from transaction fees
+    _prod_monthly = {}
+    for prod_name in _top_prod_names:
+        _pmask = prod_fees["Product"] == prod_name
+        _prod_month_fees = prod_fees[_pmask].groupby(
+            prod_fees[_pmask]["Date_Parsed"].dt.to_period("M").astype(str)
+        )["Net_Clean"].sum().abs()
+        _prod_monthly[prod_name[:25]] = {m: (_prod_month_fees.get(m, 0) / 0.065) for m in months_sorted}
+
+    if _prod_monthly:
+        _heat_products = list(_prod_monthly.keys())
+        _heat_z = [[_prod_monthly[p].get(m, 0) for m in months_sorted] for p in _heat_products]
+        product_heat = go.Figure(go.Heatmap(
+            z=_heat_z, x=months_sorted, y=_heat_products,
+            colorscale=[[0, "#0f0f1a"], [0.5, PURPLE], [1, GREEN]],
+            text=[[f"${v:,.0f}" for v in row] for row in _heat_z],
+            texttemplate="%{text}", textfont=dict(size=10, color=WHITE),
+            hoverongaps=False,
+        ))
+        make_chart(product_heat, 340, False)
+        product_heat.update_layout(title="Product Revenue Heatmap (Top 8 by Month)",
+                                   yaxis=dict(tickfont=dict(size=10)))
+    else:
+        product_heat = go.Figure()
+        product_heat.add_annotation(text="No product data available", showarrow=False)
+        make_chart(product_heat, 200, False)
+
+    # 13) Correlation: Ads Spend vs Sales (monthly)
+    corr_fig = go.Figure()
+    _corr_ad_vals = [monthly_marketing.get(m, 0) for m in months_sorted]
+    _corr_rev_vals = [monthly_sales.get(m, 0) for m in months_sorted]
+    corr_fig.add_trace(go.Scatter(
+        x=_corr_ad_vals, y=_corr_rev_vals, mode="markers+text",
+        text=months_sorted, textposition="top center", textfont=dict(size=9, color=GRAY),
+        marker=dict(color=CYAN, size=14, line=dict(color=WHITE, width=1)),
+    ))
+    # Fit line
+    if len(months_sorted) >= 3 and sum(_corr_ad_vals) > 0:
+        _corr_X = np.array(_corr_ad_vals).reshape(-1, 1)
+        _corr_y = np.array(_corr_rev_vals)
+        _corr_lr = LinearRegression().fit(_corr_X, _corr_y)
+        _corr_r2 = _corr_lr.score(_corr_X, _corr_y)
+        _corr_line_x = [min(_corr_ad_vals), max(_corr_ad_vals)]
+        _corr_line_y = [_corr_lr.predict([[v]])[0] for v in _corr_line_x]
+        corr_fig.add_trace(go.Scatter(
+            x=_corr_line_x, y=_corr_line_y, mode="lines",
+            line=dict(color=ORANGE, width=2, dash="dash"), name=f"R²={_corr_r2:.2f}",
+        ))
+    else:
+        _corr_r2 = 0
+    make_chart(corr_fig, 300, False)
+    corr_fig.update_layout(title="Ad Spend vs Revenue Correlation",
+                           xaxis_title="Monthly Ad Spend ($)", yaxis_title="Monthly Revenue ($)")
+
+    # 14) Unit economics waterfall (per-order breakdown)
+    _unit_rev = avg_order
+    _unit_fees = total_fees / order_count if order_count else 0
+    _unit_ship = total_shipping_cost / order_count if order_count else 0
+    _unit_ads = total_marketing / order_count if order_count else 0
+    _unit_refund = total_refunds / order_count if order_count else 0
+    _unit_cogs = true_inventory_cost / order_count if order_count else 0
+    _unit_profit = _unit_rev - _unit_fees - _unit_ship - _unit_ads - _unit_refund - _unit_cogs
+    _unit_margin = (_unit_profit / _unit_rev * 100) if _unit_rev else 0
+
+    unit_wf = go.Figure(go.Waterfall(
+        orientation="v",
+        measure=["absolute", "relative", "relative", "relative", "relative", "relative", "total"],
+        x=["Revenue", "Fees", "Shipping", "Ads", "Refunds", "Supplies", "Profit"],
+        y=[_unit_rev, -_unit_fees, -_unit_ship, -_unit_ads, -_unit_refund, -_unit_cogs, 0],
+        connector={"line": {"color": GRAY, "width": 1, "dash": "dot"}},
+        increasing={"marker": {"color": GREEN}},
+        decreasing={"marker": {"color": RED}},
+        totals={"marker": {"color": CYAN}},
+        text=[f"${abs(v):,.2f}" for v in [_unit_rev, _unit_fees, _unit_ship, _unit_ads, _unit_refund, _unit_cogs, _unit_profit]],
         textposition="outside",
     ))
-make_chart(inv_cat_fig, 380, False)
-inv_cat_fig.update_layout(title="Inventory by Category (Business Only)", showlegend=False)
+    make_chart(unit_wf, 340, False)
+    unit_wf.update_layout(title=f"Unit Economics: Average Order Breakdown (margin: {_unit_margin:.1f}%)",
+                          showlegend=False, yaxis_title="Per Order ($)")
 
-# Revenue vs COGS vs True Profit monthly bar chart
-rev_cogs_fig = go.Figure()
-all_inv_months = sorted(set(months_sorted) | set(inv_months_sorted))
-rev_cogs_fig.add_trace(go.Bar(
-    name="Revenue", x=all_inv_months,
-    y=[monthly_sales.get(m, 0) for m in all_inv_months],
-    marker_color=GREEN,
-))
-rev_cogs_fig.add_trace(go.Bar(
-    name="Supplies", x=all_inv_months,
-    y=[monthly_inv_spend.get(m, 0) for m in all_inv_months],
-    marker_color=PURPLE,
-))
-rev_cogs_fig.add_trace(go.Bar(
-    name="Etsy Expenses", x=all_inv_months,
-    y=[monthly_fees.get(m, 0) + monthly_shipping.get(m, 0) + monthly_marketing.get(m, 0) + monthly_refunds.get(m, 0)
-       for m in all_inv_months],
-    marker_color=RED,
-))
-true_profit_monthly = [
-    monthly_sales.get(m, 0) - monthly_fees.get(m, 0) - monthly_shipping.get(m, 0)
-    - monthly_marketing.get(m, 0) - monthly_refunds.get(m, 0) - monthly_inv_spend.get(m, 0)
-    for m in all_inv_months
-]
-rev_cogs_fig.add_trace(go.Scatter(
-    name="True Profit", x=all_inv_months, y=true_profit_monthly,
-    mode="lines+markers+text",
-    text=[f"${v:,.0f}" for v in true_profit_monthly],
-    textposition="top center", textfont=dict(color=ORANGE),
-    line=dict(color=ORANGE, width=3), marker=dict(size=10),
-))
-make_chart(rev_cogs_fig, 400)
-rev_cogs_fig.update_layout(title="Revenue vs Supplies vs Expenses vs Profit", barmode="group", yaxis_title="Amount ($)")
+    # 15) Inventory location split (Tulsa vs Texas)
+    loc_fig = go.Figure()
+    if tulsa_spend > 0 or texas_spend > 0:
+        loc_fig.add_trace(go.Bar(
+            name="Tulsa, OK", x=sorted(set(tulsa_monthly.index) | set(texas_monthly.index)),
+            y=[tulsa_monthly.get(m, 0) for m in sorted(set(tulsa_monthly.index) | set(texas_monthly.index))],
+            marker_color=TEAL,
+        ))
+        loc_fig.add_trace(go.Bar(
+            name="Texas", x=sorted(set(tulsa_monthly.index) | set(texas_monthly.index)),
+            y=[texas_monthly.get(m, 0) for m in sorted(set(tulsa_monthly.index) | set(texas_monthly.index))],
+            marker_color=ORANGE,
+        ))
+        make_chart(loc_fig, 300)
+        loc_fig.update_layout(title="Inventory Orders by Location & Month", barmode="stack",
+                              yaxis_title="Spend ($)")
+    else:
+        make_chart(loc_fig, 200, False)
 
-# --- LOCATION CHARTS ---
+    # 16) Cash flow timeline (deposits - expenses by month)
+    cashflow_fig = go.Figure()
+    _cf_months = sorted(bank_monthly.keys())
+    _cf_deposits = [bank_monthly[m]["deposits"] for m in _cf_months]
+    _cf_debits = [bank_monthly[m]["debits"] for m in _cf_months]
+    _cf_net = [bank_monthly[m]["deposits"] - bank_monthly[m]["debits"] for m in _cf_months]
+    _cf_cum = list(np.cumsum(_cf_net))
+    cashflow_fig.add_trace(go.Bar(name="Deposits", x=_cf_months, y=_cf_deposits, marker_color=GREEN, opacity=0.7))
+    cashflow_fig.add_trace(go.Bar(name="Expenses", x=_cf_months, y=[-d for d in _cf_debits], marker_color=RED, opacity=0.7))
+    cashflow_fig.add_trace(go.Scatter(name="Net Cash Flow", x=_cf_months, y=_cf_net,
+        mode="lines+markers+text", text=[f"${v:,.0f}" for v in _cf_net],
+        textposition="top center", textfont=dict(color=CYAN, size=10),
+        line=dict(color=CYAN, width=3), marker=dict(size=8)))
+    make_chart(cashflow_fig, 340)
+    cashflow_fig.update_layout(title="Cash Flow by Month (Bank Deposits vs Expenses)", barmode="relative",
+                               yaxis_title="Amount ($)")
 
-# TJ vs Braden monthly comparison
-loc_monthly_fig = go.Figure()
-all_loc_months = sorted(set(list(tulsa_monthly.index) + list(texas_monthly.index)))
-loc_monthly_fig.add_trace(go.Bar(
-    name="TJ (Tulsa)", x=all_loc_months,
-    y=[tulsa_monthly.get(m, 0) for m in all_loc_months],
-    marker_color=TEAL,
-    text=[f"${tulsa_monthly.get(m, 0):,.0f}" for m in all_loc_months],
-    textposition="outside",
-))
-loc_monthly_fig.add_trace(go.Bar(
-    name="Braden (TX)", x=all_loc_months,
-    y=[texas_monthly.get(m, 0) for m in all_loc_months],
-    marker_color=ORANGE,
-    text=[f"${texas_monthly.get(m, 0):,.0f}" for m in all_loc_months],
-    textposition="outside",
-))
-make_chart(loc_monthly_fig, 380)
-loc_monthly_fig.update_layout(title="Monthly Inventory Spend by Location", barmode="group", yaxis_title="Amount ($)")
+    # 17) Break-even analysis
+    _monthly_fixed = (bank_biz_expense_total + total_marketing) / _val_months_operating if _val_months_operating else 0
+    _contrib_margin_pct = (gross_sales - total_fees - total_shipping_cost - total_refunds - true_inventory_cost) / gross_sales if gross_sales else 0
+    _breakeven_monthly = _monthly_fixed / _contrib_margin_pct if _contrib_margin_pct > 0 else 0
+    _breakeven_daily = _breakeven_monthly / 30
+    _breakeven_orders = _breakeven_monthly / avg_order if avg_order > 0 else 0
 
-# TJ (Tulsa) category donut
-tulsa_cat_fig = go.Figure()
-if len(tulsa_by_cat) > 0:
-    tulsa_cat_fig.add_trace(go.Pie(
-        labels=tulsa_by_cat.index.tolist(), values=tulsa_by_cat.values.tolist(),
-        hole=0.45, marker_colors=[TEAL, BLUE, GREEN, PURPLE, CYAN, PINK, ORANGE, RED][:len(tulsa_by_cat)],
-        textinfo="label+percent", textposition="outside",
+    # 18) Supplier spend analysis
+    _supplier_spend = {}
+    if len(INV_ITEMS) > 0:
+        for seller, grp in INV_ITEMS.groupby("seller"):
+            if seller != "Unknown":
+                _supplier_spend[seller] = {
+                    "total": grp["total"].sum(),
+                    "items": len(grp),
+                    "avg_price": grp["price"].mean(),
+                }
+    _supplier_spend = dict(sorted(_supplier_spend.items(), key=lambda x: -x[1]["total"]))
+
+
+    # --- TAB 3: AI ANALYTICS BOT CHARTS ---
+
+    # Revenue projection chart
+    proj_chart = go.Figure()
+    if "proj_sales" in analytics_projections:
+        proj_chart.add_trace(go.Scatter(
+            name="Actual Sales", x=months_sorted,
+            y=[monthly_sales.get(m, 0) for m in months_sorted],
+            mode="lines+markers", line=dict(color=GREEN, width=3), marker=dict(size=8),
+        ))
+        proj_chart.add_trace(go.Scatter(
+            name="Actual Net Revenue", x=months_sorted,
+            y=[monthly_net_revenue.get(m, 0) for m in months_sorted],
+            mode="lines+markers", line=dict(color=ORANGE, width=3), marker=dict(size=8),
+        ))
+
+        last_month_dt = pd.Period(months_sorted[-1], freq="M")
+        proj_months = [(last_month_dt + i).strftime("%Y-%m") for i in range(1, 4)]
+
+        proj_chart.add_trace(go.Scatter(
+            name="Projected Sales",
+            x=[months_sorted[-1]] + proj_months,
+            y=[monthly_sales.get(months_sorted[-1], 0)] + list(np.maximum(analytics_projections["proj_sales"], 0)),
+            mode="lines+markers", line=dict(color=GREEN, width=3, dash="dash"),
+            marker=dict(size=8, symbol="diamond"),
+        ))
+        proj_chart.add_trace(go.Scatter(
+            name="Projected Net Revenue",
+            x=[months_sorted[-1]] + proj_months,
+            y=[monthly_net_revenue.get(months_sorted[-1], 0)] + list(np.maximum(analytics_projections["proj_net"], 0)),
+            mode="lines+markers", line=dict(color=ORANGE, width=3, dash="dash"),
+            marker=dict(size=8, symbol="diamond"),
+        ))
+
+        # Confidence band
+        proj_sales_arr = analytics_projections["proj_sales"]
+        std_dev = analytics_projections.get("residual_std", np.std([monthly_sales.get(m, 0) for m in months_sorted]))
+        upper = np.maximum(proj_sales_arr + std_dev, 0)
+        lower = np.maximum(proj_sales_arr - std_dev, 0)
+        proj_chart.add_trace(go.Scatter(
+            name="Upper Bound", x=proj_months, y=list(upper),
+            mode="lines", line=dict(width=0), showlegend=False,
+        ))
+        proj_chart.add_trace(go.Scatter(
+            name="Confidence Range", x=proj_months, y=list(lower),
+            mode="lines", line=dict(width=0), fill="tonexty", fillcolor="rgba(46,204,113,0.15)",
+        ))
+    make_chart(proj_chart, 380)
+    proj_chart.update_layout(title="Revenue Projection (Linear Regression, 3-Month Forecast)",
+        xaxis_title="Month", yaxis_title="Amount ($)")
+
+
+    # --- TAB 4: SHIPPING CHARTS ---
+
+    # Buyer paid vs cost comparison
+    shipping_compare = go.Figure()
+    shipping_compare.add_trace(go.Bar(
+        name="Buyers Paid", x=["Shipping"], y=[buyer_paid_shipping],
+        marker_color=GREEN, text=[f"${buyer_paid_shipping:,.2f}"], textposition="outside", width=0.3, offset=-0.15,
     ))
-make_chart(tulsa_cat_fig, 340, False)
-tulsa_cat_fig.update_layout(title="TJ (Tulsa) - Categories", showlegend=False)
-
-# Braden (Texas) category donut
-texas_cat_fig = go.Figure()
-if len(texas_by_cat) > 0:
-    texas_cat_fig.add_trace(go.Pie(
-        labels=texas_by_cat.index.tolist(), values=texas_by_cat.values.tolist(),
-        hole=0.45, marker_colors=[ORANGE, RED, PURPLE, BLUE, TEAL, PINK, GREEN, CYAN][:len(texas_by_cat)],
-        textinfo="label+percent", textposition="outside",
+    shipping_compare.add_trace(go.Bar(
+        name="Your Label Cost", x=["Shipping"], y=[total_shipping_cost],
+        marker_color=RED, text=[f"${total_shipping_cost:,.2f}"], textposition="outside", width=0.3, offset=0.15,
     ))
-make_chart(texas_cat_fig, 340, False)
-texas_cat_fig.update_layout(title="Braden (Texas) - Categories", showlegend=False)
+    shipping_compare.add_annotation(
+        x="Shipping", y=max(buyer_paid_shipping, total_shipping_cost) + 200,
+        text=f"{'Loss' if shipping_profit < 0 else 'Profit'}: ${abs(shipping_profit):,.2f}",
+        showarrow=False, font=dict(size=18, color=RED if shipping_profit < 0 else GREEN, family="Arial Black"),
+    )
+    make_chart(shipping_compare, 340, False)
+    shipping_compare.update_layout(title="Shipping: Buyer Paid vs Your Cost",
+        showlegend=True, yaxis_title="Amount ($)")
 
-# --- TAB 8: BANK / CASH FLOW CHARTS ---
+    # Shipping cost by type bar chart
+    ship_type_fig = go.Figure()
+    ship_type_names = []
+    ship_type_vals = []
+    ship_type_colors = []
+    for nm, val, clr in [
+        (f"USPS Outbound ({usps_outbound_count})", usps_outbound, BLUE),
+        (f"USPS Return ({usps_return_count})", usps_return, RED),
+        (f"Asendia Intl ({asendia_count})", asendia_labels, PURPLE),
+        (f"Adjustments ({ship_adjust_count})", ship_adjustments, ORANGE),
+        (f"Insurance ({ship_insurance_count})", ship_insurance, TEAL),
+    ]:
+        if val > 0:
+            ship_type_names.append(nm)
+            ship_type_vals.append(val)
+            ship_type_colors.append(clr)
 
-# Monthly bar: Dec vs Jan deposits/debits with net line
-bank_months_sorted = sorted(bank_monthly.keys())
-_month_abbr = {"01": "Jan", "02": "Feb", "03": "Mar", "04": "Apr", "05": "May", "06": "Jun",
-               "07": "Jul", "08": "Aug", "09": "Sep", "10": "Oct", "11": "Nov", "12": "Dec"}
-BANK_MONTH_NAMES = {k: f"{_month_abbr.get(k.split('-')[1], k.split('-')[1])} {k.split('-')[0]}" for k in bank_monthly}
-bank_month_labels = [BANK_MONTH_NAMES.get(m, m) for m in bank_months_sorted]
-bank_month_deps = [bank_monthly[m]["deposits"] for m in bank_months_sorted]
-bank_month_debs = [bank_monthly[m]["debits"] for m in bank_months_sorted]
-bank_month_nets = [d - w for d, w in zip(bank_month_deps, bank_month_debs)]
+    if ship_credits != 0:
+        ship_type_names.append(f"Credits ({ship_credit_count})")
+        ship_type_vals.append(abs(ship_credits))
+        ship_type_colors.append(GREEN)
 
-bank_monthly_fig = go.Figure()
-bank_monthly_fig.add_trace(go.Bar(
-    name="Deposits", x=bank_month_labels, y=bank_month_deps,
-    marker_color=GREEN, text=[f"${v:,.0f}" for v in bank_month_deps], textposition="outside",
-))
-bank_monthly_fig.add_trace(go.Bar(
-    name="Debits", x=bank_month_labels, y=bank_month_debs,
-    marker_color=RED, text=[f"${v:,.0f}" for v in bank_month_debs], textposition="outside",
-))
-bank_monthly_fig.add_trace(go.Scatter(
-    name="Net Cash Flow", x=bank_month_labels, y=bank_month_nets,
-    mode="lines+markers+text", line=dict(color=CYAN, width=3),
-    marker=dict(size=10), text=[f"${v:,.0f}" for v in bank_month_nets], textposition="top center",
-    textfont=dict(color=CYAN),
-))
-make_chart(bank_monthly_fig, 380)
-bank_monthly_fig.update_layout(
-    title="Monthly Cash Flow — Deposits vs Debits",
-    barmode="group", yaxis_title="Amount ($)",
-)
+    ship_type_fig.add_trace(go.Bar(
+        x=ship_type_names, y=ship_type_vals, marker_color=ship_type_colors,
+        text=[f"${v:,.2f}" for v in ship_type_vals], textposition="outside",
+    ))
+    make_chart(ship_type_fig, 340, False)
+    ship_type_fig.update_layout(title="Shipping Cost by Type", yaxis_title="Amount ($)")
 
-# --- SANKEY DIAGRAM (module level for reuse) ---
-_etsy_took = total_fees + total_shipping_cost + total_marketing + total_taxes + total_refunds + total_buyer_fees
+    # International analysis chart
+    intl_fig = go.Figure()
+    if asendia_count > 0:
+        intl_avg = asendia_labels / asendia_count
+        dom_avg = avg_outbound_label
+        intl_fig.add_trace(go.Bar(
+            x=["Domestic Avg Label", "International Avg Label"],
+            y=[dom_avg, intl_avg],
+            marker_color=[BLUE, PURPLE],
+            text=[f"${dom_avg:.2f}", f"${intl_avg:.2f}"], textposition="outside",
+        ))
+        intl_fig.add_annotation(
+            x="International Avg Label", y=intl_avg + 2,
+            text=f"{intl_avg / dom_avg:.1f}x more expensive" if dom_avg > 0 else "",
+            showarrow=False, font=dict(color=PINK, size=14),
+        )
+    make_chart(intl_fig, 300, False)
+    intl_fig.update_layout(title="Domestic vs International Shipping Cost", yaxis_title="Avg Label Cost ($)")
 
-sankey_node_labels = [
-    f"Customers Paid\n${gross_sales:,.0f}",
-    f"Etsy Takes\n-${_etsy_took:,.0f}",
-    f"Deposited to Bank\n${etsy_net_earned:,.0f}",
-    f"Business Expenses\n${bank_all_expenses:,.0f}",
-    f"Owner Draws\n${bank_owner_draw_total:,.0f}",
-    f"Cash On Hand\n${bank_cash_on_hand:,.0f}",
-    f"Prior Bank Activity\n${old_bank_receipted + bank_unaccounted + etsy_csv_gap:,.0f}",
-    f"Amazon Inventory\n${bank_by_cat.get('Amazon Inventory', 0):,.0f}",
-    f"AliExpress\n${bank_by_cat.get('AliExpress Supplies', 0):,.0f}",
-    f"Best Buy CC\n${bank_by_cat.get('Business Credit Card', 0):,.0f}",
-    f"Etsy Bank Fees\n${bank_by_cat.get('Etsy Fees', 0):,.0f}",
-    f"Craft Supplies\n${bank_by_cat.get('Craft Supplies', 0):,.0f}",
-    f"Subscriptions\n${bank_by_cat.get('Subscriptions', 0):,.0f}",
-    f"Shipping Supplies\n${bank_by_cat.get('Shipping', 0):,.0f}",
-    f"TJ (Owner)\n${bank_by_cat.get('Owner Draw - Tulsa', 0):,.0f}",
-    f"Braden (Owner)\n${bank_by_cat.get('Owner Draw - Texas', 0):,.0f}",
-    f"Capital One Bank\n${bank_net_cash:,.0f}",
-    f"Etsy Account\n${etsy_balance:,.0f}",
-    f"Prior Bank Receipts\n${old_bank_receipted:,.0f}",
-    f"Untracked Etsy\n${etsy_csv_gap:,.0f}",
-    f"Unmatched Bank\n${bank_unaccounted:,.0f}",
-    f"Fees\n${abs(total_fees):,.0f}",
-    f"Shipping Labels\n${abs(total_shipping_cost):,.0f}",
-    f"Ads/Marketing\n${abs(total_marketing):,.0f}",
-    f"Sales Tax\n${abs(total_taxes):,.0f}",
-    f"Refunds\n${abs(total_refunds + total_buyer_fees):,.0f}",
-]
-sankey_node_colors = [
-    GREEN, RED, CYAN, "#ff5252", ORANGE, GREEN, "#b71c1c",
-    ORANGE, "#e91e63", BLUE, PURPLE, TEAL, CYAN, BLUE,
-    "#ffb74d", "#ff9800", GREEN, TEAL, ORANGE, ORANGE,
-    RED, RED, RED, RED, RED, "#b71c1c",
-]
-sankey_sources = [0, 0,  2, 2, 2, 2,  3, 3, 3, 3, 3, 3, 3,  4, 4,  5, 5,  6, 6, 6,  1, 1, 1, 1, 1]
-sankey_targets = [1, 2,  3, 4, 5, 6,  7, 8, 9,10,11,12,13, 14,15, 16,17, 18,25,19, 20,21,22,23,24]
-sankey_values = [
-    _etsy_took, etsy_net_earned,
-    bank_all_expenses, bank_owner_draw_total, bank_cash_on_hand, old_bank_receipted + bank_unaccounted + etsy_csv_gap,
-    bank_by_cat.get("Amazon Inventory", 0), bank_by_cat.get("AliExpress Supplies", 0),
-    bank_by_cat.get("Business Credit Card", 0), bank_by_cat.get("Etsy Fees", 0),
-    bank_by_cat.get("Craft Supplies", 0), bank_by_cat.get("Subscriptions", 0),
-    bank_by_cat.get("Shipping", 0),
-    bank_by_cat.get("Owner Draw - Tulsa", 0), bank_by_cat.get("Owner Draw - Texas", 0),
-    bank_net_cash, etsy_balance,
-    old_bank_receipted, max(bank_unaccounted, 0.01), max(etsy_csv_gap, 0.01),
-    abs(total_fees), abs(total_shipping_cost), abs(total_marketing),
-    abs(total_taxes), abs(total_refunds + total_buyer_fees),
-]
-sankey_link_colors = [
-    "rgba(244,67,54,0.25)", "rgba(0,229,255,0.25)",
-    "rgba(255,82,82,0.2)", "rgba(255,152,0,0.2)", "rgba(76,175,80,0.2)", "rgba(183,28,28,0.2)",
-    "rgba(255,152,0,0.15)", "rgba(233,30,99,0.15)", "rgba(33,150,243,0.15)",
-    "rgba(156,39,176,0.15)", "rgba(0,150,136,0.15)", "rgba(0,229,255,0.15)", "rgba(33,150,243,0.15)",
-    "rgba(255,183,77,0.2)", "rgba(255,152,0,0.2)",
-    "rgba(76,175,80,0.2)", "rgba(0,150,136,0.2)",
-    "rgba(255,152,0,0.2)", "rgba(183,28,28,0.2)", "rgba(255,152,0,0.15)",
-    "rgba(244,67,54,0.15)", "rgba(244,67,54,0.15)", "rgba(244,67,54,0.15)",
-    "rgba(244,67,54,0.15)", "rgba(244,67,54,0.15)",
-]
 
-sankey_fig = go.Figure(go.Sankey(
-    arrangement="snap",
-    node=dict(pad=20, thickness=25, label=sankey_node_labels, color=sankey_node_colors,
-              line=dict(color="rgba(255,255,255,0.12)", width=1)),
-    link=dict(source=sankey_sources, target=sankey_targets, value=sankey_values, color=sankey_link_colors),
-))
-sankey_fig.update_layout(
-    font=dict(size=11, color=WHITE, family="monospace"),
-    paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-    margin=dict(l=10, r=10, t=40, b=10), height=550,
-    title=dict(text="WHERE EVERY DOLLAR WENT", font=dict(size=16, color=CYAN)),
-)
+    # --- TAB 5: FINANCIALS CHARTS ---
 
+    # Top products bar chart
+    top_n = 12
+    top_products = product_revenue_est.head(top_n)
+    product_fig = go.Figure(go.Bar(
+        y=top_products.index, x=top_products.values, orientation="h",
+        marker_color=TEAL, text=[f"${v:,.0f}" for v in top_products.values], textposition="outside",
+    ))
+    make_chart(product_fig, 400, False)
+    product_fig.update_layout(title=f"Top {top_n} Products (Est. Revenue)",
+        yaxis=dict(autorange="reversed"), margin=dict(l=300, t=50, b=30), xaxis_title="Estimated Revenue ($)")
+
+
+    # --- TAB 7: INVENTORY / COGS CHARTS ---
+
+    # Monthly inventory spend bar chart
+    inv_monthly_fig = go.Figure()
+    inv_months_sorted = sorted(monthly_inv_spend.index)
+    inv_monthly_fig.add_trace(go.Bar(
+        name="Inventory Spend", x=inv_months_sorted,
+        y=[monthly_inv_spend.get(m, 0) for m in inv_months_sorted],
+        marker_color=PURPLE,
+        text=[f"${monthly_inv_spend.get(m, 0):,.0f}" for m in inv_months_sorted],
+        textposition="outside",
+    ))
+    make_chart(inv_monthly_fig, 360)
+    inv_monthly_fig.update_layout(title="Monthly Supply Costs", yaxis_title="Amount ($)")
+
+    # Category breakdown donut
+    inv_cat_fig = go.Figure()
+    if len(biz_inv_by_category) > 0:
+        inv_cat_fig.add_trace(go.Pie(
+            labels=biz_inv_by_category.index.tolist(),
+            values=biz_inv_by_category.values.tolist(),
+            hole=0.45,
+            marker_colors=[BLUE, TEAL, ORANGE, RED, PURPLE, PINK, GREEN, CYAN][:len(biz_inv_by_category)],
+            textinfo="label+percent",
+            textposition="outside",
+        ))
+    make_chart(inv_cat_fig, 380, False)
+    inv_cat_fig.update_layout(title="Inventory by Category (Business Only)", showlegend=False)
+
+    # Revenue vs COGS vs True Profit monthly bar chart
+    rev_cogs_fig = go.Figure()
+    all_inv_months = sorted(set(months_sorted) | set(inv_months_sorted))
+    rev_cogs_fig.add_trace(go.Bar(
+        name="Revenue", x=all_inv_months,
+        y=[monthly_sales.get(m, 0) for m in all_inv_months],
+        marker_color=GREEN,
+    ))
+    rev_cogs_fig.add_trace(go.Bar(
+        name="Supplies", x=all_inv_months,
+        y=[monthly_inv_spend.get(m, 0) for m in all_inv_months],
+        marker_color=PURPLE,
+    ))
+    rev_cogs_fig.add_trace(go.Bar(
+        name="Etsy Expenses", x=all_inv_months,
+        y=[monthly_fees.get(m, 0) + monthly_shipping.get(m, 0) + monthly_marketing.get(m, 0) + monthly_refunds.get(m, 0)
+           for m in all_inv_months],
+        marker_color=RED,
+    ))
+    true_profit_monthly = [
+        monthly_sales.get(m, 0) - monthly_fees.get(m, 0) - monthly_shipping.get(m, 0)
+        - monthly_marketing.get(m, 0) - monthly_refunds.get(m, 0) - monthly_inv_spend.get(m, 0)
+        for m in all_inv_months
+    ]
+    rev_cogs_fig.add_trace(go.Scatter(
+        name="True Profit", x=all_inv_months, y=true_profit_monthly,
+        mode="lines+markers+text",
+        text=[f"${v:,.0f}" for v in true_profit_monthly],
+        textposition="top center", textfont=dict(color=ORANGE),
+        line=dict(color=ORANGE, width=3), marker=dict(size=10),
+    ))
+    make_chart(rev_cogs_fig, 400)
+    rev_cogs_fig.update_layout(title="Revenue vs Supplies vs Expenses vs Profit", barmode="group", yaxis_title="Amount ($)")
+
+    # --- LOCATION CHARTS ---
+
+    # TJ vs Braden monthly comparison
+    loc_monthly_fig = go.Figure()
+    all_loc_months = sorted(set(list(tulsa_monthly.index) + list(texas_monthly.index)))
+    loc_monthly_fig.add_trace(go.Bar(
+        name="TJ (Tulsa)", x=all_loc_months,
+        y=[tulsa_monthly.get(m, 0) for m in all_loc_months],
+        marker_color=TEAL,
+        text=[f"${tulsa_monthly.get(m, 0):,.0f}" for m in all_loc_months],
+        textposition="outside",
+    ))
+    loc_monthly_fig.add_trace(go.Bar(
+        name="Braden (TX)", x=all_loc_months,
+        y=[texas_monthly.get(m, 0) for m in all_loc_months],
+        marker_color=ORANGE,
+        text=[f"${texas_monthly.get(m, 0):,.0f}" for m in all_loc_months],
+        textposition="outside",
+    ))
+    make_chart(loc_monthly_fig, 380)
+    loc_monthly_fig.update_layout(title="Monthly Inventory Spend by Location", barmode="group", yaxis_title="Amount ($)")
+
+    # TJ (Tulsa) category donut
+    tulsa_cat_fig = go.Figure()
+    if len(tulsa_by_cat) > 0:
+        tulsa_cat_fig.add_trace(go.Pie(
+            labels=tulsa_by_cat.index.tolist(), values=tulsa_by_cat.values.tolist(),
+            hole=0.45, marker_colors=[TEAL, BLUE, GREEN, PURPLE, CYAN, PINK, ORANGE, RED][:len(tulsa_by_cat)],
+            textinfo="label+percent", textposition="outside",
+        ))
+    make_chart(tulsa_cat_fig, 340, False)
+    tulsa_cat_fig.update_layout(title="TJ (Tulsa) - Categories", showlegend=False)
+
+    # Braden (Texas) category donut
+    texas_cat_fig = go.Figure()
+    if len(texas_by_cat) > 0:
+        texas_cat_fig.add_trace(go.Pie(
+            labels=texas_by_cat.index.tolist(), values=texas_by_cat.values.tolist(),
+            hole=0.45, marker_colors=[ORANGE, RED, PURPLE, BLUE, TEAL, PINK, GREEN, CYAN][:len(texas_by_cat)],
+            textinfo="label+percent", textposition="outside",
+        ))
+    make_chart(texas_cat_fig, 340, False)
+    texas_cat_fig.update_layout(title="Braden (Texas) - Categories", showlegend=False)
+
+    # --- TAB 8: BANK / CASH FLOW CHARTS ---
+
+    # Monthly bar: Dec vs Jan deposits/debits with net line
+    bank_months_sorted = sorted(bank_monthly.keys())
+    _month_abbr = {"01": "Jan", "02": "Feb", "03": "Mar", "04": "Apr", "05": "May", "06": "Jun",
+                   "07": "Jul", "08": "Aug", "09": "Sep", "10": "Oct", "11": "Nov", "12": "Dec"}
+    BANK_MONTH_NAMES = {k: f"{_month_abbr.get(k.split('-')[1], k.split('-')[1])} {k.split('-')[0]}" for k in bank_monthly}
+    bank_month_labels = [BANK_MONTH_NAMES.get(m, m) for m in bank_months_sorted]
+    bank_month_deps = [bank_monthly[m]["deposits"] for m in bank_months_sorted]
+    bank_month_debs = [bank_monthly[m]["debits"] for m in bank_months_sorted]
+    bank_month_nets = [d - w for d, w in zip(bank_month_deps, bank_month_debs)]
+
+    bank_monthly_fig = go.Figure()
+    bank_monthly_fig.add_trace(go.Bar(
+        name="Deposits", x=bank_month_labels, y=bank_month_deps,
+        marker_color=GREEN, text=[f"${v:,.0f}" for v in bank_month_deps], textposition="outside",
+    ))
+    bank_monthly_fig.add_trace(go.Bar(
+        name="Debits", x=bank_month_labels, y=bank_month_debs,
+        marker_color=RED, text=[f"${v:,.0f}" for v in bank_month_debs], textposition="outside",
+    ))
+    bank_monthly_fig.add_trace(go.Scatter(
+        name="Net Cash Flow", x=bank_month_labels, y=bank_month_nets,
+        mode="lines+markers+text", line=dict(color=CYAN, width=3),
+        marker=dict(size=10), text=[f"${v:,.0f}" for v in bank_month_nets], textposition="top center",
+        textfont=dict(color=CYAN),
+    ))
+    make_chart(bank_monthly_fig, 380)
+    bank_monthly_fig.update_layout(
+        title="Monthly Cash Flow — Deposits vs Debits",
+        barmode="group", yaxis_title="Amount ($)",
+    )
+
+    # --- SANKEY DIAGRAM (module level for reuse) ---
+    _etsy_took = total_fees + total_shipping_cost + total_marketing + total_taxes + total_refunds + total_buyer_fees
+
+    sankey_node_labels = [
+        f"Customers Paid\n${gross_sales:,.0f}",
+        f"Etsy Takes\n-${_etsy_took:,.0f}",
+        f"Deposited to Bank\n${etsy_net_earned:,.0f}",
+        f"Business Expenses\n${bank_all_expenses:,.0f}",
+        f"Owner Draws\n${bank_owner_draw_total:,.0f}",
+        f"Cash On Hand\n${bank_cash_on_hand:,.0f}",
+        f"Prior Bank Activity\n${old_bank_receipted + bank_unaccounted + etsy_csv_gap:,.0f}",
+        f"Amazon Inventory\n${bank_by_cat.get('Amazon Inventory', 0):,.0f}",
+        f"AliExpress\n${bank_by_cat.get('AliExpress Supplies', 0):,.0f}",
+        f"Best Buy CC\n${bank_by_cat.get('Business Credit Card', 0):,.0f}",
+        f"Etsy Bank Fees\n${bank_by_cat.get('Etsy Fees', 0):,.0f}",
+        f"Craft Supplies\n${bank_by_cat.get('Craft Supplies', 0):,.0f}",
+        f"Subscriptions\n${bank_by_cat.get('Subscriptions', 0):,.0f}",
+        f"Shipping Supplies\n${bank_by_cat.get('Shipping', 0):,.0f}",
+        f"TJ (Owner)\n${bank_by_cat.get('Owner Draw - Tulsa', 0):,.0f}",
+        f"Braden (Owner)\n${bank_by_cat.get('Owner Draw - Texas', 0):,.0f}",
+        f"Capital One Bank\n${bank_net_cash:,.0f}",
+        f"Etsy Account\n${etsy_balance:,.0f}",
+        f"Prior Bank Receipts\n${old_bank_receipted:,.0f}",
+        f"Untracked Etsy\n${etsy_csv_gap:,.0f}",
+        f"Unmatched Bank\n${bank_unaccounted:,.0f}",
+        f"Fees\n${abs(total_fees):,.0f}",
+        f"Shipping Labels\n${abs(total_shipping_cost):,.0f}",
+        f"Ads/Marketing\n${abs(total_marketing):,.0f}",
+        f"Sales Tax\n${abs(total_taxes):,.0f}",
+        f"Refunds\n${abs(total_refunds + total_buyer_fees):,.0f}",
+    ]
+    sankey_node_colors = [
+        GREEN, RED, CYAN, "#ff5252", ORANGE, GREEN, "#b71c1c",
+        ORANGE, "#e91e63", BLUE, PURPLE, TEAL, CYAN, BLUE,
+        "#ffb74d", "#ff9800", GREEN, TEAL, ORANGE, ORANGE,
+        RED, RED, RED, RED, RED, "#b71c1c",
+    ]
+    sankey_sources = [0, 0,  2, 2, 2, 2,  3, 3, 3, 3, 3, 3, 3,  4, 4,  5, 5,  6, 6, 6,  1, 1, 1, 1, 1]
+    sankey_targets = [1, 2,  3, 4, 5, 6,  7, 8, 9,10,11,12,13, 14,15, 16,17, 18,25,19, 20,21,22,23,24]
+    sankey_values = [
+        _etsy_took, etsy_net_earned,
+        bank_all_expenses, bank_owner_draw_total, bank_cash_on_hand, old_bank_receipted + bank_unaccounted + etsy_csv_gap,
+        bank_by_cat.get("Amazon Inventory", 0), bank_by_cat.get("AliExpress Supplies", 0),
+        bank_by_cat.get("Business Credit Card", 0), bank_by_cat.get("Etsy Fees", 0),
+        bank_by_cat.get("Craft Supplies", 0), bank_by_cat.get("Subscriptions", 0),
+        bank_by_cat.get("Shipping", 0),
+        bank_by_cat.get("Owner Draw - Tulsa", 0), bank_by_cat.get("Owner Draw - Texas", 0),
+        bank_net_cash, etsy_balance,
+        old_bank_receipted, max(bank_unaccounted, 0.01), max(etsy_csv_gap, 0.01),
+        abs(total_fees), abs(total_shipping_cost), abs(total_marketing),
+        abs(total_taxes), abs(total_refunds + total_buyer_fees),
+    ]
+    sankey_link_colors = [
+        "rgba(244,67,54,0.25)", "rgba(0,229,255,0.25)",
+        "rgba(255,82,82,0.2)", "rgba(255,152,0,0.2)", "rgba(76,175,80,0.2)", "rgba(183,28,28,0.2)",
+        "rgba(255,152,0,0.15)", "rgba(233,30,99,0.15)", "rgba(33,150,243,0.15)",
+        "rgba(156,39,176,0.15)", "rgba(0,150,136,0.15)", "rgba(0,229,255,0.15)", "rgba(33,150,243,0.15)",
+        "rgba(255,183,77,0.2)", "rgba(255,152,0,0.2)",
+        "rgba(76,175,80,0.2)", "rgba(0,150,136,0.2)",
+        "rgba(255,152,0,0.2)", "rgba(183,28,28,0.2)", "rgba(255,152,0,0.15)",
+        "rgba(244,67,54,0.15)", "rgba(244,67,54,0.15)", "rgba(244,67,54,0.15)",
+        "rgba(244,67,54,0.15)", "rgba(244,67,54,0.15)",
+    ]
+
+    sankey_fig = go.Figure(go.Sankey(
+        arrangement="snap",
+        node=dict(pad=20, thickness=25, label=sankey_node_labels, color=sankey_node_colors,
+                  line=dict(color="rgba(255,255,255,0.12)", width=1)),
+        link=dict(source=sankey_sources, target=sankey_targets, value=sankey_values, color=sankey_link_colors),
+    ))
+    sankey_fig.update_layout(
+        font=dict(size=11, color=WHITE, family="monospace"),
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        margin=dict(l=10, r=10, t=40, b=10), height=550,
+        title=dict(text="WHERE EVERY DOLLAR WENT", font=dict(size=16, color=CYAN)),
+    )
+
+
+
+_rebuild_all_charts()
 # Payment method colors
 PAYMENT_COLORS = {
     "Discover": "#ff6d00",
