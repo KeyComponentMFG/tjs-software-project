@@ -9893,6 +9893,7 @@ app.layout = serve_layout
 )
 def render_active_tab(tab):
     """Rebuild the active tab's content on every switch so uploads are reflected."""
+    _rebuild_all_charts()
     if tab == "tab-overview":
         return build_tab1_overview()
     elif tab == "tab-deep-dive":
