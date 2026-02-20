@@ -1183,6 +1183,7 @@ def _cascade_reload(source="etsy"):
     profit_margin = (profit / gross_sales * 100) if gross_sales else 0
 
     # Recompute all derived metrics and charts
+    _recompute_shipping_details()
     _recompute_analytics()
     _recompute_tax_years()
     _recompute_valuation()
@@ -1713,56 +1714,71 @@ paid_ship_count = len(orders_with_paid_shipping & all_order_ids)
 free_ship_count = len(orders_free_shipping)
 
 avg_outbound_label = usps_outbound / usps_outbound_count if usps_outbound_count else 0
-est_label_cost_paid_orders = paid_ship_count * avg_outbound_label
-paid_shipping_profit = buyer_paid_shipping - est_label_cost_paid_orders
-est_label_cost_free_orders = free_ship_count * avg_outbound_label
 
-# Refunded orders shipping
-refund_df_orders = refund_df.copy()
-refund_df_orders["Order"] = refund_df_orders["Title"].str.extract(r"(Order #\d+)")
-refunded_order_ids = set(refund_df_orders["Order"].dropna())
 
-refund_ship_fees = 0.0
-refund_ship_count = 0
-for oid in refunded_order_ids:
-    order_ship = fee_df[
-        (fee_df["Info"] == oid) & fee_df["Title"].str.contains("Transaction fee: Shipping", na=False)
-    ]
-    if len(order_ship):
-        refund_ship_fees += abs(order_ship["Net_Clean"].sum())
-        refund_ship_count += 1
-refund_buyer_shipping = refund_ship_fees / 0.065 if refund_ship_fees else 0
-est_refund_label_cost = len(refunded_order_ids) * avg_outbound_label
+def _recompute_shipping_details():
+    """Recompute paid-vs-free shipping estimates and return label matches."""
+    global est_label_cost_paid_orders, paid_shipping_profit, est_label_cost_free_orders
+    global refund_buyer_shipping, est_refund_label_cost, return_label_matches
 
-# Match return labels to refunds by date proximity
-return_labels = ship_df[ship_df["Title"] == "USPS return shipping label"].sort_values("Date_Parsed")
-return_label_matches = []
-for _, ret in return_labels.iterrows():
-    ret_date = ret["Date_Parsed"]
-    nearby = refund_df[abs((refund_df["Date_Parsed"] - ret_date).dt.days) <= 7].copy()
-    best_match_product = "Unknown"
-    best_match_order = "Unknown"
-    best_match_refund = 0
-    if len(nearby):
-        nearby["_dist"] = abs((nearby["Date_Parsed"] - ret_date).dt.days)
-        best = nearby.sort_values("_dist").iloc[0]
-        best_match_order = best["Title"].replace("Refund for ", "").replace("Partial refund for ", "")
-        best_match_refund = abs(best["Net_Clean"])
-        prod_row = fee_df[
-            (fee_df["Info"] == best_match_order)
-            & fee_df["Title"].str.startswith("Transaction fee:", na=False)
-            & ~fee_df["Title"].str.contains("Shipping", na=False)
+    est_label_cost_paid_orders = paid_ship_count * avg_outbound_label
+    paid_shipping_profit = buyer_paid_shipping - est_label_cost_paid_orders
+    est_label_cost_free_orders = free_ship_count * avg_outbound_label
+
+    # Refunded orders shipping
+    refund_df_orders = refund_df.copy()
+    refund_df_orders["Order"] = refund_df_orders["Title"].str.extract(r"(Order #\d+)")
+    refunded_order_ids = set(refund_df_orders["Order"].dropna())
+
+    refund_ship_fees = 0.0
+    for oid in refunded_order_ids:
+        order_ship = fee_df[
+            (fee_df["Info"] == oid) & fee_df["Title"].str.contains("Transaction fee: Shipping", na=False)
         ]
-        if len(prod_row):
-            best_match_product = prod_row.iloc[0]["Title"].replace("Transaction fee: ", "")
-    return_label_matches.append({
-        "date": ret["Date"],
-        "label": ret["Info"],
-        "cost": abs(ret["Net_Clean"]),
-        "product": best_match_product,
-        "order": best_match_order,
-        "refund_amt": best_match_refund,
-    })
+        if len(order_ship):
+            refund_ship_fees += abs(order_ship["Net_Clean"].sum())
+    refund_buyer_shipping = refund_ship_fees / 0.065 if refund_ship_fees else 0
+    est_refund_label_cost = len(refunded_order_ids) * avg_outbound_label
+
+    # Match return labels to refunds by date proximity
+    return_labels = ship_df[ship_df["Title"] == "USPS return shipping label"].sort_values("Date_Parsed")
+    return_label_matches.clear()
+    for _, ret in return_labels.iterrows():
+        ret_date = ret["Date_Parsed"]
+        nearby = refund_df[abs((refund_df["Date_Parsed"] - ret_date).dt.days) <= 7].copy()
+        best_match_product = "Unknown"
+        best_match_order = "Unknown"
+        best_match_refund = 0
+        if len(nearby):
+            nearby["_dist"] = abs((nearby["Date_Parsed"] - ret_date).dt.days)
+            best = nearby.sort_values("_dist").iloc[0]
+            best_match_order = best["Title"].replace("Refund for ", "").replace("Partial refund for ", "")
+            best_match_refund = abs(best["Net_Clean"])
+            prod_row = fee_df[
+                (fee_df["Info"] == best_match_order)
+                & fee_df["Title"].str.startswith("Transaction fee:", na=False)
+                & ~fee_df["Title"].str.contains("Shipping", na=False)
+            ]
+            if len(prod_row):
+                best_match_product = prod_row.iloc[0]["Title"].replace("Transaction fee: ", "")
+        return_label_matches.append({
+            "date": ret["Date"],
+            "label": ret["Info"],
+            "cost": abs(ret["Net_Clean"]),
+            "product": best_match_product,
+            "order": best_match_order,
+            "refund_amt": best_match_refund,
+        })
+
+
+# Initialize module-level variables before first call
+est_label_cost_paid_orders = 0.0
+paid_shipping_profit = 0.0
+est_label_cost_free_orders = 0.0
+refund_buyer_shipping = 0.0
+est_refund_label_cost = 0.0
+return_label_matches = []
+_recompute_shipping_details()
 
 # Product performance
 prod_fees = fee_df[
