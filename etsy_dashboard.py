@@ -1176,10 +1176,10 @@ def _cascade_reload(source="etsy"):
     real_profit = bank_cash_on_hand + bank_owner_draw_total
     real_profit_margin = (real_profit / gross_sales * 100) if gross_sales else 0
 
-    # Cross-source: bank profit minus inventory the bank can't see (Discover card gap)
+    # All spending flows through the bank; CC balance is a liability, not expense
     bank_amazon_inv = bank_by_cat.get("Amazon Inventory", 0)
-    receipt_cogs_outside_bank = max(0, true_inventory_cost - bank_amazon_inv)
-    profit = real_profit - receipt_cogs_outside_bank
+    receipt_cogs_outside_bank = 0
+    profit = real_profit
     profit_margin = (profit / gross_sales * 100) if gross_sales else 0
 
     # Recompute all derived metrics and charts
@@ -1338,15 +1338,14 @@ else:
     biz_fee_total = 0.0
     true_inventory_cost = total_inventory_cost
 
-# ── Cross-Source Profit (Etsy + Receipts + Bank all connected) ──
-# The bank already captures most expenses as debits. Receipts and bank OVERLAP —
-# they show the same spending from different angles. The only thing receipts reveal
-# that the bank CAN'T see is Discover card spending (separate card, not in bank).
-#
-# So: profit = bank_reconciled_profit - inventory_expenses_bank_cant_see
+# ── Cross-Source Profit (Etsy + Bank) ──
+# The bank captures ALL cash expenses as debits (Amazon, AliExpress, CC payments, etc.).
+# Best Buy CC payments already appear in bank debits as "Business Credit Card".
+# Outstanding CC balance is a liability (balance sheet), not a cash expense.
+# Profit = Cash you HAVE + Cash you TOOK = real, bank-verified profit.
 bank_amazon_inv = bank_by_cat.get("Amazon Inventory", 0)
-receipt_cogs_outside_bank = max(0, true_inventory_cost - bank_amazon_inv)  # Discover card gap
-profit = real_profit - receipt_cogs_outside_bank
+receipt_cogs_outside_bank = 0  # All spending flows through the bank; CC balance is a liability
+profit = real_profit
 profit_margin = (profit / gross_sales * 100) if gross_sales else 0
 
 # Classify locations (Tulsa vs Texas)
@@ -2374,7 +2373,7 @@ def _chatbot_answer_inner(question):
                              "real profit", "actual profit"]):
         return (
             f"**Profit: ${profit:,.2f}** ({profit_margin:.1f}% margin)\n\n"
-            f"= Cash On Hand ${bank_cash_on_hand:,.2f} + Owner Draws ${bank_owner_draw_total:,.2f} - Credit Card Supplies ${receipt_cogs_outside_bank:,.2f}\n\n"
+            f"= Cash On Hand ${bank_cash_on_hand:,.2f} + Owner Draws ${bank_owner_draw_total:,.2f}\n\n"
             f"**How we get there:**\n"
             f"- Gross Sales: ${gross_sales:,.2f}\n"
             f"- Etsy takes (fees/ship/ads/refunds/tax): -${total_fees + total_shipping_cost + total_marketing + total_refunds + total_taxes + total_buyer_fees:,.2f}\n"
@@ -2730,7 +2729,7 @@ def _chatbot_answer_inner(question):
         _top_prod = f"{product_revenue_est.index[0][:40]} (~${product_revenue_est.values[0]:,.2f})" if len(product_revenue_est) > 0 else "N/A"
         return (
             f"**FULL STORE SUMMARY (Oct 2025 - Feb 2026)**\n\n"
-            f"**Profit: ${profit:,.2f}** ({profit_margin:.1f}%) = Cash ${bank_cash_on_hand:,.2f} + Draws ${bank_owner_draw_total:,.2f} - Credit Card Supplies ${receipt_cogs_outside_bank:,.2f}\n\n"
+            f"**Profit: ${profit:,.2f}** ({profit_margin:.1f}%) = Cash ${bank_cash_on_hand:,.2f} + Draws ${bank_owner_draw_total:,.2f}\n\n"
             f"**Revenue:** ${gross_sales:,.2f} gross | {order_count} orders | ${avg_order:,.2f} avg\n\n"
             f"**Etsy Deductions:** Fees ${total_fees:,.2f} | Shipping ${total_shipping_cost:,.2f} | "
             f"Marketing ${total_marketing:,.2f} | Refunds ${total_refunds:,.2f} | "
@@ -8664,10 +8663,9 @@ def build_tab2_deep_dive():
             _build_kpi_pill("💰", "OPERATING MARGIN",
                      f"{profit_margin:.1f}%", GREEN if profit_margin > 15 else ORANGE,
                      subtitle="After ALL expenses",
-                     detail=(f"Revenue minus all costs. Bank profit ({money(real_profit)}) minus credit card supplies "
-                             f"({money(receipt_cogs_outside_bank)}). Receipts: {money(true_inventory_cost)} supplies, "
-                             f"bank sees {money(bank_amazon_inv)}. "
-                             f"Result: {money(profit)} ({profit_margin:.1f}%).")),
+                     detail=(f"Revenue minus all costs. Cash on hand ({money(bank_cash_on_hand)}) "
+                             f"+ owner draws ({money(bank_owner_draw_total)}) = {money(profit)} ({profit_margin:.1f}%). "
+                             f"All expenses flow through bank.")),
             _build_kpi_pill("💵", "CASH CONVERSION",
                      f"{bank_cash_on_hand / gross_sales * 100:.1f}%" if gross_sales else "N/A",
                      CYAN, subtitle="Cash retained / Revenue",
@@ -8893,7 +8891,7 @@ def build_tab3_financials():
                             f"{len(refund_df)} refunded of {order_count} total. Avg refund: ${total_refunds / max(len(refund_df), 1):,.2f}. Return labels: ${usps_return:,.2f} ({usps_return_count} labels)."),
             _build_kpi_pill("\U0001f4b0", "PROFIT", f"${profit:,.2f}", GREEN,
                             f"{profit_margin:.1f}% margin",
-                            f"Revenue minus all costs. Cash ({money(bank_cash_on_hand)}) + draws ({money(bank_owner_draw_total)}) - credit card supplies ({money(receipt_cogs_outside_bank)})."),
+                            f"Revenue minus all costs. Cash ({money(bank_cash_on_hand)}) + draws ({money(bank_owner_draw_total)})."),
         ], style={"display": "flex", "gap": "8px", "marginBottom": "14px", "flexWrap": "wrap"}),
 
         # Full P&L
@@ -8929,7 +8927,7 @@ def build_tab3_financials():
                 html.Span("PROFIT", style={"color": GREEN, "fontWeight": "bold", "fontSize": "22px"}),
                 html.Span(f"${profit:,.2f}", style={"color": GREEN, "fontWeight": "bold", "fontSize": "22px", "fontFamily": "monospace"}),
             ], style={"display": "flex", "justifyContent": "space-between", "padding": "12px 0"}),
-            html.Div(f"= Cash On Hand ${bank_cash_on_hand:,.2f} + Owner Draws ${bank_owner_draw_total:,.2f} - Credit Card Supplies ${receipt_cogs_outside_bank:,.2f}",
+            html.Div(f"= Cash On Hand ${bank_cash_on_hand:,.2f} + Owner Draws ${bank_owner_draw_total:,.2f}",
                      style={"color": GRAY, "fontSize": "12px", "textAlign": "center"}),
             html.Div([
                 html.Div([
