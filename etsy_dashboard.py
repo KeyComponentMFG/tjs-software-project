@@ -70,6 +70,20 @@ from supabase_loader import (
     sync_etsy_transactions as _sync_etsy_to_supabase,
 )
 
+RAILWAY_URL = os.environ.get("RAILWAY_URL", "https://web-production-7f385.up.railway.app")
+
+
+def _notify_railway_reload():
+    """Ping Railway's /api/reload in background after syncing data to Supabase."""
+    import threading
+    import urllib.request
+    def _ping():
+        try:
+            urllib.request.urlopen(f"{RAILWAY_URL}/api/reload", timeout=30)
+        except Exception:
+            pass  # Railway might be down, not critical
+    threading.Thread(target=_ping, daemon=True).start()
+
 
 def item_thumbnail(image_url, size=40):
     """Return a thumbnail img element or gray placeholder."""
@@ -1060,6 +1074,7 @@ def _reload_inventory_data(new_order):
     except Exception:
         pass
     _save_new_order(new_order)
+    _notify_railway_reload()
 
     # Build new INV_ITEMS rows (mirrors lines 8809-8851)
     try:
@@ -11254,6 +11269,7 @@ def handle_receipt_wizard(contents, save_clicks, skip_clicks, done_clicks, back_
 
         # Push to Supabase
         _save_new_order(order)
+        _notify_railway_reload()
 
         # Build INV_ITEMS rows for this new order
         try:
@@ -12019,6 +12035,7 @@ def handle_datahub_upload(etsy_contents, receipt_contents, bank_contents,
                 _cascade_reload("etsy")
                 # Auto-sync to Supabase so Railway stays in sync
                 _sync_etsy_to_supabase(DATA)
+                _notify_railway_reload()
 
                 if has_overlap:
                     etsy_status = html.Div([
@@ -12165,6 +12182,7 @@ def handle_datahub_upload(etsy_contents, receipt_contents, bank_contents,
                 _cascade_reload("bank")
                 # Auto-sync to Supabase so Railway stays in sync
                 _sync_bank_to_supabase(BANK_TXNS)
+                _notify_railway_reload()
                 bank_status = html.Div([
                     html.Span("\u2713 ", style={"color": GREEN, "fontWeight": "bold"}),
                     html.Span(f"Uploaded {fname} — {stats['transactions']} total transactions, "
