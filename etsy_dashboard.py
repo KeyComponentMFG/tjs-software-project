@@ -6581,33 +6581,46 @@ def _get_bank_computed():
     total_taken = bank_owner_draw_total + bank_personal
     acct_total = bank_cash_on_hand + total_taken + bank_all_expenses + old_bank_receipted + bank_unaccounted + etsy_csv_gap
     acct_gap = round(etsy_net_earned - acct_total, 2)
-    # Categories that don't need receipt documentation
+
+    # ── Missing receipts: match bank debit categories to receipt sources ──
+    # Categories that NEVER need receipts
     _skip_cats = {"Etsy Fees", "Etsy Payout", "Personal", "Business Credit Card"}
-    no_receipt = [t for t in bank_debits if t["category"] not in _skip_cats
-                  and not t["category"].startswith("Owner Draw")]
 
-    # Cross-reference Amazon bank debits against uploaded receipt totals
+    # Map: bank category → which receipt sources cover it
+    _cat_to_sources = {
+        "Amazon Inventory": ["Key Component Mfg"],
+        "AliExpress Supplies": ["SUNLU", "Alibaba"],
+        "Craft Supplies": ["Hobby Lobby", "Home Depot"],
+    }
+
     amazon_txns = [t for t in bank_debits if t["category"] == "Amazon Inventory"]
-    bank_amazon_total = sum(t["amount"] for t in amazon_txns)
-    # Receipt totals from business invoices (non-personal)
-    receipt_amazon_total = sum(inv["grand_total"] for inv in INVOICES
-                               if inv.get("source") not in ("Personal Amazon",)
-                               and "Gigi" not in inv.get("file", ""))
-    amazon_gap = round(bank_amazon_total - receipt_amazon_total, 2)
-
-    # Amazon debits covered by receipts are accounted for; only show gap
     matched_no_receipt = []
-    for t in no_receipt:
-        if t["category"] == "Amazon Inventory":
-            continue  # handled by gap check below
-        matched_no_receipt.append(t)
 
-    # Add Amazon gap as a single summary entry if unmatched
-    if amazon_gap > 1:
-        matched_no_receipt.insert(0, {
-            "date": "", "desc": f"UNMATCHED AMAZON ({len(amazon_txns)} bank debits vs {len(INVOICES)} receipts)",
-            "amount": amazon_gap, "type": "debit", "category": "Amazon Inventory",
-        })
+    for cat, sources in _cat_to_sources.items():
+        cat_debits = [t for t in bank_debits if t["category"] == cat]
+        if not cat_debits:
+            continue
+        bank_total = sum(t["amount"] for t in cat_debits)
+        receipt_total = sum(inv["grand_total"] for inv in INVOICES
+                            if inv.get("source") in sources
+                            and "Gigi" not in inv.get("file", ""))
+        gap = round(bank_total - receipt_total, 2)
+        if gap > 1:
+            matched_no_receipt.append({
+                "date": "", "type": "debit", "category": cat,
+                "desc": f"Unmatched {cat}: ${bank_total:,.0f} bank - ${receipt_total:,.0f} receipts",
+                "amount": gap,
+            })
+
+    # Categories with no receipt source mapping — each debit is individually missing
+    for t in bank_debits:
+        if t["category"] in _skip_cats:
+            continue
+        if t["category"].startswith("Owner Draw"):
+            continue
+        if t["category"] in _cat_to_sources:
+            continue  # handled by gap logic above
+        matched_no_receipt.append(t)
 
     return cat_color_map, acct_gap, matched_no_receipt, amazon_txns
 
@@ -8336,17 +8349,21 @@ def _build_health_checks():
                           f"{len(low)} item(s) low stock (1-2 left)",
                           f"Running low: {', '.join(low_names)}{'...' if len(low) > 5 else ''}"))
 
-    # ── 8. Receipt vs Bank — compare Amazon-to-Amazon ──
-    _bank_amz = bank_by_cat.get("Amazon Inventory", 0)
-    _receipt_amz = sum(inv["grand_total"] for inv in INVOICES
-                       if inv.get("source") not in ("Personal Amazon",)
-                       and "Gigi" not in inv.get("file", ""))
-    _amz_gap = round(_bank_amz - _receipt_amz, 2)
-    if _amz_gap > 10:
-        todos.append((2, "\U0001f9fe", ORANGE,
-                      f"${_amz_gap:,.0f} in Amazon bank charges without matching receipts",
-                      f"Bank has ${_bank_amz:,.0f} in Amazon debits but uploaded receipts total "
-                      f"${_receipt_amz:,.0f}. Upload the missing invoice PDFs in Data Hub."))
+    # ── 8. Receipt vs Bank — compare per-category ──
+    _cat_sources = {"Amazon Inventory": ["Key Component Mfg"],
+                    "AliExpress Supplies": ["SUNLU", "Alibaba"],
+                    "Craft Supplies": ["Hobby Lobby", "Home Depot"]}
+    for _cat, _srcs in _cat_sources.items():
+        _bank_amt = bank_by_cat.get(_cat, 0)
+        _rcpt_amt = sum(inv["grand_total"] for inv in INVOICES
+                        if inv.get("source") in _srcs
+                        and "Gigi" not in inv.get("file", ""))
+        _gap = round(_bank_amt - _rcpt_amt, 2)
+        if _gap > 10:
+            todos.append((2, "\U0001f9fe", ORANGE,
+                          f"${_gap:,.0f} in {_cat} bank charges without matching receipts",
+                          f"Bank has ${_bank_amt:,.0f} in {_cat} but receipts from "
+                          f"{'/'.join(_srcs)} total ${_rcpt_amt:,.0f}. Upload missing PDFs."))
 
     # ── 10. Etsy balance gap ──
     if abs(etsy_csv_gap) > 5:
