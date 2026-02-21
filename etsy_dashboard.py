@@ -9391,14 +9391,19 @@ def build_tab3_financials():
                 ], style={"padding": "2px 0", "borderBottom": "1px solid #ffffff08"})
                   for c in ["Amazon Inventory"] + _biz_expense_cats if bank_by_cat.get(c, 0) > 0],
             ], bank_all_expenses),
-            cat_card(f"MISSING RECEIPTS ({len(_bank_no_receipt)} items)", "#b71c1c", [
-                *[html.Div([
+            # Split missing receipts: purchase receipts vs other categories
+            *[cat_card(
+                f"MISSING {cat.upper()} RECEIPTS ({len(items)})", "#b71c1c",
+                [html.Div([
                     html.Span(f"${t['amount']:,.2f}", style={"color": RED, "fontFamily": "monospace", "fontSize": "10px", "width": "55px", "display": "inline-block"}),
-                    html.Span(t["desc"][:28], style={"color": WHITE, "fontSize": "10px", "width": "175px", "display": "inline-block"}),
-                    html.Span(t["category"], style={"color": ORANGE, "fontSize": "9px"}),
-                ], style={"padding": "1px 0"}) for t in _bank_no_receipt],
-            ], sum(t["amount"] for t in _bank_no_receipt),
-               f"HAVE: Amazon PDFs + Etsy CSVs + Bank stmts | Old bank: ${old_bank_receipted:,.0f} receipted, ${bank_unaccounted:,.0f} gap | NEED: Fresh CSV (${etsy_csv_gap:,.2f})"),
+                    html.Span(t.get("date", ""), style={"color": GRAY, "fontSize": "9px", "width": "75px", "display": "inline-block"}),
+                    html.Span(t["desc"][:30], style={"color": WHITE, "fontSize": "10px"}),
+                ], style={"padding": "1px 0"}) for t in items],
+                sum(t["amount"] for t in items),
+            ) for cat, items in [
+                (cat, [t for t in _bank_no_receipt if t["category"] == cat])
+                for cat in dict.fromkeys(t["category"] for t in _bank_no_receipt)
+            ] if items],
         ], style={"display": "flex", "gap": "8px", "flexWrap": "wrap", "marginBottom": "10px"}),
 
         # ══════════════════════════════════════════════════════════════
