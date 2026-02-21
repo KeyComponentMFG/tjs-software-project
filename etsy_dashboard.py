@@ -6582,57 +6582,97 @@ def _get_bank_computed():
     acct_total = bank_cash_on_hand + total_taken + bank_all_expenses + old_bank_receipted + bank_unaccounted + etsy_csv_gap
     acct_gap = round(etsy_net_earned - acct_total, 2)
 
-    # ── Missing receipts: per-transaction matching ──
-    # Categories that NEVER need receipts
-    _skip_cats = {"Etsy Fees", "Etsy Payout", "Personal", "Business Credit Card"}
+    # ── Missing receipts: per-transaction matching (amount + close date) ──
+    # Every bank debit is checked. Nothing is skipped.
+    from datetime import datetime as _dt
 
-    # Map: bank category → which receipt sources cover it
+    def _parse_dt(s):
+        """Parse 'MM/DD/YYYY' or 'Month Day, Year' to datetime."""
+        if not s:
+            return None
+        for fmt in ("%m/%d/%Y", "%B %d, %Y"):
+            try:
+                return _dt.strptime(s, fmt)
+            except ValueError:
+                continue
+        return None
+
+    amazon_txns = [t for t in bank_debits if t["category"] == "Amazon Inventory"]
+
+    # Map: bank debit category → which receipt sources can match it.
+    # This prevents false matches (e.g. UPS charge matching an Amazon receipt).
     _cat_to_sources = {
         "Amazon Inventory": ["Key Component Mfg"],
         "AliExpress Supplies": ["SUNLU", "Alibaba"],
         "Craft Supplies": ["Hobby Lobby", "Home Depot"],
     }
 
-    amazon_txns = [t for t in bank_debits if t["category"] == "Amazon Inventory"]
     matched_no_receipt = []
 
-    # Build pool of available receipts for matching (exclude personal/Gigi)
-    avail_receipts = [inv for inv in INVOICES
-                      if inv.get("source") != "Personal Amazon"
-                      and "Gigi" not in inv.get("file", "")]
-
-    # For each category with receipt sources, match individual transactions
+    # ── 1. Categories with known receipt sources: per-transaction matching ──
     for cat, sources in _cat_to_sources.items():
         cat_debits = [t for t in bank_debits if t["category"] == cat]
         if not cat_debits:
             continue
-        # Receipts available for this category
-        cat_receipts = [inv for inv in avail_receipts if inv.get("source") in sources]
-        # Match each bank debit to the closest receipt by amount (within $1.50)
-        used = set()
-        for t in sorted(cat_debits, key=lambda x: x["date"]):
-            best_idx = -1
-            best_diff = 999
-            for i, inv in enumerate(cat_receipts):
-                if i in used:
-                    continue
-                diff = abs(inv["grand_total"] - t["amount"])
-                if diff < best_diff:
-                    best_diff = diff
-                    best_idx = i
-            if best_idx >= 0 and best_diff <= 1.50:
-                used.add(best_idx)  # receipt consumed
-            else:
-                matched_no_receipt.append(t)  # no receipt for this debit
+        # Build receipt pool for this category only
+        pool = []
+        for inv in INVOICES:
+            if inv.get("source") not in sources:
+                continue
+            if "Gigi" in inv.get("file", ""):
+                continue
+            pool.append({
+                "amount": inv.get("grand_total", 0),
+                "date": _parse_dt(inv.get("date", "")),
+                "used": False,
+            })
 
-    # Categories with no receipt source mapping — each debit is individually missing
+        # Two-pass matching: exact amounts first, then approximate.
+        # This prevents a $23.86 debit from stealing a $23.79 receipt
+        # that should go to the $23.79 debit.
+        unmatched_debits = list(sorted(cat_debits, key=lambda x: x["date"]))
+
+        def _match_pass(debits, amt_tolerance, day_tolerance):
+            """Match debits against pool. Returns list of still-unmatched debits."""
+            still_unmatched = []
+            for t in debits:
+                bank_dt = _parse_dt(t["date"])
+                bank_amt = t["amount"]
+                best_idx = -1
+                best_score = 999999
+                for i, r in enumerate(pool):
+                    if r["used"]:
+                        continue
+                    amt_diff = abs(r["amount"] - bank_amt)
+                    if amt_diff > amt_tolerance:
+                        continue
+                    if bank_dt and r["date"]:
+                        day_diff = abs((bank_dt - r["date"]).days)
+                        if day_diff > day_tolerance:
+                            continue
+                        score = round(amt_diff * 10000) + day_diff
+                    else:
+                        score = 50000 + round(amt_diff * 10000)
+                    if score < best_score:
+                        best_score = score
+                        best_idx = i
+                if best_idx >= 0:
+                    pool[best_idx]["used"] = True
+                else:
+                    still_unmatched.append(t)
+            return still_unmatched
+
+        # Pass 1: Exact amount (within $0.02), date within 14 days
+        unmatched_debits = _match_pass(unmatched_debits, 0.02, 14)
+        # Pass 2: Approximate amount (within $1.50), date within 14 days
+        unmatched_debits = _match_pass(unmatched_debits, 1.50, 14)
+
+        matched_no_receipt.extend(unmatched_debits)
+
+    # ── 2. All other categories: no receipt source exists, so every debit is missing ──
     for t in bank_debits:
-        if t["category"] in _skip_cats:
-            continue
-        if t["category"].startswith("Owner Draw"):
-            continue
         if t["category"] in _cat_to_sources:
-            continue  # handled by per-txn matching above
+            continue  # already handled above
         matched_no_receipt.append(t)
 
     return cat_color_map, acct_gap, matched_no_receipt, amazon_txns
