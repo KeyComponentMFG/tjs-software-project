@@ -256,6 +256,18 @@ def main():
     print(f"  bank_transactions: {bank_count} rows")
     print(f"  config:            {config_count} rows")
 
+    # Auto-reload Railway if it's running
+    railway_url = os.environ.get("RAILWAY_URL", "https://web-production-7f385.up.railway.app")
+    print(f"\n  Pinging {railway_url}/api/reload to refresh Railway data...")
+    try:
+        import urllib.request
+        req = urllib.request.Request(f"{railway_url}/api/reload", method="GET")
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            result = json.loads(resp.read().decode())
+            print(f"  Railway reload: {result}")
+    except Exception as e:
+        print(f"  Railway reload failed (may need manual restart): {e}")
+
 
 if __name__ == "__main__":
     main()

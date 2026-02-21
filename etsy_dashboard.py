@@ -6679,6 +6679,196 @@ def api_diagnostics():
         },
     })
 
+
+@server.route("/api/reload")
+def api_reload():
+    """Force-reload all data from Supabase. Use after migrating data to refresh Railway."""
+    global DATA, CONFIG, INVOICES, BANK_TXNS
+    global sales_df, fee_df, ship_df, mkt_df, refund_df, tax_df
+    global deposit_df, buyer_fee_df
+    global gross_sales, total_refunds, net_sales, total_fees, total_fees_gross
+    global total_shipping_cost, total_marketing, total_taxes
+    global etsy_net, order_count, avg_order, etsy_net_margin
+    global total_buyer_fees, etsy_net_earned, etsy_total_deposited
+    global etsy_balance_calculated, etsy_csv_gap, etsy_balance
+    global bank_deposits, bank_debits
+    global bank_total_deposits, bank_total_debits, bank_net_cash
+    global bank_by_cat, bank_monthly, bank_statement_count
+    global bank_tax_deductible, bank_personal, bank_pending
+    global bank_biz_expense_total, bank_all_expenses, bank_cash_on_hand
+    global bank_owner_draw_total, real_profit, real_profit_margin
+    global tulsa_draws, texas_draws, tulsa_draw_total, texas_draw_total
+    global draw_diff, draw_owed_to
+    global bank_txns_sorted, bank_running
+    global bb_cc_payments, bb_cc_total_paid, bb_cc_balance, bb_cc_available
+    global _bank_cat_color_map, _bank_acct_gap, _bank_no_receipt, _bank_amazon_txns
+    global monthly_sales, monthly_fees, monthly_shipping, monthly_marketing
+    global monthly_refunds, monthly_taxes, monthly_raw_fees, monthly_raw_shipping
+    global monthly_raw_marketing, monthly_raw_refunds, monthly_net_revenue
+    global daily_sales, daily_orders, daily_df, weekly_aov
+    global monthly_order_counts, monthly_aov, monthly_profit_per_order
+    global months_sorted, days_active
+    global listing_fees, transaction_fees_product, transaction_fees_shipping
+    global processing_fees, credit_transaction, credit_listing, credit_processing
+    global share_save, total_credits
+    global etsy_ads, offsite_ads_fees, offsite_ads_credits
+    global usps_outbound, usps_outbound_count, usps_return, usps_return_count
+    global asendia_labels, asendia_count, ship_adjustments, ship_adjust_count
+    global ship_credits, ship_credit_count, ship_insurance, ship_insurance_count
+    global buyer_paid_shipping, shipping_profit, shipping_margin
+    global paid_ship_count, free_ship_count, avg_outbound_label
+    global product_fee_totals, product_revenue_est
+    global profit, profit_margin, receipt_cogs_outside_bank, bank_amazon_inv
+
+    try:
+        # 1. Reload raw data from Supabase
+        sb = _load_data()
+        DATA = sb["DATA"]
+        CONFIG = sb["CONFIG"]
+        INVOICES = sb["INVOICES"]
+        BANK_TXNS = sb["BANK_TXNS"]
+
+        # 2. Rebuild Etsy derived metrics (mirrors _reload_etsy_data logic)
+        sales_df = DATA[DATA["Type"] == "Sale"]
+        fee_df = DATA[DATA["Type"] == "Fee"]
+        ship_df = DATA[DATA["Type"] == "Shipping"]
+        mkt_df = DATA[DATA["Type"] == "Marketing"]
+        refund_df = DATA[DATA["Type"] == "Refund"]
+        tax_df = DATA[DATA["Type"] == "Tax"]
+        deposit_df = DATA[DATA["Type"] == "Deposit"]
+        buyer_fee_df = fee_df[fee_df["Title"].str.contains("Regulatory operating fee|Sales tax paid", case=False, na=False)]
+
+        gross_sales = sales_df["Amount_Clean"].sum()
+        total_refunds = abs(refund_df["Net_Clean"].sum())
+        net_sales = gross_sales - total_refunds
+        total_fees = abs(fee_df["Net_Clean"].sum())
+        total_fees_gross = abs(fee_df["Net_Clean"].sum())
+        total_shipping_cost = abs(ship_df["Net_Clean"].sum())
+        total_marketing = abs(mkt_df["Net_Clean"].sum())
+        total_taxes = abs(tax_df["Net_Clean"].sum())
+        total_buyer_fees = abs(buyer_fee_df["Net_Clean"].sum())
+        etsy_net = DATA["Net_Clean"].sum()
+        order_count = sales_df["Title"].str.extract(r"(Order #\d+)", expand=False).nunique()
+        avg_order = gross_sales / order_count if order_count else 0
+        etsy_net_margin = (etsy_net / gross_sales * 100) if gross_sales else 0
+
+        # Etsy balance auto-calculation
+        _dep_total = 0.0
+        for _, _dr in deposit_df.iterrows():
+            _m = _re_mod.search(r'([\d,]+\.\d+)', str(_dr.get("Title", "")))
+            if _m:
+                _dep_total += float(_m.group(1).replace(",", ""))
+        etsy_total_deposited = _dep_total
+        etsy_net_earned = etsy_net
+        etsy_balance_calculated = round(etsy_net - _dep_total, 2)
+        etsy_balance = max(0, etsy_balance_calculated)
+
+        # Monthly aggregations
+        monthly_sales = sales_df.groupby("Month")["Amount_Clean"].sum()
+        monthly_fees = fee_df.groupby("Month")["Net_Clean"].sum().abs()
+        monthly_shipping = ship_df.groupby("Month")["Net_Clean"].sum().abs()
+        monthly_marketing = mkt_df.groupby("Month")["Net_Clean"].sum().abs()
+        monthly_refunds = refund_df.groupby("Month")["Net_Clean"].sum().abs()
+        monthly_taxes = tax_df.groupby("Month")["Net_Clean"].sum().abs()
+        months_sorted = sorted(monthly_sales.index.tolist())
+
+        # Daily aggregations
+        daily_sales = sales_df.groupby(sales_df["Date_Parsed"].dt.date)["Amount_Clean"].sum()
+        daily_orders = sales_df.groupby(sales_df["Date_Parsed"].dt.date)["Title"].apply(
+            lambda x: x.str.extract(r"(Order #\d+)", expand=False).nunique())
+        days_active = len(daily_sales)
+
+        # 3. Rebuild bank derived metrics (mirrors _reload_bank_data logic)
+        bank_deposits = [t for t in BANK_TXNS if t["type"] == "deposit"]
+        bank_debits = [t for t in BANK_TXNS if t["type"] == "debit"]
+        bank_total_deposits = sum(t["amount"] for t in bank_deposits)
+        bank_total_debits = sum(t["amount"] for t in bank_debits)
+        bank_net_cash = bank_total_deposits - bank_total_debits
+
+        bank_by_cat = {}
+        for t in bank_debits:
+            cat = t["category"]
+            bank_by_cat[cat] = bank_by_cat.get(cat, 0) + t["amount"]
+        bank_by_cat = dict(sorted(bank_by_cat.items(), key=lambda x: -x[1]))
+
+        bank_monthly = {}
+        for t in BANK_TXNS:
+            parts = t["date"].split("/")
+            month_key = f"{parts[2]}-{parts[0]}"
+            if month_key not in bank_monthly:
+                bank_monthly[month_key] = {"deposits": 0, "debits": 0}
+            if t["type"] == "deposit":
+                bank_monthly[month_key]["deposits"] += t["amount"]
+            else:
+                bank_monthly[month_key]["debits"] += t["amount"]
+
+        bank_tax_deductible = sum(amt for cat, amt in bank_by_cat.items() if cat in BANK_TAX_DEDUCTIBLE)
+        bank_personal = bank_by_cat.get("Personal", 0)
+        bank_pending = bank_by_cat.get("Pending", 0)
+
+        _biz_cats = ["Shipping", "Craft Supplies", "Etsy Fees", "Subscriptions",
+                     "AliExpress Supplies", "Business Credit Card"]
+        bank_biz_expense_total = sum(bank_by_cat.get(c, 0) for c in _biz_cats)
+        bank_all_expenses = bank_by_cat.get("Amazon Inventory", 0) + bank_biz_expense_total
+        bank_cash_on_hand = bank_net_cash + etsy_balance
+        bank_owner_draw_total = sum(v for k, v in bank_by_cat.items() if k.startswith("Owner Draw"))
+        real_profit = bank_cash_on_hand + bank_owner_draw_total
+        real_profit_margin = (real_profit / gross_sales * 100) if gross_sales else 0
+
+        tulsa_draws = [t for t in bank_debits if t["category"] == "Owner Draw - Tulsa"]
+        texas_draws = [t for t in bank_debits if t["category"] == "Owner Draw - Texas"]
+        tulsa_draw_total = sum(t["amount"] for t in tulsa_draws)
+        texas_draw_total = sum(t["amount"] for t in texas_draws)
+        draw_diff = abs(tulsa_draw_total - texas_draw_total)
+        draw_owed_to = "Braden" if tulsa_draw_total > texas_draw_total else "TJ"
+
+        bank_txns_sorted = sorted(BANK_TXNS, key=lambda x: (_parse_bank_date(x["date"]),
+                                  0 if x["type"] == "deposit" else 1))
+        bank_running = []
+        _bal = 0.0
+        for t in bank_txns_sorted:
+            if t["type"] == "deposit":
+                _bal += t["amount"]
+            else:
+                _bal -= t["amount"]
+            bank_running.append({**t, "_balance": round(_bal, 2)})
+
+        _bank_cat_color_map, _bank_acct_gap, _bank_no_receipt, _bank_amazon_txns = _get_bank_computed()
+
+        bb_cc_payments = [{"date": t["date"], "desc": t["desc"], "amount": t["amount"]}
+                          for t in BANK_TXNS if t["category"] == "Business Credit Card"
+                          and "BEST BUY" in t.get("desc", "").upper()]
+        bb_cc_total_paid = sum(p["amount"] for p in bb_cc_payments)
+        bb_cc_balance = bb_cc_total_charged - bb_cc_total_paid
+        bb_cc_available = bb_cc_limit - bb_cc_balance
+
+        # 4. Profit
+        bank_amazon_inv = bank_by_cat.get("Amazon Inventory", 0)
+        receipt_cogs_outside_bank = 0
+        profit = real_profit
+        profit_margin = (profit / gross_sales * 100) if gross_sales else 0
+
+        # 5. Rebuild charts and analytics
+        _recompute_shipping_details()
+        _recompute_analytics()
+        _recompute_tax_years()
+        _recompute_valuation()
+        _rebuild_all_charts()
+
+        return flask.jsonify({
+            "status": "ok",
+            "etsy_rows": len(DATA),
+            "bank_txns": len(BANK_TXNS),
+            "invoices": len(INVOICES),
+            "profit": round(profit, 2),
+            "bank_deposits": round(bank_total_deposits, 2),
+            "bank_debits": round(bank_total_debits, 2),
+            "owner_draws": round(bank_owner_draw_total, 2),
+        })
+    except Exception as e:
+        return flask.jsonify({"status": "error", "message": str(e)}), 500
+
+
 # Shared tab styling
 tab_style = {
     "backgroundColor": CARD2, "color": GRAY, "border": "none",

@@ -64,7 +64,8 @@
       {"date": "12/2025", "desc": "Bambu P2S Combo 3D Printer #2", "amount": 867.06}
     ],
     "payments": [
-      {"date": "01/15/2026", "desc": "Cap One payment to Best Buy CC", "amount": 100.00}
+      {"date": "01/15/2026", "desc": "Cap One payment to Best Buy CC", "amount": 100.00},
+      {"date": "02/17/2026", "desc": "Cap One payment to Best Buy CC", "amount": 100.00}
     ]
   }
 }
