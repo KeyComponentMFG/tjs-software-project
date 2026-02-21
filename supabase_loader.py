@@ -593,6 +593,70 @@ def _add_computed_columns(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+# ── Auto-sync after uploads ────────────────────────────────────────────────
+
+def sync_bank_transactions(bank_txns: list[dict]) -> bool:
+    """Push current bank transactions to Supabase (replaces all rows).
+    Called automatically after bank statement uploads."""
+    client = _get_supabase_client()
+    if client is None:
+        return False
+    try:
+        # Clear existing
+        client.table("bank_transactions").delete().gt("id", 0).execute()
+        # Insert in batches
+        rows = []
+        for t in bank_txns:
+            rows.append({
+                "date": t["date"],
+                "description": t["desc"],
+                "amount": t["amount"],
+                "type": t["type"],
+                "category": t.get("category", ""),
+                "source_file": t.get("source_file", ""),
+                "raw_description": t.get("raw_desc", ""),
+            })
+        for i in range(0, len(rows), 500):
+            client.table("bank_transactions").insert(rows[i:i+500]).execute()
+        print(f"Synced {len(rows)} bank transactions to Supabase")
+        return True
+    except Exception as e:
+        print(f"Bank sync to Supabase failed: {e}")
+        return False
+
+
+def sync_etsy_transactions(data_df) -> bool:
+    """Push current Etsy transactions to Supabase (replaces all rows).
+    Called automatically after Etsy CSV uploads."""
+    client = _get_supabase_client()
+    if client is None:
+        return False
+    try:
+        # Clear existing
+        client.table("etsy_transactions").delete().gt("id", 0).execute()
+        # Insert in batches
+        rows = []
+        for _, r in data_df.iterrows():
+            rows.append({
+                "date": str(r.get("Date", "")),
+                "type": str(r.get("Type", "")),
+                "title": str(r.get("Title", "")),
+                "info": str(r.get("Info", "")),
+                "currency": str(r.get("Currency", "USD")),
+                "amount": str(r.get("Amount", "--")),
+                "fees_and_taxes": str(r.get("Fees & Taxes", "--")),
+                "net": str(r.get("Net", "--")),
+                "tax_details": str(r.get("Tax Details", "--")),
+            })
+        for i in range(0, len(rows), 500):
+            client.table("etsy_transactions").insert(rows[i:i+500]).execute()
+        print(f"Synced {len(rows)} Etsy transactions to Supabase")
+        return True
+    except Exception as e:
+        print(f"Etsy sync to Supabase failed: {e}")
+        return False
+
+
 # ── Public API ──────────────────────────────────────────────────────────────
 
 def load_data() -> dict:

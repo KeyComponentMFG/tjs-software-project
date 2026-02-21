@@ -66,6 +66,8 @@ from supabase_loader import (
     delete_quick_add as _delete_quick_add,
     load_image_overrides as _load_image_overrides,
     save_new_order as _save_new_order,
+    sync_bank_transactions as _sync_bank_to_supabase,
+    sync_etsy_transactions as _sync_etsy_to_supabase,
 )
 
 
@@ -11756,6 +11758,8 @@ def handle_datahub_upload(etsy_contents, receipt_contents, bank_contents,
 
                 stats = _reload_etsy_data()
                 _cascade_reload("etsy")
+                # Auto-sync to Supabase so Railway stays in sync
+                _sync_etsy_to_supabase(DATA)
 
                 if has_overlap:
                     etsy_status = html.Div([
@@ -11900,6 +11904,8 @@ def handle_datahub_upload(etsy_contents, receipt_contents, bank_contents,
 
                 stats = _reload_bank_data()
                 _cascade_reload("bank")
+                # Auto-sync to Supabase so Railway stays in sync
+                _sync_bank_to_supabase(BANK_TXNS)
                 bank_status = html.Div([
                     html.Span("\u2713 ", style={"color": GREEN, "fontWeight": "bold"}),
                     html.Span(f"Uploaded {fname} — {stats['transactions']} total transactions, "
