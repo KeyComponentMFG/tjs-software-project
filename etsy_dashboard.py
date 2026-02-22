@@ -4787,7 +4787,9 @@ def _build_item_card(idx, item_name, img_url, det_name, det_cat, det_qty, det_lo
     ], style={"marginBottom": "8px"})
 
     # Row 2: Category + Location (two columns)
-    _dd = {"fontSize": "13px"}
+    # NOTE: dcc.Dropdown `style` applies to .Select-control (inline), so bg+color must be here
+    _dd = {"fontSize": "13px", "backgroundColor": "#0d0d1a", "color": WHITE,
+           "border": f"1px solid {DARKGRAY}55", "borderRadius": "6px"}
     row_cat_loc = html.Div([
         html.Div([
             html.Div("CATEGORY", style=_lbl),
