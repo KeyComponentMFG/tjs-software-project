@@ -5224,7 +5224,7 @@ def _build_inventory_editor():
     return html.Div([
         html.Div([
             html.Div([
-                html.H4("INVENTORY EDITOR",
+                html.H4("RECEIPTS TO INVENTORY OPTIMIZER",
                          style={"color": ORANGE, "margin": "0", "fontSize": "20px", "fontWeight": "700",
                                 "letterSpacing": "1px"}),
                 html.Div(style={"flex": "1"}),
@@ -6280,7 +6280,7 @@ def build_tab4_inventory():
                   "boxShadow": "0 4px 20px rgba(0,0,0,0.3)"}),
 
         # ══════════════════════════════════════════════════════════════════════
-        # 6. INVENTORY EDITOR (detailed per-item with split wizard)
+        # 6. RECEIPTS TO INVENTORY OPTIMIZER (detailed per-item with split wizard)
         # ══════════════════════════════════════════════════════════════════════
         _build_inventory_editor(),
 
