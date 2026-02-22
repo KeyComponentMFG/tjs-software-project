@@ -4689,14 +4689,19 @@ def _build_split_container(idx, existing, det_name, det_cat, det_qty, det_loc, _
 
 def _build_item_card(idx, item_name, img_url, det_name, det_cat, det_qty, det_loc,
                      has_details, orig_qty, orig_total, is_split, existing, onum):
-    """Build a single inventory item card (compact row + expandable form).
+    """Build a single inventory item card — optimized for fast categorization.
+
+    Primary flow (always visible): Name + Category + Location + Save
+    Secondary (behind 'More options'): Qty, Image, Split
 
     Shared by _build_inventory_editor() and filter_editor().
     """
-    _lbl = {"color": GRAY, "fontSize": "10px", "fontWeight": "700", "letterSpacing": "0.5px",
-             "textTransform": "uppercase", "marginBottom": "3px"}
+    _lbl = {"color": GRAY, "fontSize": "10px", "fontWeight": "700", "letterSpacing": "0.8px",
+            "textTransform": "uppercase", "marginBottom": "2px"}
     _inp = {"fontSize": "13px", "backgroundColor": "#0d0d1a", "color": WHITE,
             "border": f"1px solid {DARKGRAY}55", "borderRadius": "6px", "padding": "7px 12px"}
+    _sel = {"fontSize": "13px", "backgroundColor": "#0d0d1a", "color": WHITE,
+            "border": f"1px solid {DARKGRAY}55", "borderRadius": "6px", "padding": "7px 10px"}
     cat_options = [{"label": c, "value": c} for c in CATEGORY_OPTIONS]
     loc_options = [{"label": "Tulsa, OK", "value": "Tulsa, OK"},
                    {"label": "Texas", "value": "Texas"},
@@ -4705,169 +4710,165 @@ def _build_item_card(idx, item_name, img_url, det_name, det_cat, det_qty, det_lo
     per_unit = orig_total / det_qty if det_qty > 0 else (orig_total / orig_qty if orig_qty > 0 else 0)
     _card_border = GREEN if has_details else ORANGE
     _status_color = GREEN if has_details else ORANGE
-    _loc_color = TEAL if "Tulsa" in det_loc else (ORANGE if "Texas" in det_loc else GRAY)
 
-    # ── COMPACT ROW (two-line layout) ──
+    # ── COMPACT ROW (always visible — click to expand) ──
     compact_row = html.Div([
-        html.Div(
-            item_thumbnail(img_url, 36),
-            style={"flexShrink": "0"},
-        ),
+        # Thumbnail
+        html.Div(item_thumbnail(img_url, 36), style={"flexShrink": "0"}),
+        # Info
         html.Div([
+            html.Span(det_name[:55], title=det_name,
+                      style={"color": WHITE, "fontSize": "13px", "fontWeight": "bold",
+                             "overflow": "hidden", "textOverflow": "ellipsis",
+                             "whiteSpace": "nowrap", "display": "block"}),
             html.Div([
-                html.Span(det_name[:60], title=det_name,
-                          style={"color": WHITE, "fontSize": "14px", "fontWeight": "bold",
-                                 "flex": "1", "overflow": "hidden", "textOverflow": "ellipsis",
-                                 "whiteSpace": "nowrap", "minWidth": "80px"}),
-                html.Span(f"${orig_total:.2f}", style={
-                    "color": ORANGE, "fontSize": "12px", "fontWeight": "bold",
-                    "marginLeft": "auto", "flexShrink": "0"}),
-                html.Span(f"x{det_qty}", style={
-                    "color": WHITE, "fontSize": "12px", "fontWeight": "bold",
-                    "marginLeft": "10px", "flexShrink": "0"}),
-            ], style={"display": "flex", "alignItems": "center", "gap": "6px"}),
-            html.Div([
-                html.Span(det_cat, style={
-                    "fontSize": "11px", "color": TEAL, "fontWeight": "500"}),
-                html.Span("\u00b7", style={"color": f"{DARKGRAY}88", "margin": "0 5px",
-                                            "fontSize": "13px"}),
-                html.Span(det_loc if det_loc else "\u2014", style={
-                    "fontSize": "11px", "color": _loc_color, "fontWeight": "500"}),
-                html.Span(
-                    "\u2713 SAVED" if has_details else "UNSAVED",
-                    className="status-pill-saved" if has_details else "status-pill-unsaved",
-                    style={"fontSize": "10px", "fontWeight": "bold", "padding": "2px 10px",
-                           "borderRadius": "10px", "whiteSpace": "nowrap",
-                           "backgroundColor": f"{_status_color}18", "color": _status_color,
-                           "border": f"1px solid {_status_color}33",
-                           "marginLeft": "auto", "flexShrink": "0"}),
-                html.Span(
-                    "NEW", className="new-badge",
-                    style={"fontSize": "9px", "fontWeight": "bold", "padding": "2px 7px",
-                           "borderRadius": "8px", "backgroundColor": f"{CYAN}22",
-                           "color": CYAN, "border": f"1px solid {CYAN}55",
-                           "marginLeft": "5px", "flexShrink": "0",
-                           "letterSpacing": "0.5px"}
-                ) if (onum in _RECENT_UPLOADS and not has_details) else None,
-            ], style={"display": "flex", "alignItems": "center", "marginTop": "1px"}),
+                html.Span(f"${orig_total:.2f}", style={"color": ORANGE, "fontSize": "11px",
+                                                         "fontWeight": "bold"}),
+                html.Span(f" \u00d7 {det_qty}", style={"color": f"{WHITE}88", "fontSize": "11px",
+                                                          "marginLeft": "6px"}),
+                html.Span(f" \u00b7 {det_cat}", style={"color": TEAL, "fontSize": "11px",
+                                                          "marginLeft": "6px"}),
+            ]),
         ], style={"flex": "1", "minWidth": "0", "marginLeft": "10px"}),
+        # Status pill
+        html.Span(
+            "\u2713" if has_details else "\u270e",
+            style={"fontSize": "14px", "fontWeight": "bold", "color": _status_color,
+                   "width": "28px", "height": "28px", "display": "flex",
+                   "alignItems": "center", "justifyContent": "center",
+                   "borderRadius": "50%", "backgroundColor": f"{_status_color}18",
+                   "border": f"1px solid {_status_color}33", "flexShrink": "0"}),
+        html.Span(
+            "NEW", className="new-badge",
+            style={"fontSize": "9px", "fontWeight": "bold", "padding": "2px 7px",
+                   "borderRadius": "8px", "backgroundColor": f"{CYAN}22",
+                   "color": CYAN, "border": f"1px solid {CYAN}55",
+                   "marginLeft": "4px", "flexShrink": "0", "letterSpacing": "0.5px"}
+        ) if (onum in _RECENT_UPLOADS and not has_details) else None,
     ], style={"display": "flex", "alignItems": "center",
-              "cursor": "pointer", "padding": "3px 0"})
+              "cursor": "pointer", "padding": "4px 0"})
 
-    # ── EXPANDED FORM — compact two-column layout ──
-    show_orig = (det_name != item_name)
+    # ── EXPANDED FORM — primary fields + action bar ──
     _price_str = f"qty {det_qty}  \u00b7  ${per_unit:.2f}/ea  \u00b7  ${orig_total:.2f} total"
+    show_orig = (det_name != item_name)
+
+    # Receipt info line
+    _receipt_parts = []
     if show_orig:
-        _orig_children = [
-            html.Span("ORIGINAL: ", style={"color": GRAY, "fontSize": "11px", "fontWeight": "bold"}),
-            html.Span(f'"{item_name[:80]}"',
-                      style={"color": f"{WHITE}99", "fontSize": "11px", "fontStyle": "italic"}),
-            html.Span(f"  \u2014  {_price_str}",
-                      style={"color": GRAY, "fontSize": "11px"}),
-        ]
+        _receipt_parts.append(html.Span(
+            f'Receipt: "{item_name[:70]}"',
+            style={"color": f"{WHITE}66", "fontSize": "11px", "fontStyle": "italic"}))
+        _receipt_parts.append(html.Span(
+            f"  \u2014  {_price_str}", style={"color": f"{GRAY}aa", "fontSize": "11px"}))
     else:
-        _orig_children = [
-            html.Span(_price_str, style={"color": GRAY, "fontSize": "11px"}),
-        ]
-    orig_subtitle = html.Div(
-        _orig_children,
-        style={"marginBottom": "10px", "lineHeight": "1.4", "overflow": "hidden",
-               "textOverflow": "ellipsis", "whiteSpace": "nowrap"})
-    # Hidden price display (keeps callback target alive)
-    price_display = html.Span(
-        id={"type": "det-price-display", "index": idx},
-        children=_price_str,
-        style={"display": "none"})
+        _receipt_parts.append(html.Span(
+            _price_str, style={"color": f"{GRAY}aa", "fontSize": "11px"}))
+    receipt_line = html.Div(_receipt_parts,
+                            style={"marginBottom": "10px", "overflow": "hidden",
+                                   "textOverflow": "ellipsis", "whiteSpace": "nowrap"})
+    # Hidden price display (callback target)
+    price_display = html.Span(id={"type": "det-price-display", "index": idx},
+                              children=_price_str, style={"display": "none"})
 
-    # Row 1: Name (full width)
-    row_name = html.Div([
-        html.Div("NAME", style=_lbl),
+    # ── PRIMARY FIELDS: Name → Category + Location → Save ──
+
+    # Name
+    name_field = html.Div([
+        html.Div("ITEM NAME", style=_lbl),
         dcc.Input(id={"type": "det-name", "index": idx}, type="text",
-                  value=det_name,
-                  style={**_inp, "width": "100%"}),
-    ], style={"marginBottom": "8px"})
+                  value=det_name, style={**_inp, "width": "100%"}),
+    ], style={"marginBottom": "10px"})
 
-    # Row 2: Category + Location (two columns) — dbc.Select = native <select>, Darkly-styled
-    _sel = {"fontSize": "13px", "backgroundColor": "#0d0d1a", "color": WHITE,
-            "border": f"1px solid {DARKGRAY}55", "borderRadius": "6px"}
-    row_cat_loc = html.Div([
+    # Category + Location + Save (single row)
+    action_row = html.Div([
         html.Div([
             html.Div("CATEGORY", style=_lbl),
             dbc.Select(id={"type": "det-cat", "index": idx},
-                       options=cat_options, value=det_cat,
-                       style=_sel),
-        ], style={"flex": "1", "minWidth": "0"}),
+                       options=cat_options, value=det_cat, style=_sel),
+        ], style={"flex": "1", "minWidth": "100px"}),
         html.Div([
             html.Div("LOCATION", style=_lbl),
             dbc.Select(id={"type": "loc-dropdown", "index": idx},
-                       options=loc_options, value=det_loc,
-                       style=_sel),
-        ], style={"flex": "1", "minWidth": "0"}),
-    ], style={"display": "flex", "gap": "12px", "marginBottom": "8px"})
-
-    # Row 3: Qty + Image (two columns)
-    row_qty_img = html.Div([
+                       options=loc_options, value=det_loc, style=_sel),
+        ], style={"flex": "1", "minWidth": "100px"}),
         html.Div([
-            html.Div("QTY", style=_lbl),
-            dcc.Input(id={"type": "det-qty", "index": idx}, type="number",
-                      min=1, value=det_qty, debounce=False,
-                      style={**_inp, "width": "65px"}),
-        ], style={"flexShrink": "0"}),
-        html.Div([
-            html.Div("IMAGE", style=_lbl),
+            html.Div("\u00a0", style={**_lbl, "visibility": "hidden"}),
             html.Div([
-                html.Div(
-                    item_thumbnail(img_url, 28) if img_url else html.Span("?", style={
-                        "width": "28px", "height": "28px", "display": "inline-flex",
-                        "alignItems": "center", "justifyContent": "center",
-                        "backgroundColor": "#ffffff10", "borderRadius": "4px",
-                        "color": DARKGRAY, "fontSize": "10px", "fontWeight": "bold"}),
-                    id={"type": "det-img-preview", "index": idx},
-                    style={"flexShrink": "0", "marginRight": "6px"},
-                ),
-                dcc.Input(id={"type": "det-img-url", "index": idx}, type="text",
-                          value=img_url or "", placeholder="Image URL...",
-                          style={**_inp, "flex": "1", "minWidth": "80px", "fontSize": "11px"}),
-                html.Button("Fetch", id={"type": "det-img-fetch-btn", "index": idx},
-                            style={"fontSize": "11px", "padding": "6px 12px", "backgroundColor": CYAN,
-                                   "color": "#0f0f1a", "border": "none", "borderRadius": "6px",
-                                   "cursor": "pointer", "fontWeight": "bold", "marginLeft": "4px",
-                                   "whiteSpace": "nowrap"}),
-                html.Span("", id={"type": "det-img-status", "index": idx},
-                          style={"fontSize": "11px", "color": GREEN, "marginLeft": "4px",
+                html.Button("\u2713 Save", id={"type": "det-save-btn", "index": idx},
+                            style={"fontSize": "13px", "padding": "7px 22px",
+                                   "background": f"linear-gradient(135deg, {GREEN}, #27ae60)",
+                                   "color": WHITE, "border": "none", "borderRadius": "6px",
+                                   "cursor": "pointer", "fontWeight": "bold",
+                                   "boxShadow": f"0 2px 8px {GREEN}44",
+                                   "transition": "all 0.15s ease", "whiteSpace": "nowrap"}),
+                html.Button("Reset", id={"type": "det-reset-btn", "index": idx},
+                            style={"fontSize": "11px", "padding": "7px 12px",
+                                   "backgroundColor": "transparent", "color": GRAY,
+                                   "border": f"1px solid {DARKGRAY}44", "borderRadius": "6px",
+                                   "cursor": "pointer"}),
+                html.Span(id={"type": "det-status", "index": idx}, children="",
+                          style={"fontSize": "12px", "color": GREEN, "fontWeight": "bold",
                                  "whiteSpace": "nowrap"}),
-            ], style={"display": "flex", "alignItems": "center"}),
-        ], style={"flex": "1", "minWidth": "0"}),
-    ], style={"display": "flex", "gap": "12px", "alignItems": "flex-end", "marginBottom": "8px"})
+            ], style={"display": "flex", "gap": "6px", "alignItems": "center"}),
+        ], style={"flexShrink": "0"}),
+    ], style={"display": "flex", "gap": "10px", "alignItems": "flex-end"})
 
-    # Row 4: Split checkbox left, Save/Reset/Status right
-    row_actions = html.Div([
-        dcc.Checklist(
-            id={"type": "loc-split-check", "index": idx},
-            options=[{"label": " Split into multiple items", "value": "split"}],
-            value=["split"] if is_split else [],
-            style={"fontSize": "12px", "color": GRAY, "flex": "1"},
-            labelStyle={"cursor": "pointer"},
-        ),
+    # ── SECONDARY FIELDS (collapsed by default) ──
+    advanced_section = html.Details([
+        html.Summary(
+            html.Span("More options (qty, image, split)",
+                      style={"color": f"{GRAY}aa", "fontSize": "11px", "cursor": "pointer"}),
+            style={"listStyle": "none", "outline": "none", "padding": "8px 0 4px",
+                   "WebkitAppearance": "none"}),
         html.Div([
-            html.Button("Save", id={"type": "det-save-btn", "index": idx},
-                        style={"fontSize": "12px", "padding": "7px 20px", "backgroundColor": TEAL,
-                               "color": WHITE, "border": "none", "borderRadius": "6px",
-                               "cursor": "pointer", "fontWeight": "bold",
-                               "boxShadow": f"0 2px 6px {TEAL}55",
-                               "transition": "all 0.15s ease"}),
-            html.Button("Reset", id={"type": "det-reset-btn", "index": idx},
-                        style={"fontSize": "12px", "padding": "6px 14px", "backgroundColor": "transparent",
-                               "color": GRAY, "border": f"1px solid {DARKGRAY}55", "borderRadius": "6px",
-                               "cursor": "pointer"}),
-            html.Span(id={"type": "det-status", "index": idx}, children="",
-                      style={"fontSize": "12px", "color": GREEN, "fontWeight": "bold"}),
-        ], style={"display": "flex", "gap": "8px", "alignItems": "center", "flexShrink": "0"}),
-    ], style={"display": "flex", "alignItems": "center", "gap": "8px"})
+            # Qty + Image row
+            html.Div([
+                html.Div([
+                    html.Div("QTY", style=_lbl),
+                    dcc.Input(id={"type": "det-qty", "index": idx}, type="number",
+                              min=1, value=det_qty, debounce=False,
+                              style={**_inp, "width": "65px"}),
+                ], style={"flexShrink": "0"}),
+                html.Div([
+                    html.Div("IMAGE", style=_lbl),
+                    html.Div([
+                        html.Div(
+                            item_thumbnail(img_url, 24) if img_url else html.Span(
+                                "\u2014", style={"width": "24px", "height": "24px",
+                                                  "display": "inline-flex", "alignItems": "center",
+                                                  "justifyContent": "center", "color": DARKGRAY,
+                                                  "fontSize": "10px"}),
+                            id={"type": "det-img-preview", "index": idx},
+                            style={"flexShrink": "0", "marginRight": "6px"}),
+                        dcc.Input(id={"type": "det-img-url", "index": idx}, type="text",
+                                  value=img_url or "", placeholder="Paste image URL...",
+                                  style={**_inp, "flex": "1", "minWidth": "80px", "fontSize": "11px"}),
+                        html.Button("Fetch", id={"type": "det-img-fetch-btn", "index": idx},
+                                    style={"fontSize": "10px", "padding": "5px 10px",
+                                           "backgroundColor": CYAN, "color": "#0f0f1a",
+                                           "border": "none", "borderRadius": "5px",
+                                           "cursor": "pointer", "fontWeight": "bold",
+                                           "marginLeft": "4px", "whiteSpace": "nowrap"}),
+                        html.Span("", id={"type": "det-img-status", "index": idx},
+                                  style={"fontSize": "10px", "color": GREEN, "marginLeft": "4px",
+                                         "whiteSpace": "nowrap"}),
+                    ], style={"display": "flex", "alignItems": "center"}),
+                ], style={"flex": "1", "minWidth": "0"}),
+            ], style={"display": "flex", "gap": "12px", "alignItems": "flex-end",
+                      "marginBottom": "8px"}),
+            # Split checkbox
+            dcc.Checklist(
+                id={"type": "loc-split-check", "index": idx},
+                options=[{"label": " Split into multiple items", "value": "split"}],
+                value=["split"] if is_split else [],
+                style={"fontSize": "12px", "color": GRAY},
+                labelStyle={"cursor": "pointer"}),
+        ], style={"paddingTop": "4px"}),
+    ], open=is_split)  # auto-open if already split
 
     # Split container
     split_container = _build_split_container(idx, existing, det_name, det_cat, det_qty, det_loc, _inp,
-                                               item_name=item_name, orig_total=orig_total)
+                                             item_name=item_name, orig_total=orig_total)
 
     # Hidden stores
     hidden = html.Div([
@@ -4878,22 +4879,23 @@ def _build_item_card(idx, item_name, img_url, det_name, det_cat, det_qty, det_lo
         dcc.Store(id={"type": "det-orig-total", "index": idx}, data=orig_total),
     ])
 
-    _item_shadow = f"0 2px 8px rgba(0,0,0,0.3), -4px 0 12px {GREEN}11" if has_details else "0 2px 8px rgba(0,0,0,0.3)"
+    _item_shadow = (f"0 2px 10px rgba(0,0,0,0.3), -4px 0 12px {GREEN}15"
+                    if has_details else "0 2px 8px rgba(0,0,0,0.25)")
     return html.Details([
         html.Summary(compact_row, style={
             "listStyle": "none", "outline": "none", "userSelect": "none",
             "WebkitAppearance": "none"}),
-        html.Div([orig_subtitle, price_display, row_name, row_cat_loc, row_qty_img,
-                  split_container, row_actions, hidden],
+        html.Div([receipt_line, price_display, name_field, action_row,
+                  advanced_section, split_container, hidden],
                  style={"paddingTop": "10px", "borderTop": f"1px solid {DARKGRAY}22",
                         "marginTop": "6px"}),
     ], open=not has_details,
        className="item-card",
-       style={"padding": "12px 16px", "marginBottom": "8px",
-               "backgroundColor": "#0f1225", "borderRadius": "8px",
-               "borderLeft": f"4px solid {_card_border}",
-               "boxShadow": _item_shadow,
-               "transition": "all 0.15s ease"})
+       style={"padding": "10px 14px", "marginBottom": "6px",
+              "backgroundColor": "#0f1225", "borderRadius": "8px",
+              "borderLeft": f"4px solid {_card_border}",
+              "boxShadow": _item_shadow,
+              "transition": "all 0.15s ease"})
 
 
 def _build_category_manager():
@@ -5236,18 +5238,24 @@ def _build_inventory_editor():
                                 "letterSpacing": "1px"}),
                 html.Div(style={"flex": "1"}),
                 html.Button("Fetch Missing Images", id="editor-fetch-all-images-btn", n_clicks=0,
-                            style={"fontSize": "12px", "padding": "8px 18px",
-                                   "backgroundColor": CYAN, "color": "#0f0f1a",
-                                   "border": "none", "borderRadius": "6px",
-                                   "cursor": "pointer", "fontWeight": "bold",
-                                   "whiteSpace": "nowrap",
-                                   "boxShadow": f"0 2px 8px {CYAN}44"}),
+                            style={"fontSize": "11px", "padding": "6px 14px",
+                                   "backgroundColor": "transparent", "color": CYAN,
+                                   "border": f"1px solid {CYAN}44", "borderRadius": "6px",
+                                   "cursor": "pointer", "fontWeight": "600",
+                                   "whiteSpace": "nowrap"}),
                 html.Span("", id="editor-fetch-all-images-status",
                           style={"fontSize": "12px", "color": GREEN, "marginLeft": "10px",
                                  "fontWeight": "bold"}),
             ], style={"display": "flex", "alignItems": "center"}),
-            html.P("Name each item, pick a category, set qty & location, then Save.",
-                   style={"color": GRAY, "fontSize": "13px", "margin": "4px 0 0 0"}),
+            html.P([
+                "Click an item to expand \u2192 set ",
+                html.Span("name", style={"color": WHITE, "fontWeight": "600"}),
+                ", ",
+                html.Span("category", style={"color": WHITE, "fontWeight": "600"}),
+                " & ",
+                html.Span("location", style={"color": WHITE, "fontWeight": "600"}),
+                " \u2192 hit Save.",
+            ], style={"color": GRAY, "fontSize": "13px", "margin": "6px 0 0 0"}),
         ], style={"marginBottom": "16px"}),
         progress_bar,
         filter_bar,
