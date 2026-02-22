@@ -99,6 +99,57 @@ def item_thumbnail(image_url, size=40):
             "backgroundColor": "#ffffff10", "borderRadius": "4px",
             "color": DARKGRAY, "fontSize": f"{size // 3}px", "fontWeight": "bold",
             "verticalAlign": "middle"})
+
+
+def _fetch_amazon_image(item_name):
+    """Search Amazon for item, download first product image, save locally.
+    Returns local asset URL or empty string on failure."""
+    import urllib.request
+    try:
+        query = urllib.parse.quote_plus(item_name[:80])
+        url = f"https://www.amazon.com/s?k={query}"
+        req = urllib.request.Request(url, headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept-Language": "en-US,en;q=0.9",
+        })
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            html_text = resp.read().decode("utf-8", errors="replace")
+
+        # Find the first product image URL from Amazon's media CDN
+        matches = re.findall(r'https://m\.media-amazon\.com/images/I/[A-Za-z0-9._%-]+\.jpg', html_text)
+        if not matches:
+            return ""
+        img_url = matches[0]
+
+        # Download image bytes
+        img_req = urllib.request.Request(img_url, headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        })
+        with urllib.request.urlopen(img_req, timeout=15) as img_resp:
+            img_bytes = img_resp.read()
+
+        # Save to assets/product_images/
+        safe_name = re.sub(r'[^\w\s-]', '', item_name[:50]).strip()
+        safe_name = re.sub(r'[\s]+', '_', safe_name).lower()
+        if not safe_name:
+            safe_name = "item"
+        img_dir = os.path.join(BASE_DIR, "assets", "product_images")
+        os.makedirs(img_dir, exist_ok=True)
+        img_path = os.path.join(img_dir, f"{safe_name}.jpg")
+        with open(img_path, "wb") as f:
+            f.write(img_bytes)
+
+        local_url = f"/assets/product_images/{safe_name}.jpg"
+
+        # Persist to Supabase
+        from supabase_loader import save_image_override as _save_img_ovr
+        _save_img_ovr(item_name, local_url)
+        _IMAGE_URLS[item_name] = local_url
+        return local_url
+    except Exception:
+        return ""
+
+
 _sb = _load_data()
 CONFIG = _sb["CONFIG"]
 INVOICES = _sb["INVOICES"]
@@ -4758,6 +4809,30 @@ def _build_item_card(idx, item_name, img_url, det_name, det_cat, det_qty, det_lo
                          style={"width": "180px", "fontSize": "13px",
                                 "backgroundColor": "#0d0d1a", "color": WHITE}),
         ], style={"display": "flex", "alignItems": "center", "marginBottom": "10px"}),
+        # Image URL row
+        html.Div([
+            html.Span("Image", style={**_label, "width": "70px", "textAlign": "right"}),
+            html.Div(
+                item_thumbnail(img_url, 28) if img_url else html.Span("?", style={
+                    "width": "28px", "height": "28px", "display": "inline-flex",
+                    "alignItems": "center", "justifyContent": "center",
+                    "backgroundColor": "#ffffff10", "borderRadius": "4px",
+                    "color": DARKGRAY, "fontSize": "10px", "fontWeight": "bold"}),
+                id={"type": "det-img-preview", "index": idx},
+                style={"flexShrink": "0", "marginRight": "8px"},
+            ),
+            dcc.Input(id={"type": "det-img-url", "index": idx}, type="text",
+                      value=img_url or "", placeholder="Image URL...",
+                      style={**_inp, "flex": "1", "minWidth": "120px", "fontSize": "11px"}),
+            html.Button("Fetch", id={"type": "det-img-fetch-btn", "index": idx},
+                        style={"fontSize": "11px", "padding": "6px 14px", "backgroundColor": CYAN,
+                               "color": "#0f0f1a", "border": "none", "borderRadius": "6px",
+                               "cursor": "pointer", "fontWeight": "bold", "marginLeft": "6px",
+                               "whiteSpace": "nowrap"}),
+            html.Span("", id={"type": "det-img-status", "index": idx},
+                      style={"fontSize": "11px", "color": GREEN, "marginLeft": "6px",
+                             "whiteSpace": "nowrap"}),
+        ], style={"display": "flex", "alignItems": "center", "marginBottom": "8px"}),
         # Split checkbox on its own row
         dcc.Checklist(
             id={"type": "loc-split-check", "index": idx},
@@ -5148,9 +5223,22 @@ def _build_inventory_editor():
 
     return html.Div([
         html.Div([
-            html.H4("INVENTORY EDITOR",
-                     style={"color": ORANGE, "margin": "0", "fontSize": "20px", "fontWeight": "700",
-                            "letterSpacing": "1px"}),
+            html.Div([
+                html.H4("INVENTORY EDITOR",
+                         style={"color": ORANGE, "margin": "0", "fontSize": "20px", "fontWeight": "700",
+                                "letterSpacing": "1px"}),
+                html.Div(style={"flex": "1"}),
+                html.Button("Fetch Missing Images", id="editor-fetch-all-images-btn", n_clicks=0,
+                            style={"fontSize": "12px", "padding": "8px 18px",
+                                   "backgroundColor": CYAN, "color": "#0f0f1a",
+                                   "border": "none", "borderRadius": "6px",
+                                   "cursor": "pointer", "fontWeight": "bold",
+                                   "whiteSpace": "nowrap",
+                                   "boxShadow": f"0 2px 8px {CYAN}44"}),
+                html.Span("", id="editor-fetch-all-images-status",
+                          style={"fontSize": "12px", "color": GREEN, "marginLeft": "10px",
+                                 "fontWeight": "bold"}),
+            ], style={"display": "flex", "alignItems": "center"}),
             html.P("Name each item, pick a category, set qty & location, then Save.",
                    style={"color": GRAY, "fontSize": "13px", "margin": "4px 0 0 0"}),
         ], style={"marginBottom": "16px"}),
@@ -6202,21 +6290,7 @@ def build_tab4_inventory():
         _build_receipt_upload_section(),
 
         # ══════════════════════════════════════════════════════════════════════
-        # 7. IMAGE MANAGER (collapsed)
-        # ══════════════════════════════════════════════════════════════════════
-        html.Details([
-            html.Summary("IMAGE MANAGER", style={
-                "color": CYAN, "fontSize": "15px", "fontWeight": "bold", "cursor": "pointer",
-                "padding": "8px 0",
-            }),
-            _build_image_manager(),
-        ], open=False,
-           style={"backgroundColor": CARD, "padding": "12px 16px", "borderRadius": "10px",
-                  "marginBottom": "14px", "border": f"1px solid {CYAN}33",
-                  "borderLeft": f"4px solid {CYAN}"}),
-
-        # ══════════════════════════════════════════════════════════════════════
-        # 8. WAREHOUSES (location cards)
+        # 7. WAREHOUSES (location cards)
         # ══════════════════════════════════════════════════════════════════════
         _build_enhanced_location_section(),
 
@@ -10863,12 +10937,13 @@ def filter_editor(search, cat_filter, status_filter):
     State({"type": "det-order-num", "index": MATCH}, "data"),
     State({"type": "det-item-name", "index": MATCH}, "data"),
     State({"type": "det-orig-qty", "index": MATCH}, "data"),
+    State({"type": "det-img-url", "index": MATCH}, "value"),
     prevent_initial_call=True,
 )
 def handle_detail_save_reset(save_clicks, reset_clicks, display_name, category,
                              true_qty, loc_dropdown,
                              loc_split_check, split_data,
-                             order_num, item_name, orig_qty):
+                             order_num, item_name, orig_qty, img_url_val):
     """Save or reset item details."""
     ctx = callback_context
     if not ctx.triggered:
@@ -11001,6 +11076,15 @@ def handle_detail_save_reset(save_clicks, reset_clicks, display_name, category,
         _ITEM_DETAILS[key] = details
         count = len(details)
 
+        # Save image URL if provided
+        if img_url_val and img_url_val.strip():
+            from supabase_loader import save_image_override as _save_img_override
+            _save_img_override(item_name, img_url_val.strip())
+            _IMAGE_URLS[item_name] = img_url_val.strip()
+            if display_name and display_name != item_name:
+                _save_img_override(display_name, img_url_val.strip())
+                _IMAGE_URLS[display_name] = img_url_val.strip()
+
         # Rebuild INV_ITEMS, STOCK_SUMMARY, and _UPLOADED_INVENTORY
         _apply_details_to_inv_items()
         _recompute_stock_summary()
@@ -11008,6 +11092,76 @@ def handle_detail_save_reset(save_clicks, reset_clicks, display_name, category,
 
         return f"Saved! ({count} entry{'s' if count > 1 else ''})"
     return "Error saving"
+
+
+# ── Image Fetch (per-item) ────────────────────────────────────────────────────
+
+@app.callback(
+    Output({"type": "det-img-preview", "index": MATCH}, "children"),
+    Output({"type": "det-img-url", "index": MATCH}, "value"),
+    Output({"type": "det-img-status", "index": MATCH}, "children"),
+    Input({"type": "det-img-fetch-btn", "index": MATCH}, "n_clicks"),
+    State({"type": "det-item-name", "index": MATCH}, "data"),
+    State({"type": "det-name", "index": MATCH}, "value"),
+    prevent_initial_call=True,
+)
+def fetch_item_image(n_clicks, item_name, display_name):
+    """Fetch product image from Amazon for this item."""
+    if not n_clicks:
+        raise dash.exceptions.PreventUpdate
+    search_name = (display_name or item_name or "").strip()
+    if not search_name:
+        raise dash.exceptions.PreventUpdate
+    local_url = _fetch_amazon_image(search_name)
+    if local_url:
+        # Also map the original item name
+        if item_name and item_name != search_name:
+            from supabase_loader import save_image_override as _sio
+            _sio(item_name, local_url)
+            _IMAGE_URLS[item_name] = local_url
+        return item_thumbnail(local_url, 28), local_url, "Fetched!"
+    return (
+        html.Span("?", style={
+            "width": "28px", "height": "28px", "display": "inline-flex",
+            "alignItems": "center", "justifyContent": "center",
+            "backgroundColor": "#ffffff10", "borderRadius": "4px",
+            "color": DARKGRAY, "fontSize": "10px", "fontWeight": "bold"}),
+        "",
+        "Not found",
+    )
+
+
+# ── Bulk Fetch Missing Images ────────────────────────────────────────────────
+
+@app.callback(
+    Output("editor-fetch-all-images-status", "children"),
+    Input("editor-fetch-all-images-btn", "n_clicks"),
+    prevent_initial_call=True,
+)
+def bulk_fetch_missing_images(n_clicks):
+    """Auto-fetch images for all items that don't have one yet (max 20)."""
+    if not n_clicks:
+        raise dash.exceptions.PreventUpdate
+    # Collect unique item names without images
+    missing = []
+    seen = set()
+    for inv in INVOICES:
+        for item in inv["items"]:
+            name = item["name"]
+            if name in seen:
+                continue
+            seen.add(name)
+            if not _IMAGE_URLS.get(name, ""):
+                missing.append(name)
+    if not missing:
+        return "All items have images!"
+    cap = min(len(missing), 20)
+    fetched = 0
+    for name in missing[:cap]:
+        result = _fetch_amazon_image(name)
+        if result:
+            fetched += 1
+    return f"Fetched {fetched}/{cap} images"
 
 
 # ── Editor-save cascade: relay det-status changes into a single trigger ───────
