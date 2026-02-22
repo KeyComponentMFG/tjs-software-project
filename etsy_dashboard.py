@@ -5,6 +5,7 @@ Open: http://127.0.0.1:8070
 """
 
 import dash
+import dash_bootstrap_components as dbc
 from dash import dcc, html, callback_context
 from dash.dependencies import Input, Output, State, MATCH, ALL
 import json
@@ -4578,11 +4579,11 @@ def _build_split_container(idx, existing, det_name, det_cat, det_qty, det_loc, _
 
             # ── Step 0: Category selection ──
             html.Div(
-                dcc.Dropdown(id={"type": "wiz-cat", "index": idx},
-                             options=cat_options, value=det_cat or "", clearable=False,
-                             placeholder="Select category...",
-                             style={"width": "200px", "fontSize": "12px",
-                                    "backgroundColor": "#1a1a2e", "color": WHITE}),
+                dbc.Select(id={"type": "wiz-cat", "index": idx},
+                           options=[{"label": "Select category...", "value": ""}] + cat_options,
+                           value=det_cat or "",
+                           style={"width": "200px", "fontSize": "12px",
+                                  "backgroundColor": "#1a1a2e", "color": WHITE}),
                 id={"type": "wiz-step0", "index": idx}, style=s0,
             ),
 
@@ -4648,10 +4649,10 @@ def _build_split_container(idx, existing, det_name, det_cat, det_qty, det_loc, _
                 ], style={"marginBottom": "6px"}),
                 html.Div([
                     html.Div("Where did it go?", style={"color": GRAY, "fontSize": "11px", "marginBottom": "2px"}),
-                    dcc.Dropdown(id={"type": "wiz-item-loc", "index": idx},
-                                 options=loc_options, value=det_loc or "", clearable=False,
-                                 style={"width": "160px", "fontSize": "12px",
-                                        "backgroundColor": "#1a1a2e", "color": WHITE}),
+                    dbc.Select(id={"type": "wiz-item-loc", "index": idx},
+                               options=loc_options, value=det_loc or "",
+                               style={"width": "160px", "fontSize": "12px",
+                                      "backgroundColor": "#1a1a2e", "color": WHITE}),
                 ]),
             ], id={"type": "wiz-step3c", "index": idx}, style=s3c),
 
@@ -4786,22 +4787,21 @@ def _build_item_card(idx, item_name, img_url, det_name, det_cat, det_qty, det_lo
                   style={**_inp, "width": "100%"}),
     ], style={"marginBottom": "8px"})
 
-    # Row 2: Category + Location (two columns)
-    # NOTE: dcc.Dropdown `style` applies to .Select-control (inline), so bg+color must be here
-    _dd = {"fontSize": "13px", "backgroundColor": "#0d0d1a", "color": WHITE,
-           "border": f"1px solid {DARKGRAY}55", "borderRadius": "6px"}
+    # Row 2: Category + Location (two columns) — dbc.Select = native <select>, Darkly-styled
+    _sel = {"fontSize": "13px", "backgroundColor": "#0d0d1a", "color": WHITE,
+            "border": f"1px solid {DARKGRAY}55", "borderRadius": "6px"}
     row_cat_loc = html.Div([
         html.Div([
             html.Div("CATEGORY", style=_lbl),
-            dcc.Dropdown(id={"type": "det-cat", "index": idx},
-                         options=cat_options, value=det_cat, clearable=False,
-                         className="item-dd", style=_dd),
+            dbc.Select(id={"type": "det-cat", "index": idx},
+                       options=cat_options, value=det_cat,
+                       style=_sel),
         ], style={"flex": "1", "minWidth": "0"}),
         html.Div([
             html.Div("LOCATION", style=_lbl),
-            dcc.Dropdown(id={"type": "loc-dropdown", "index": idx},
-                         options=loc_options, value=det_loc, clearable=False,
-                         className="item-dd", style=_dd),
+            dbc.Select(id={"type": "loc-dropdown", "index": idx},
+                       options=loc_options, value=det_loc,
+                       style=_sel),
         ], style={"flex": "1", "minWidth": "0"}),
     ], style={"display": "flex", "gap": "12px", "marginBottom": "8px"})
 
@@ -4944,19 +4944,19 @@ def _build_category_manager():
                             "fontSize": "12px", "padding": "6px 8px", "textAlign": "right"}),
             # Category dropdown
             html.Td(
-                dcc.Dropdown(
+                dbc.Select(
                     id={"type": "catmgr-cat", "index": item_key},
-                    options=cat_options, value=cat, clearable=False,
+                    options=cat_options, value=cat,
                     style={"width": "140px", "fontSize": "11px",
                            "backgroundColor": "#1a1a2e", "color": WHITE},
                 ),
                 style={"padding": "4px 6px"}),
             # Location dropdown
             html.Td(
-                dcc.Dropdown(
+                dbc.Select(
                     id={"type": "catmgr-loc", "index": item_key},
-                    options=loc_options, value=loc if loc in ("Tulsa, OK", "Texas", "Other") else "",
-                    clearable=True, placeholder="—",
+                    options=[{"label": "\u2014", "value": ""}] + loc_options,
+                    value=loc if loc in ("Tulsa, OK", "Texas", "Other") else "",
                     style={"width": "120px", "fontSize": "11px",
                            "backgroundColor": "#1a1a2e", "color": WHITE},
                 ),
@@ -5200,21 +5200,21 @@ def _build_inventory_editor():
         html.Div([
             html.Span("Category:", style={"color": GRAY, "fontSize": "12px", "marginRight": "6px",
                                            "fontWeight": "500"}),
-            dcc.Dropdown(id="editor-cat-filter",
-                         options=[{"label": c, "value": c} for c in editor_cats],
-                         value="All", clearable=False,
-                         style={"width": "170px", "fontSize": "13px",
-                                "backgroundColor": "#0d0d1a", "color": WHITE}),
+            dbc.Select(id="editor-cat-filter",
+                       options=[{"label": c, "value": c} for c in editor_cats],
+                       value="All",
+                       style={"width": "170px", "fontSize": "13px",
+                              "backgroundColor": "#0d0d1a", "color": WHITE}),
         ], style={"display": "flex", "alignItems": "center"}),
         html.Div(style={"width": "1px", "height": "24px", "backgroundColor": f"{DARKGRAY}33"}),
         html.Div([
             html.Span("Show:", style={"color": GRAY, "fontSize": "12px", "marginRight": "6px",
                                        "fontWeight": "500"}),
-            dcc.Dropdown(id="editor-status-filter",
-                         options=[{"label": s, "value": s} for s in ["All", "Saved", "Unsaved"]],
-                         value="All", clearable=False,
-                         style={"width": "130px", "fontSize": "13px",
-                                "backgroundColor": "#0d0d1a", "color": WHITE}),
+            dbc.Select(id="editor-status-filter",
+                       options=[{"label": s, "value": s} for s in ["All", "Saved", "Unsaved"]],
+                       value="All",
+                       style={"width": "130px", "fontSize": "13px",
+                              "backgroundColor": "#0d0d1a", "color": WHITE}),
         ], style={"display": "flex", "alignItems": "center"}),
         html.Div(style={"flex": "1"}),
         html.Button("\u2193 Jump to Next Unsaved", id="editor-jump-unsaved", n_clicks=0,
@@ -5507,9 +5507,9 @@ def _build_quick_add_form():
             ], style={"display": "flex", "alignItems": "center", "marginRight": "8px"}),
             html.Div([
                 html.Span("Category:", style={"color": GRAY, "fontSize": "11px", "marginRight": "4px"}),
-                dcc.Dropdown(id="qa-category", options=cat_options, value="Other", clearable=False,
-                             style={"width": "140px", "fontSize": "12px",
-                                    "backgroundColor": "#1a1a2e", "color": WHITE}),
+                dbc.Select(id="qa-category", options=cat_options, value="Other",
+                           style={"width": "140px", "fontSize": "12px",
+                                  "backgroundColor": "#1a1a2e", "color": WHITE}),
             ], style={"display": "flex", "alignItems": "center", "marginRight": "8px"}),
             html.Div([
                 html.Span("Qty:", style={"color": GRAY, "fontSize": "11px", "marginRight": "4px"}),
@@ -5523,9 +5523,9 @@ def _build_quick_add_form():
             ], style={"display": "flex", "alignItems": "center", "marginRight": "8px"}),
             html.Div([
                 html.Span("Location:", style={"color": GRAY, "fontSize": "11px", "marginRight": "4px"}),
-                dcc.Dropdown(id="qa-location", options=loc_options, value="Tulsa, OK", clearable=False,
-                             style={"width": "110px", "fontSize": "12px",
-                                    "backgroundColor": "#1a1a2e", "color": WHITE}),
+                dbc.Select(id="qa-location", options=loc_options, value="Tulsa, OK",
+                           style={"width": "110px", "fontSize": "12px",
+                                  "backgroundColor": "#1a1a2e", "color": WHITE}),
             ], style={"display": "flex", "alignItems": "center", "marginRight": "8px"}),
             html.Button("Add Item", id="qa-add-btn", n_clicks=0,
                         style={"backgroundColor": GREEN, "color": WHITE, "border": "none",
@@ -6000,10 +6000,9 @@ def _build_receipt_upload_section():
                 ], style={"display": "flex", "alignItems": "center", "flex": "2"}),
                 html.Div([
                     html.Span("Category:", style=_label),
-                    dcc.Dropdown(id="wizard-cat", options=cat_options, value="Other",
-                                 clearable=False,
-                                 style={"width": "150px", "fontSize": "13px",
-                                        "backgroundColor": "#0d0d1a", "color": WHITE}),
+                    dbc.Select(id="wizard-cat", options=cat_options, value="Other",
+                               style={"width": "150px", "fontSize": "13px",
+                                      "backgroundColor": "#0d0d1a", "color": WHITE}),
                 ], style={"display": "flex", "alignItems": "center"}),
                 html.Div([
                     html.Span("Qty:", style=_label),
@@ -6012,10 +6011,9 @@ def _build_receipt_upload_section():
                 ], style={"display": "flex", "alignItems": "center"}),
                 html.Div([
                     html.Span("Location:", style=_label),
-                    dcc.Dropdown(id="wizard-loc", options=loc_options, value="Tulsa, OK",
-                                 clearable=False,
-                                 style={"width": "140px", "fontSize": "13px",
-                                        "backgroundColor": "#0d0d1a", "color": WHITE}),
+                    dbc.Select(id="wizard-loc", options=loc_options, value="Tulsa, OK",
+                               style={"width": "140px", "fontSize": "13px",
+                                      "backgroundColor": "#0d0d1a", "color": WHITE}),
                 ], style={"display": "flex", "alignItems": "center"}),
             ], id="wizard-form-row",
                style={"display": "flex", "alignItems": "center", "flexWrap": "wrap",
@@ -6701,7 +6699,7 @@ app = dash.Dash(
 server = app.server
 app.title = "TJs Software Project"
 
-# Inject dropdown dark-theme CSS directly into <head> so it loads after react-select defaults
+# Clean index template (no JS hacks needed — using dbc.Select for Darkly-styled dropdowns)
 app.index_string = '''<!DOCTYPE html>
 <html>
 <head>
@@ -6717,29 +6715,6 @@ app.index_string = '''<!DOCTYPE html>
 {%scripts%}
 {%renderer%}
 </footer>
-<script>
-(function(){
-  var S={backgroundColor:"#0d0d1a",color:"#fff",borderRadius:"6px",border:"1px solid rgba(102,102,102,0.33)"};
-  function fix(){
-    document.querySelectorAll(".Select-control").forEach(function(el){
-      if(el.style.backgroundColor!=="rgb(13, 13, 26)"){Object.assign(el.style,S)}
-    });
-    document.querySelectorAll(".Select-value-label").forEach(function(el){el.style.color="#fff"});
-    document.querySelectorAll(".Select-placeholder").forEach(function(el){el.style.color="#aaa"});
-    document.querySelectorAll(".Select-menu-outer,.Select-menu,.Select-option,.VirtualizedSelectOption").forEach(function(el){
-      el.style.backgroundColor="#0d0d1a";el.style.color="#fff";
-    });
-    document.querySelectorAll(".Select-multi-value-wrapper").forEach(function(el){el.style.backgroundColor="#0d0d1a"});
-    document.querySelectorAll(".Select-input input").forEach(function(el){el.style.color="#fff"});
-    document.querySelectorAll(".Select-arrow").forEach(function(el){el.style.borderTopColor="#aaa"});
-  }
-  setInterval(fix,400);
-  var ready=function(){
-    new MutationObserver(function(){fix()}).observe(document.body,{childList:true,subtree:true});
-  };
-  if(document.body){ready()}else{document.addEventListener("DOMContentLoaded",ready)}
-})();
-</script>
 </body>
 </html>'''
 
