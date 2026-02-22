@@ -6709,24 +6709,6 @@ app.index_string = '''<!DOCTYPE html>
 <title>{%title%}</title>
 {%favicon%}
 {%css%}
-<style>
-.Select-control{background-color:#0d0d1a !important;border:1px solid #66666655 !important;color:#fff !important;border-radius:6px !important}
-.is-open>.Select-control{background:#0d0d1a !important}
-.Select-value-label{color:#fff !important}
-.has-value.Select--single>.Select-control .Select-value .Select-value-label,
-.has-value.is-pseudo-focused.Select--single>.Select-control .Select-value .Select-value-label{color:#fff !important}
-.Select-placeholder{color:#aaa !important}
-.Select-menu-outer{background-color:#0d0d1a !important;border:1px solid #66666655 !important;z-index:9999 !important}
-.Select-menu{background-color:#0d0d1a !important}
-.Select-option,.VirtualizedSelectOption{background-color:#0d0d1a !important;color:#fff !important}
-.Select-option.is-focused,.VirtualizedSelectFocusedOption{background-color:#0f3460 !important;color:#00d4ff !important}
-.Select-option.is-selected,.VirtualizedSelectSelectedOption{background-color:#16213e !important;color:#2ecc71 !important}
-.Select-noresults{background-color:#0d0d1a !important;color:#aaa !important}
-.Select-input>input{color:#fff !important}
-.Select-arrow{border-color:#aaa transparent transparent !important}
-.Select-clear{color:#aaa !important}
-.Select-multi-value-wrapper{background-color:#0d0d1a !important}
-</style>
 </head>
 <body>
 {%app_entry%}
@@ -6735,6 +6717,28 @@ app.index_string = '''<!DOCTYPE html>
 {%scripts%}
 {%renderer%}
 </footer>
+<script>
+// Force dark theme on all Dash dropdowns via MutationObserver
+(function(){
+  var S={backgroundColor:"#0d0d1a",color:"#fff",borderRadius:"6px",border:"1px solid rgba(102,102,102,0.33)"};
+  var M={backgroundColor:"#0d0d1a",color:"#fff"};
+  function fix(root){
+    root.querySelectorAll(".Select-control").forEach(function(el){Object.assign(el.style,S)});
+    root.querySelectorAll(".Select-value-label").forEach(function(el){el.style.color="#fff"});
+    root.querySelectorAll(".Select-placeholder").forEach(function(el){el.style.color="#aaa"});
+    root.querySelectorAll(".Select-menu-outer,.Select-menu").forEach(function(el){Object.assign(el.style,M)});
+    root.querySelectorAll(".Select-option,.VirtualizedSelectOption").forEach(function(el){Object.assign(el.style,M)});
+    root.querySelectorAll(".Select-multi-value-wrapper").forEach(function(el){el.style.backgroundColor="#0d0d1a"});
+    root.querySelectorAll(".Select-input input").forEach(function(el){el.style.color="#fff"});
+  }
+  fix(document);
+  new MutationObserver(function(muts){
+    muts.forEach(function(m){
+      if(m.addedNodes.length) fix(document);
+    });
+  }).observe(document.body,{childList:true,subtree:true});
+})();
+</script>
 </body>
 </html>'''
 
