@@ -102,6 +102,56 @@
     background-color: #1a1a2e !important;
 }
 
+/* ── Item-card dropdowns (belt + suspenders) ─────────────── */
+.item-dd .Select-control,
+.item-card .dash-dropdown .Select-control,
+.item-card .Select-control {
+    background-color: #0d0d1a !important;
+    border: 1px solid rgba(255,255,255,0.15) !important;
+    border-radius: 6px !important;
+    color: #ffffff !important;
+}
+.item-dd .Select-value-label,
+.item-dd .Select--single > .Select-control .Select-value .Select-value-label,
+.item-card .dash-dropdown .Select-value-label,
+.item-card .Select-value-label {
+    color: #ffffff !important;
+}
+.item-dd .Select-placeholder,
+.item-card .Select-placeholder {
+    color: #aaaaaa !important;
+}
+.item-dd .Select-menu-outer,
+.item-card .Select-menu-outer {
+    background-color: #0d0d1a !important;
+    border: 1px solid rgba(255,255,255,0.15) !important;
+    z-index: 9999 !important;
+}
+.item-dd .Select-menu,
+.item-card .Select-menu {
+    background-color: #0d0d1a !important;
+}
+.item-dd .Select-option,
+.item-dd .VirtualizedSelectOption,
+.item-card .Select-option,
+.item-card .VirtualizedSelectOption {
+    background-color: #0d0d1a !important;
+    color: #ffffff !important;
+}
+.item-dd .VirtualizedSelectFocusedOption,
+.item-dd .Select-option.is-focused,
+.item-card .VirtualizedSelectFocusedOption,
+.item-card .Select-option.is-focused {
+    background-color: #0f3460 !important;
+    color: #00d4ff !important;
+}
+.item-dd .Select-arrow {
+    border-color: #aaaaaa transparent transparent !important;
+}
+.item-dd .Select-input > input {
+    color: #ffffff !important;
+}
+
 /* ── Thin dark scrollbars ── */
 *::-webkit-scrollbar { width: 6px; height: 6px; }
 *::-webkit-scrollbar-track { background: #0d0d1a; border-radius: 3px; }
