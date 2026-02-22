@@ -10319,7 +10319,33 @@ def serve_layout():
                         _new_count += 1
     inv_label = f"Inventory ({_new_count} new)" if _new_count > 0 else "Inventory (Cost of Goods)"
 
+    # Inline dropdown dark-theme CSS — guarantees dark dropdowns regardless of asset loading
+    _dropdown_css = html.Style("""
+        .Select-control { background-color: #0d0d1a !important; border: 1px solid #66666655 !important;
+            color: #fff !important; border-radius: 6px !important; }
+        .is-open > .Select-control { background: #0d0d1a !important; }
+        .Select-value-label { color: #fff !important; }
+        .has-value.Select--single > .Select-control .Select-value .Select-value-label,
+        .has-value.is-pseudo-focused.Select--single > .Select-control .Select-value .Select-value-label
+            { color: #fff !important; }
+        .Select-placeholder { color: #aaa !important; }
+        .Select-menu-outer { background-color: #0d0d1a !important; border: 1px solid #66666655 !important;
+            z-index: 9999 !important; }
+        .Select-menu { background-color: #0d0d1a !important; }
+        .Select-option, .VirtualizedSelectOption { background-color: #0d0d1a !important; color: #fff !important; }
+        .Select-option.is-focused, .VirtualizedSelectFocusedOption
+            { background-color: #0f3460 !important; color: #00d4ff !important; }
+        .Select-option.is-selected, .VirtualizedSelectSelectedOption
+            { background-color: #16213e !important; color: #2ecc71 !important; }
+        .Select-noresults { background-color: #0d0d1a !important; color: #aaa !important; }
+        .Select-input > input { color: #fff !important; }
+        .Select-arrow { border-color: #aaa transparent transparent !important; }
+        .Select-clear { color: #aaa !important; }
+        .Select-multi-value-wrapper { background-color: #0d0d1a !important; }
+    """)
+
     return html.Div([
+        _dropdown_css,
         # Header
         html.Div([
             html.H1("TJs SOFTWARE PROJECT", style={"color": ORANGE, "margin": "0", "fontSize": "24px"}),
