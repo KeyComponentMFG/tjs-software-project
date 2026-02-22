@@ -6718,25 +6718,26 @@ app.index_string = '''<!DOCTYPE html>
 {%renderer%}
 </footer>
 <script>
-// Force dark theme on all Dash dropdowns via MutationObserver
 (function(){
   var S={backgroundColor:"#0d0d1a",color:"#fff",borderRadius:"6px",border:"1px solid rgba(102,102,102,0.33)"};
-  var M={backgroundColor:"#0d0d1a",color:"#fff"};
-  function fix(root){
-    root.querySelectorAll(".Select-control").forEach(function(el){Object.assign(el.style,S)});
-    root.querySelectorAll(".Select-value-label").forEach(function(el){el.style.color="#fff"});
-    root.querySelectorAll(".Select-placeholder").forEach(function(el){el.style.color="#aaa"});
-    root.querySelectorAll(".Select-menu-outer,.Select-menu").forEach(function(el){Object.assign(el.style,M)});
-    root.querySelectorAll(".Select-option,.VirtualizedSelectOption").forEach(function(el){Object.assign(el.style,M)});
-    root.querySelectorAll(".Select-multi-value-wrapper").forEach(function(el){el.style.backgroundColor="#0d0d1a"});
-    root.querySelectorAll(".Select-input input").forEach(function(el){el.style.color="#fff"});
-  }
-  fix(document);
-  new MutationObserver(function(muts){
-    muts.forEach(function(m){
-      if(m.addedNodes.length) fix(document);
+  function fix(){
+    document.querySelectorAll(".Select-control").forEach(function(el){
+      if(el.style.backgroundColor!=="rgb(13, 13, 26)"){Object.assign(el.style,S)}
     });
-  }).observe(document.body,{childList:true,subtree:true});
+    document.querySelectorAll(".Select-value-label").forEach(function(el){el.style.color="#fff"});
+    document.querySelectorAll(".Select-placeholder").forEach(function(el){el.style.color="#aaa"});
+    document.querySelectorAll(".Select-menu-outer,.Select-menu,.Select-option,.VirtualizedSelectOption").forEach(function(el){
+      el.style.backgroundColor="#0d0d1a";el.style.color="#fff";
+    });
+    document.querySelectorAll(".Select-multi-value-wrapper").forEach(function(el){el.style.backgroundColor="#0d0d1a"});
+    document.querySelectorAll(".Select-input input").forEach(function(el){el.style.color="#fff"});
+    document.querySelectorAll(".Select-arrow").forEach(function(el){el.style.borderTopColor="#aaa"});
+  }
+  setInterval(fix,400);
+  var ready=function(){
+    new MutationObserver(function(){fix()}).observe(document.body,{childList:true,subtree:true});
+  };
+  if(document.body){ready()}else{document.addEventListener("DOMContentLoaded",ready)}
 })();
 </script>
 </body>
