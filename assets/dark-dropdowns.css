@@ -329,3 +329,19 @@ details.item-card:hover {
 .new-badge {
     animation: pulse-new 1.5s ease-in-out infinite;
 }
+
+/* ── JARVIS pulsing cyan dot ── */
+@keyframes jarvis-pulse {
+    0%, 100% { opacity: 1; box-shadow: 0 0 4px #00d4ff44; }
+    50% { opacity: 0.4; box-shadow: 0 0 12px #00d4ff88; }
+}
+.jarvis-pulse {
+    animation: jarvis-pulse 2s ease-in-out infinite;
+}
+
+/* ── Action card hover (slide-right effect) ── */
+.action-card:hover {
+    transform: translateX(4px);
+    box-shadow: 0 4px 16px rgba(0,0,0,0.35) !important;
+    filter: brightness(1.05);
+}

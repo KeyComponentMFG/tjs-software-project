@@ -8627,9 +8627,810 @@ def build_tab1_overview():
     ], style={"padding": TAB_PADDING})
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# JARVIS Business Intelligence — Helper Functions
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _compute_health_score():
+    """Compute composite business health score (0-100) with 8 weighted sub-scores."""
+    sub_scores = {}
+    weights = {}
+
+    # 1. Profit Margin (25%) — 0% = 0, 30%+ = 100
+    pm = max(0, min(100, profit_margin / 30 * 100))
+    sub_scores["Profit Margin"] = round(pm)
+    weights["Profit Margin"] = 0.25
+
+    # 2. Revenue Trend (20%) — last month vs prior avg, -30% = 0, +30% = 100
+    if len(months_sorted) >= 2:
+        last_rev = monthly_sales.get(months_sorted[-1], 0)
+        prior_avg = np.mean([monthly_sales.get(m, 0) for m in months_sorted[:-1]]) if len(months_sorted) > 1 else last_rev
+        if prior_avg > 0:
+            pct_change = (last_rev - prior_avg) / prior_avg
+            rt = max(0, min(100, (pct_change + 0.30) / 0.60 * 100))
+        else:
+            rt = 50
+    else:
+        rt = 50
+    sub_scores["Revenue Trend"] = round(rt)
+    weights["Revenue Trend"] = 0.20
+
+    # 3. Cash Position (15%) — months of runway, 0 = 0, 3+ = 100
+    if val_monthly_expenses > 0:
+        runway = bank_cash_on_hand / val_monthly_expenses
+        cp = max(0, min(100, runway / 3 * 100))
+    else:
+        cp = 100
+    sub_scores["Cash Position"] = round(cp)
+    weights["Cash Position"] = 0.15
+
+    # 4. Fee Efficiency (10%) — 20%+ fees = 0, 8% = 100
+    fee_pct = (total_fees / gross_sales * 100) if gross_sales else 0
+    fe = max(0, min(100, (20 - fee_pct) / 12 * 100))
+    sub_scores["Fee Efficiency"] = round(fe)
+    weights["Fee Efficiency"] = 0.10
+
+    # 5. Inventory Health (10%) — penalize OOS + low stock
+    if len(STOCK_SUMMARY) > 0:
+        stock_kpis = _compute_stock_kpis()
+        total_items = max(stock_kpis["unique"], 1)
+        oos_pct = stock_kpis["oos"] / total_items
+        low_pct = stock_kpis["low"] / total_items
+        ih = max(0, 100 - oos_pct * 150 - low_pct * 50)
+    else:
+        ih = 50  # no inventory data = neutral
+    sub_scores["Inventory Health"] = round(ih)
+    weights["Inventory Health"] = 0.10
+
+    # 6. Order Velocity (10%) — orders/day, 0 = 0, 3+ = 100
+    ov = max(0, min(100, _daily_orders_avg / 3 * 100))
+    sub_scores["Order Velocity"] = round(ov)
+    weights["Order Velocity"] = 0.10
+
+    # 7. Data Quality (5%) — penalize audit issues
+    todos = _build_health_checks()
+    # Count items in the todo panel (each Div child with priority badge)
+    try:
+        todo_children = todos.children if hasattr(todos, 'children') else []
+        if isinstance(todo_children, list):
+            n_issues = len([c for c in todo_children if hasattr(c, 'style')])
+        else:
+            n_issues = 0
+    except Exception:
+        n_issues = 0
+    dq = max(0, 100 - n_issues * 12)
+    sub_scores["Data Quality"] = round(dq)
+    weights["Data Quality"] = 0.05
+
+    # 8. Shipping Economics (5%) — shipping profit/loss margin
+    if buyer_paid_shipping > 0:
+        ship_margin = shipping_profit / buyer_paid_shipping * 100
+        se = max(0, min(100, ship_margin + 50))  # -50% loss = 0, 0% = 50, 50% profit = 100
+    else:
+        se = 50
+    sub_scores["Shipping Economics"] = round(se)
+    weights["Shipping Economics"] = 0.05
+
+    # Composite score
+    score = sum(sub_scores[k] * weights[k] for k in sub_scores)
+    score = round(max(0, min(100, score)))
+
+    return score, sub_scores, weights
+
+
+def _generate_briefing():
+    """Generate natural-language daily briefing paragraphs from data."""
+    from datetime import datetime
+    now = datetime.now()
+    hour = now.hour
+    greeting = "Good morning" if hour < 12 else "Good afternoon" if hour < 17 else "Good evening"
+
+    paragraphs = []
+
+    # Opening
+    paragraphs.append(
+        f"{greeting}. Today is {now.strftime('%A, %B %d, %Y')}. "
+        f"Here's your business intelligence briefing."
+    )
+
+    # Revenue this month vs last month
+    if len(months_sorted) >= 2:
+        current_month = months_sorted[-1]
+        prev_month = months_sorted[-2]
+        curr_rev = monthly_sales.get(current_month, 0)
+        prev_rev = monthly_sales.get(prev_month, 0)
+        if prev_rev > 0:
+            rev_change = (curr_rev - prev_rev) / prev_rev * 100
+            direction = "up" if rev_change > 0 else "down"
+            # Run rate projection
+            try:
+                cm_parts = current_month.split("-")
+                import calendar
+                days_in_month = calendar.monthrange(int(cm_parts[0]), int(cm_parts[1]))[1]
+                day_of_month = min(now.day, days_in_month)
+                if day_of_month > 0:
+                    run_rate = curr_rev / day_of_month * days_in_month
+                else:
+                    run_rate = curr_rev
+            except Exception:
+                run_rate = curr_rev
+            paragraphs.append(
+                f"Revenue this month ({current_month}): ${curr_rev:,.0f}, {direction} {abs(rev_change):.1f}% "
+                f"from last month's ${prev_rev:,.0f}. "
+                f"At current pace, projected to finish the month at ${run_rate:,.0f}."
+            )
+        else:
+            paragraphs.append(f"Revenue this month: ${curr_rev:,.0f}.")
+    elif len(months_sorted) == 1:
+        curr_rev = monthly_sales.get(months_sorted[0], 0)
+        paragraphs.append(f"Revenue this month: ${curr_rev:,.0f}. This is your first month of data.")
+
+    # Profit margin health
+    if profit_margin >= 25:
+        margin_text = f"Profit margin is strong at {profit_margin:.1f}%. You're retaining a healthy share of revenue."
+    elif profit_margin >= 15:
+        margin_text = (f"Profit margin is {profit_margin:.1f}%, which is solid but has room to improve. "
+                       f"Focus on reducing your largest expense categories to push above 25%.")
+    elif profit_margin >= 0:
+        margin_text = (f"Profit margin is thin at {profit_margin:.1f}%. Review your fee structure and shipping costs — "
+                       f"small percentage improvements here translate to significant dollar gains.")
+    else:
+        margin_text = (f"Profit margin is negative at {profit_margin:.1f}%. "
+                       f"The business is currently operating at a loss. Immediate cost review recommended.")
+    paragraphs.append(margin_text)
+
+    # Cash runway
+    if val_monthly_expenses > 0:
+        runway_months = bank_cash_on_hand / val_monthly_expenses
+        if runway_months >= 3:
+            paragraphs.append(
+                f"Cash position: ${bank_cash_on_hand:,.0f} on hand — {runway_months:.1f} months of runway. "
+                f"You have comfortable reserves."
+            )
+        elif runway_months >= 1:
+            paragraphs.append(
+                f"Cash position: ${bank_cash_on_hand:,.0f} on hand — {runway_months:.1f} months of runway. "
+                f"Consider building a larger cash buffer."
+            )
+        else:
+            paragraphs.append(
+                f"Cash position: ${bank_cash_on_hand:,.0f} on hand — less than 1 month of runway. "
+                f"Cash reserves are critically low."
+            )
+
+    # Inventory alerts
+    if len(STOCK_SUMMARY) > 0:
+        stock_kpis = _compute_stock_kpis()
+        alerts = []
+        if stock_kpis["oos"] > 0:
+            alerts.append(f"{stock_kpis['oos']} item(s) are out of stock")
+        if stock_kpis["low"] > 0:
+            alerts.append(f"{stock_kpis['low']} item(s) are running low (1-2 left)")
+        if alerts:
+            paragraphs.append(f"Inventory alert: {'; '.join(alerts)}. Review the Inventory tab for reorder needs.")
+        else:
+            paragraphs.append(f"Inventory status: All {stock_kpis['unique']} tracked items are adequately stocked.")
+
+    return paragraphs
+
+
+def _generate_actions():
+    """Generate priority action items ranked by dollar impact."""
+    actions = []
+
+    # 1. Restock OOS items
+    if len(STOCK_SUMMARY) > 0:
+        oos_df = STOCK_SUMMARY[STOCK_SUMMARY["in_stock"] <= 0]
+        if len(oos_df) > 0:
+            avg_unit_cost = oos_df["unit_cost"].mean()
+            reorder_cost = avg_unit_cost * len(oos_df)
+            # Estimate lost revenue: each OOS item = ~1 sale/week at avg order value
+            est_lost_weekly = len(oos_df) * avg_order * 0.5
+            oos_names = list(oos_df["display_name"].values[:3])
+            actions.append({
+                "priority": "HIGH",
+                "title": f"Restock {len(oos_df)} Out-of-Stock Items",
+                "reason": f"Items like {', '.join(n[:25] for n in oos_names)}{'...' if len(oos_df) > 3 else ''} "
+                          f"can't generate revenue until restocked.",
+                "impact": est_lost_weekly * 4,
+                "cost": reorder_cost,
+                "difficulty": "Easy",
+            })
+
+    # 2. Fix shipping pricing
+    if shipping_profit < -50:
+        actions.append({
+            "priority": "HIGH",
+            "title": "Fix Shipping Pricing — You're Losing Money",
+            "reason": f"Buyers pay ${buyer_paid_shipping:,.0f} for shipping but labels cost "
+                      f"${total_shipping_cost:,.0f}. Net loss: ${abs(shipping_profit):,.0f}.",
+            "impact": abs(shipping_profit),
+            "cost": 0,
+            "difficulty": "Easy",
+        })
+
+    # 3. Marketing ROI check
+    if total_marketing > 0 and gross_sales > 0:
+        roas = gross_sales / total_marketing
+        if roas < 5:
+            potential_save = total_marketing * 0.3
+            actions.append({
+                "priority": "MEDIUM",
+                "title": "Review Ad Spend — ROAS Below 5x",
+                "reason": f"Spending ${total_marketing:,.0f} on ads with {roas:.1f}x return. "
+                          f"Industry target: 5-10x. Consider reducing underperforming campaigns.",
+                "impact": potential_save,
+                "cost": 0,
+                "difficulty": "Medium",
+            })
+
+    # 4. Fee reduction (Share & Save)
+    if share_save >= 0 and gross_sales > 0:
+        potential_credits = gross_sales * 0.01  # ~1% savings
+        actions.append({
+            "priority": "MEDIUM",
+            "title": "Maximize Share & Save Credits",
+            "reason": f"Share & Save credits earned: ${abs(share_save):,.0f}. "
+                      f"Sharing listings on social media earns fee credits.",
+            "impact": potential_credits,
+            "cost": 0,
+            "difficulty": "Easy",
+        })
+
+    # 5. AOV recovery
+    if len(months_sorted) >= 3:
+        recent_aovs = [monthly_aov.get(m, 0) for m in months_sorted[-3:]]
+        earlier_aovs = [monthly_aov.get(m, 0) for m in months_sorted[:-3]] if len(months_sorted) > 3 else recent_aovs
+        if earlier_aovs and np.mean(earlier_aovs) > 0:
+            aov_decline = (np.mean(recent_aovs) - np.mean(earlier_aovs)) / np.mean(earlier_aovs)
+            if aov_decline < -0.1:
+                monthly_impact = abs(aov_decline) * val_monthly_run_rate
+                actions.append({
+                    "priority": "MEDIUM",
+                    "title": "Average Order Value Declining",
+                    "reason": f"Recent AOV: ${np.mean(recent_aovs):,.2f} vs earlier: ${np.mean(earlier_aovs):,.2f} "
+                              f"({aov_decline * 100:+.1f}%). Consider product bundling or upsells.",
+                    "impact": monthly_impact,
+                    "cost": 0,
+                    "difficulty": "Medium",
+                })
+
+    # 6. Owner draw settlement
+    if draw_diff > 100:
+        actions.append({
+            "priority": "LOW",
+            "title": f"Settle Owner Draw Imbalance (${draw_diff:,.0f})",
+            "reason": f"TJ: ${tulsa_draw_total:,.0f} vs Braden: ${texas_draw_total:,.0f}. "
+                      f"{draw_owed_to} is owed ${draw_diff:,.0f} to equalize 50/50 split.",
+            "impact": draw_diff,
+            "cost": draw_diff,
+            "difficulty": "Easy",
+        })
+
+    # 7. Data quality issues
+    if len(STOCK_SUMMARY) > 0:
+        unreviewed = sum(1 for inv in INVOICES for item in inv["items"]
+                         if (inv["order_num"], item["name"]) not in _ITEM_DETAILS)
+        if unreviewed > 0:
+            actions.append({
+                "priority": "LOW",
+                "title": f"Categorize {unreviewed} Unreviewed Inventory Items",
+                "reason": "Uncategorized items affect COGS accuracy and profit calculations.",
+                "impact": unreviewed * 5,  # minor data quality impact
+                "cost": 0,
+                "difficulty": "Easy",
+            })
+
+    # Sort by estimated dollar impact (descending)
+    actions.sort(key=lambda a: a.get("impact", 0), reverse=True)
+    return actions
+
+
+def _detect_patterns():
+    """Detect cross-source intelligence patterns."""
+    patterns = []
+
+    # 1. Inventory spend → revenue correlation
+    if len(months_sorted) >= 3:
+        rev_vals = [monthly_sales.get(m, 0) for m in months_sorted]
+        inv_vals = [monthly_inv_spend.get(m, 0) for m in months_sorted]
+        if len(rev_vals) >= 3 and np.std(rev_vals) > 0 and np.std(inv_vals) > 0:
+            corr = np.corrcoef(rev_vals, inv_vals)[0, 1]
+            if abs(corr) > 0.5:
+                if corr > 0:
+                    patterns.append({
+                        "type": "Opportunity",
+                        "insight": f"Inventory spending correlates with revenue (r={corr:.2f}). "
+                                   f"Months where you invest more in supplies tend to produce more sales. "
+                                   f"Strategic inventory investment may accelerate growth.",
+                        "sources": ["Etsy Sales", "Inventory Invoices"],
+                    })
+                else:
+                    patterns.append({
+                        "type": "Warning",
+                        "insight": f"Inverse correlation between inventory spend and revenue (r={corr:.2f}). "
+                                   f"You may be overstocking during slow periods.",
+                        "sources": ["Etsy Sales", "Inventory Invoices"],
+                    })
+
+    # 2. Best/worst sales day of week
+    if hasattr(daily_df, 'index') and len(daily_df) > 7:
+        patterns.append({
+            "type": "Opportunity",
+            "insight": f"Best sales day: {_best_dow} (avg ${max(_dow_rev_vals):,.0f}/day). "
+                       f"Worst: {_worst_dow} (avg ${min(_dow_rev_vals):,.0f}/day). "
+                       f"Schedule new listings and promotions for {_best_dow}s.",
+            "sources": ["Etsy Sales"],
+        })
+
+    # 3. Product concentration risk
+    if len(product_revenue_est) > 0:
+        total_prod_rev = product_revenue_est.sum()
+        if total_prod_rev > 0:
+            top1_pct = product_revenue_est.values[0] / total_prod_rev * 100
+            top3_pct = product_revenue_est.head(3).sum() / total_prod_rev * 100
+            if top1_pct > 40:
+                patterns.append({
+                    "type": "Risk",
+                    "insight": f"Product concentration risk: '{product_revenue_est.index[0][:35]}' accounts for "
+                               f"{top1_pct:.0f}% of revenue. Top 3 products = {top3_pct:.0f}%. "
+                               f"Diversify your catalog to reduce single-product dependency.",
+                    "sources": ["Etsy Sales", "Product Fees"],
+                })
+            elif top3_pct > 70:
+                patterns.append({
+                    "type": "Warning",
+                    "insight": f"Top 3 products represent {top3_pct:.0f}% of total revenue. "
+                               f"Consider developing new product lines to spread risk.",
+                    "sources": ["Etsy Sales", "Product Fees"],
+                })
+
+    # 4. Fee rate creep
+    if len(months_sorted) >= 4:
+        mid = len(months_sorted) // 2
+        first_half_fee_pct = np.mean(
+            [monthly_fees.get(m, 0) / monthly_sales.get(m, 1) * 100 for m in months_sorted[:mid] if monthly_sales.get(m, 0) > 0]
+        ) if any(monthly_sales.get(m, 0) > 0 for m in months_sorted[:mid]) else 0
+        second_half_fee_pct = np.mean(
+            [monthly_fees.get(m, 0) / monthly_sales.get(m, 1) * 100 for m in months_sorted[mid:] if monthly_sales.get(m, 0) > 0]
+        ) if any(monthly_sales.get(m, 0) > 0 for m in months_sorted[mid:]) else 0
+        if second_half_fee_pct > first_half_fee_pct + 1.5:
+            patterns.append({
+                "type": "Warning",
+                "insight": f"Fee rate creeping up: first half avg {first_half_fee_pct:.1f}% → "
+                           f"recent avg {second_half_fee_pct:.1f}%. "
+                           f"Check for new Etsy fee structures or changes in product mix.",
+                "sources": ["Etsy Fees", "Etsy Sales"],
+            })
+
+    # 5. Shipping cost recovery
+    if buyer_paid_shipping > 0:
+        recovery_rate = buyer_paid_shipping / total_shipping_cost * 100 if total_shipping_cost > 0 else 999
+        if recovery_rate < 80:
+            patterns.append({
+                "type": "Risk",
+                "insight": f"Shipping cost recovery: {recovery_rate:.0f}%. Buyers pay ${buyer_paid_shipping:,.0f} "
+                           f"but labels cost ${total_shipping_cost:,.0f}. You're subsidizing shipping by "
+                           f"${abs(shipping_profit):,.0f}. Increase shipping prices or switch to calculated shipping.",
+                "sources": ["Etsy Shipping", "Etsy Fees"],
+            })
+        elif recovery_rate > 120:
+            patterns.append({
+                "type": "Opportunity",
+                "insight": f"Shipping profit margin: {recovery_rate - 100:.0f}% above cost. "
+                           f"Earning ${shipping_profit:,.0f} from shipping — this is a hidden revenue stream.",
+                "sources": ["Etsy Shipping", "Etsy Fees"],
+            })
+
+    # 6. Bank expense spikes vs Etsy revenue
+    if bank_monthly and len(months_sorted) >= 3:
+        for m in months_sorted[-2:]:
+            rev = monthly_sales.get(m, 0)
+            bank_m = bank_monthly.get(m, {})
+            debits = bank_m.get("debits", 0)
+            if rev > 0 and debits > rev * 0.9:
+                patterns.append({
+                    "type": "Warning",
+                    "insight": f"Bank expenses in {m} (${debits:,.0f}) nearly matched Etsy revenue (${rev:,.0f}). "
+                               f"Expense-to-revenue ratio: {debits / rev * 100:.0f}%. Review for non-essential spending.",
+                    "sources": ["Bank Statements", "Etsy Sales"],
+                })
+                break
+
+    return patterns
+
+
+def _build_jarvis_header():
+    """Build the JARVIS branded header banner."""
+    from datetime import datetime
+    return html.Div([
+        html.Div([
+            html.Span("JARVIS", style={
+                "color": CYAN, "fontSize": "28px", "fontWeight": "bold",
+                "letterSpacing": "4px", "marginRight": "12px",
+            }),
+            html.Span("Business Intelligence", style={
+                "color": GRAY, "fontSize": "16px", "fontWeight": "300",
+                "letterSpacing": "1px",
+            }),
+            html.Span([
+                html.Span("", className="jarvis-pulse", style={
+                    "display": "inline-block", "width": "8px", "height": "8px",
+                    "borderRadius": "50%", "backgroundColor": CYAN,
+                    "marginRight": "6px", "verticalAlign": "middle",
+                }),
+                html.Span("LIVE", style={
+                    "color": CYAN, "fontSize": "10px", "fontWeight": "bold",
+                    "letterSpacing": "2px", "verticalAlign": "middle",
+                }),
+            ], style={"marginLeft": "16px"}),
+        ], style={"display": "flex", "alignItems": "center"}),
+        html.Div(
+            f"Last analysis: {datetime.now().strftime('%b %d, %Y at %I:%M %p')}",
+            style={"color": DARKGRAY, "fontSize": "11px", "marginTop": "4px"},
+        ),
+    ], style={
+        "padding": "16px 20px", "marginBottom": "16px",
+        "borderBottom": f"2px solid {CYAN}33",
+        "background": f"linear-gradient(135deg, {CARD2}, {BG})",
+        "borderRadius": "10px",
+    })
+
+
+def _build_health_section(score, sub_scores, weights, briefing):
+    """Build health gauge (left 40%) + daily briefing (right 60%)."""
+    # Health gauge
+    if score >= 75:
+        label, label_color = "ELITE", CYAN
+    elif score >= 50:
+        label, label_color = "STRONG", GREEN
+    elif score >= 25:
+        label, label_color = "NEEDS ATTENTION", ORANGE
+    else:
+        label, label_color = "CRITICAL", RED
+
+    gauge_fig = go.Figure(go.Indicator(
+        mode="gauge+number",
+        value=score,
+        number={"font": {"size": 48, "color": label_color}},
+        gauge={
+            "axis": {"range": [0, 100], "tickwidth": 1, "tickcolor": DARKGRAY,
+                     "tickfont": {"color": GRAY, "size": 10}},
+            "bar": {"color": label_color, "thickness": 0.3},
+            "bgcolor": CARD2,
+            "borderwidth": 0,
+            "steps": [
+                {"range": [0, 25], "color": "rgba(231,76,60,0.12)"},
+                {"range": [25, 50], "color": "rgba(243,156,18,0.09)"},
+                {"range": [50, 75], "color": "rgba(46,204,113,0.09)"},
+                {"range": [75, 100], "color": "rgba(0,212,255,0.09)"},
+            ],
+            "threshold": {
+                "line": {"color": label_color, "width": 3},
+                "thickness": 0.8, "value": score,
+            },
+        },
+    ))
+    _gauge_layout = {k: v for k, v in CHART_LAYOUT.items() if k != "margin"}
+    gauge_fig.update_layout(
+        **_gauge_layout,
+        height=250,
+        margin=dict(t=30, b=10, l=30, r=30),
+        annotations=[dict(
+            text=label, x=0.5, y=-0.05, xref="paper", yref="paper",
+            font=dict(size=16, color=label_color, family="Arial Black"),
+            showarrow=False,
+        )],
+    )
+
+    # Sub-score progress bars (2-column grid)
+    sub_bars = []
+    sorted_subs = sorted(sub_scores.items(), key=lambda x: weights.get(x[0], 0), reverse=True)
+    for name, val in sorted_subs:
+        w = weights.get(name, 0)
+        bar_color = CYAN if val >= 75 else GREEN if val >= 50 else ORANGE if val >= 25 else RED
+        sub_bars.append(html.Div([
+            html.Div([
+                html.Span(name, style={"color": GRAY, "fontSize": "10px"}),
+                html.Span(f"{val}/100 ({w * 100:.0f}%)", style={
+                    "color": bar_color, "fontSize": "10px", "fontWeight": "bold"}),
+            ], style={"display": "flex", "justifyContent": "space-between", "marginBottom": "2px"}),
+            html.Div([
+                html.Div(style={
+                    "width": f"{val}%", "height": "6px",
+                    "backgroundColor": bar_color, "borderRadius": "3px",
+                    "transition": "width 0.5s ease",
+                }),
+            ], style={
+                "backgroundColor": f"{GRAY}20", "borderRadius": "3px",
+                "height": "6px", "overflow": "hidden",
+            }),
+        ], style={"marginBottom": "6px", "minWidth": "45%", "flex": "1", "padding": "0 4px"}))
+
+    # Briefing paragraphs
+    briefing_elements = []
+    for i, para in enumerate(briefing):
+        if i == 0:
+            briefing_elements.append(html.P(para, style={
+                "color": CYAN, "fontSize": "14px", "fontWeight": "500",
+                "margin": "0 0 10px 0", "lineHeight": "1.5",
+            }))
+        else:
+            briefing_elements.append(html.P(para, style={
+                "color": "#cccccc", "fontSize": "12px",
+                "margin": "0 0 8px 0", "lineHeight": "1.6",
+            }))
+
+    return html.Div([
+        # Health Score label
+        html.H3("BUSINESS HEALTH SCORE", style={
+            "color": CYAN, "margin": "0 0 10px 0", "fontSize": "14px",
+            "letterSpacing": "1.5px",
+        }),
+        html.Div([
+            # LEFT: Gauge + sub-scores
+            html.Div([
+                dcc.Graph(figure=gauge_fig, config={"displayModeBar": False},
+                          style={"height": "250px"}),
+                html.Div(sub_bars, style={
+                    "display": "flex", "flexWrap": "wrap", "gap": "2px",
+                    "padding": "0 8px",
+                }),
+            ], style={"flex": "2", "minWidth": "300px"}),
+            # RIGHT: Daily Briefing
+            html.Div([
+                html.Div([
+                    html.Span("DAILY BRIEFING", style={
+                        "color": CYAN, "fontSize": "12px", "fontWeight": "bold",
+                        "letterSpacing": "1.5px",
+                    }),
+                ], style={"marginBottom": "12px"}),
+                *briefing_elements,
+            ], style={
+                "flex": "3", "minWidth": "300px", "padding": "16px",
+                "backgroundColor": CARD, "borderRadius": "10px",
+                "border": f"1px solid {CYAN}22",
+            }),
+        ], style={"display": "flex", "gap": "16px", "flexWrap": "wrap"}),
+    ], style={"marginBottom": "20px"})
+
+
+def _build_actions_section(actions):
+    """Build priority action items section."""
+    if not actions:
+        return html.Div()
+
+    cards = []
+    for action in actions[:7]:
+        pri = action["priority"]
+        pri_color = RED if pri == "HIGH" else ORANGE if pri == "MEDIUM" else CYAN
+        cards.append(html.Div([
+            html.Div([
+                html.Span(pri, style={
+                    "color": BG, "backgroundColor": pri_color,
+                    "padding": "2px 8px", "borderRadius": "4px",
+                    "fontSize": "10px", "fontWeight": "bold",
+                    "letterSpacing": "0.5px",
+                }),
+                html.Span(f"  {action.get('difficulty', '')}", style={
+                    "color": DARKGRAY, "fontSize": "10px", "marginLeft": "8px",
+                }),
+            ], style={"marginBottom": "6px"}),
+            html.Div(action["title"], style={
+                "color": WHITE, "fontSize": "13px", "fontWeight": "bold",
+                "marginBottom": "4px",
+            }),
+            html.P(action["reason"], style={
+                "color": "#bbbbbb", "fontSize": "11px", "margin": "0 0 6px 0",
+                "lineHeight": "1.5",
+            }),
+            html.Div([
+                html.Span(f"Impact: ${action.get('impact', 0):,.0f}", style={
+                    "color": GREEN, "fontSize": "11px", "fontWeight": "bold",
+                }),
+                html.Span(f"  Cost: ${action.get('cost', 0):,.0f}", style={
+                    "color": GRAY, "fontSize": "11px", "marginLeft": "12px",
+                }) if action.get("cost", 0) > 0 else html.Span(),
+            ]),
+        ], className="action-card", style={
+            "backgroundColor": CARD, "padding": "12px 14px", "borderRadius": "8px",
+            "borderLeft": f"4px solid {pri_color}", "marginBottom": "8px",
+            "transition": "transform 0.15s ease, box-shadow 0.15s ease",
+            "cursor": "default",
+        }))
+
+    return html.Div([
+        html.H3("PRIORITY ACTIONS", style={
+            "color": CYAN, "margin": "0 0 6px 0", "fontSize": "14px",
+            "letterSpacing": "1.5px",
+        }),
+        html.P("Ranked by estimated dollar impact. Address high-priority items first.",
+               style={"color": GRAY, "margin": "0 0 12px 0", "fontSize": "12px"}),
+        *cards,
+    ], style={
+        "marginBottom": "20px",
+        "borderTop": f"2px solid {CYAN}33", "paddingTop": "14px",
+    })
+
+
+def _build_patterns_section(patterns):
+    """Build cross-source pattern detection section."""
+    if not patterns:
+        return html.Div()
+
+    cards = []
+    for pat in patterns:
+        ptype = pat["type"]
+        type_color = GREEN if ptype == "Opportunity" else RED if ptype == "Risk" else ORANGE
+        sources_text = " + ".join(pat.get("sources", []))
+        cards.append(html.Div([
+            html.Div([
+                html.Span(ptype.upper(), style={
+                    "color": BG, "backgroundColor": type_color,
+                    "padding": "2px 8px", "borderRadius": "4px",
+                    "fontSize": "10px", "fontWeight": "bold",
+                }),
+                html.Span(f"  Sources: {sources_text}", style={
+                    "color": DARKGRAY, "fontSize": "10px", "marginLeft": "8px",
+                }),
+            ], style={"marginBottom": "6px"}),
+            html.P(pat["insight"], style={
+                "color": "#cccccc", "fontSize": "12px", "margin": "0",
+                "lineHeight": "1.6",
+            }),
+        ], style={
+            "backgroundColor": "#0d1b2a", "padding": "12px 14px", "borderRadius": "8px",
+            "borderLeft": f"4px solid {type_color}", "marginBottom": "8px",
+        }))
+
+    return html.Div([
+        html.H3("PATTERN DETECTION", style={
+            "color": CYAN, "margin": "0 0 6px 0", "fontSize": "14px",
+            "letterSpacing": "1.5px",
+        }),
+        html.P("Cross-source intelligence — not just what happened, but why, and what to do about it.",
+               style={"color": GRAY, "margin": "0 0 12px 0", "fontSize": "12px"}),
+        *cards,
+    ], style={
+        "marginBottom": "20px",
+        "borderTop": f"2px solid {CYAN}33", "paddingTop": "14px",
+    })
+
+
+def _build_goal_tracker():
+    """Build goal tracking with sklearn projections."""
+    from datetime import datetime
+    now = datetime.now()
+
+    goals = []
+
+    # 1. Monthly Revenue vs $3,000 target
+    current_month = months_sorted[-1] if months_sorted else None
+    if current_month:
+        curr_rev = monthly_sales.get(current_month, 0)
+        target = 3000
+        pct = min(100, curr_rev / target * 100) if target > 0 else 0
+        try:
+            cm_parts = current_month.split("-")
+            import calendar
+            days_in_month = calendar.monthrange(int(cm_parts[0]), int(cm_parts[1]))[1]
+            day_of_month = min(now.day, days_in_month)
+            projected = curr_rev / day_of_month * days_in_month if day_of_month > 0 else curr_rev
+        except Exception:
+            projected = curr_rev
+        goals.append({
+            "label": "Monthly Revenue",
+            "current": curr_rev,
+            "target": target,
+            "pct": pct,
+            "projected": projected,
+            "format": "money",
+        })
+
+    # 2. Annual Revenue vs $36,000 target
+    goals.append({
+        "label": "Annual Revenue (annualized)",
+        "current": val_annual_revenue,
+        "target": 36000,
+        "pct": min(100, val_annual_revenue / 36000 * 100) if val_annual_revenue else 0,
+        "projected": val_proj_12mo_revenue,
+        "format": "money",
+    })
+
+    # 3. Profit Margin vs 25% target
+    goals.append({
+        "label": "Profit Margin",
+        "current": profit_margin,
+        "target": 25,
+        "pct": min(100, profit_margin / 25 * 100) if profit_margin > 0 else 0,
+        "projected": profit_margin,  # current = projected for margin
+        "format": "pct",
+    })
+
+    # 4. Monthly Orders vs 50 target
+    if current_month:
+        curr_orders = monthly_order_counts.get(current_month, 0)
+        try:
+            projected_orders = curr_orders / day_of_month * days_in_month if day_of_month > 0 else curr_orders
+        except Exception:
+            projected_orders = curr_orders
+        goals.append({
+            "label": "Monthly Orders",
+            "current": curr_orders,
+            "target": 50,
+            "pct": min(100, curr_orders / 50 * 100),
+            "projected": projected_orders,
+            "format": "int",
+        })
+
+    # Build UI
+    bars = []
+    for g in goals:
+        pct = g["pct"]
+        bar_color = CYAN if pct >= 100 else GREEN if pct >= 75 else ORANGE if pct >= 50 else RED
+        if g["format"] == "money":
+            curr_str = f"${g['current']:,.0f}"
+            tgt_str = f"${g['target']:,.0f}"
+            proj_str = f"${g['projected']:,.0f}"
+        elif g["format"] == "pct":
+            curr_str = f"{g['current']:.1f}%"
+            tgt_str = f"{g['target']}%"
+            proj_str = f"{g['projected']:.1f}%"
+        else:
+            curr_str = f"{g['current']:.0f}"
+            tgt_str = f"{g['target']}"
+            proj_str = f"{g['projected']:.0f}"
+
+        bars.append(html.Div([
+            html.Div([
+                html.Span(g["label"], style={"color": WHITE, "fontSize": "12px", "fontWeight": "bold"}),
+                html.Span(f"{curr_str} / {tgt_str}", style={
+                    "color": bar_color, "fontSize": "11px", "fontFamily": "monospace",
+                }),
+            ], style={"display": "flex", "justifyContent": "space-between", "marginBottom": "4px"}),
+            html.Div([
+                html.Div(style={
+                    "width": f"{min(pct, 100)}%", "height": "10px",
+                    "backgroundColor": bar_color, "borderRadius": "5px",
+                    "transition": "width 0.5s ease",
+                }),
+            ], style={
+                "backgroundColor": f"{GRAY}20", "borderRadius": "5px",
+                "height": "10px", "overflow": "hidden", "marginBottom": "4px",
+            }),
+            html.Div([
+                html.Span(f"{pct:.0f}% to goal", style={"color": GRAY, "fontSize": "10px"}),
+                html.Span(f"Projected: {proj_str}", style={
+                    "color": DARKGRAY, "fontSize": "10px",
+                }),
+            ], style={"display": "flex", "justifyContent": "space-between"}),
+        ], style={"marginBottom": "10px", "padding": "8px 12px", "backgroundColor": CARD,
+                  "borderRadius": "8px"}))
+
+    return html.Div([
+        html.H3("GOAL TRACKING", style={
+            "color": CYAN, "margin": "0 0 6px 0", "fontSize": "14px",
+            "letterSpacing": "1.5px",
+        }),
+        html.P("Progress toward targets with projected end-of-period values.",
+               style={"color": GRAY, "margin": "0 0 12px 0", "fontSize": "12px"}),
+        *bars,
+    ], style={
+        "marginBottom": "20px",
+        "borderTop": f"2px solid {CYAN}33", "paddingTop": "14px",
+    })
+
+
 def build_tab2_deep_dive():
-    """Tab 2 - Deep Dive: AI Analytics + Trends + Daily chart + Chatbot"""
-    # AI Analytics insight cards
+    """Tab 2 - JARVIS: Business Intelligence Command Center"""
+
+    # Compute JARVIS data
+    score, sub_scores, weights = _compute_health_score()
+    briefing = _generate_briefing()
+    actions = _generate_actions()
+    patterns = _detect_patterns()
+
+    # AI Analytics insight cards (existing)
     insight_cards = []
     for _, cat, title, detail, sev in analytics_insights:
         sc = severity_color(sev)
@@ -8648,353 +9449,378 @@ def build_tab2_deep_dive():
         }))
 
     return html.Div([
-        # ── AI ANALYTICS ──
-        html.Div([
-            html.H3("AI ANALYTICS BOT", style={"color": CYAN, "margin": "0", "display": "inline-block"}),
-            html.Span("  LIVE", style={
-                "color": BG, "backgroundColor": CYAN, "padding": "2px 10px",
-                "borderRadius": "12px", "fontSize": "11px", "fontWeight": "bold", "marginLeft": "12px",
-                "verticalAlign": "middle",
+        # ══ JARVIS HEADER ══
+        _build_jarvis_header(),
+
+        # ══ HEALTH SCORE + DAILY BRIEFING ══
+        _build_health_section(score, sub_scores, weights, briefing),
+
+        # ══ PRIORITY ACTIONS ══
+        _build_actions_section(actions),
+
+        # ══ PATTERN DETECTION ══
+        _build_patterns_section(patterns),
+
+        # ══ GOAL TRACKING ══
+        _build_goal_tracker(),
+
+        # ══════════════════════════════════════════════════════════════
+        # DETAILED CHARTS (collapsible sections — all existing charts)
+        # ══════════════════════════════════════════════════════════════
+
+        html.H3("DETAILED ANALYTICS", style={
+            "color": CYAN, "margin": "30px 0 6px 0", "fontSize": "14px",
+            "letterSpacing": "1.5px",
+            "borderTop": f"2px solid {CYAN}33", "paddingTop": "14px",
+        }),
+        html.P("Expand sections below for full chart breakdowns.",
+               style={"color": GRAY, "margin": "0 0 14px 0", "fontSize": "12px"}),
+
+        # ── Section 1: Revenue & Trends ──
+        html.Details([
+            html.Summary("Revenue & Trends", style={
+                "color": CYAN, "fontSize": "14px", "fontWeight": "bold",
+                "cursor": "pointer", "padding": "10px 0", "listStyle": "none",
             }),
-            html.P("Deep analysis -- learns from all transaction data, detects money leaks, projects future revenue",
-                   style={"color": GRAY, "margin": "4px 0 0 0", "fontSize": "13px"}),
-        ], style={"marginBottom": "12px"}),
-
-        chart_context(
-            "Linear regression forecast based on your monthly revenue trend. Solid lines = actual, dashed = projected. "
-            "The shaded band shows the confidence range — wider band means less predictable.",
-            metrics=[
-                ("Growth", f"{_growth_pct:+.1f}%/mo", GREEN if _growth_pct > 0 else RED),
-                ("R\u00b2 Fit", f"{_r2_sales:.2f}", TEAL),
-                ("Latest Month Rev", f"${_latest_month_rev:,.0f}", GREEN),
-                ("Latest Month Net", f"${_latest_month_net:,.0f}", ORANGE),
-            ],
-            look_for="Dashed lines trending up = growing business. R\u00b2 close to 1.0 = very predictable trend.",
-            simple="Solid lines = your actual sales and profit each month. Dashed lines = where a computer model predicts you're headed. If dashed lines point up, the business is growing."
-        ),
-        dcc.Graph(figure=proj_chart, config={"displayModeBar": False}, style={"height": "380px"}),
-        html.Div(insight_cards),
-
-        # ── TRENDS ──
-        html.H3("TRENDS & PATTERNS", style={"color": CYAN, "margin": "30px 0 6px 0",
-                 "borderTop": f"2px solid {CYAN}33", "paddingTop": "14px"}),
-        html.P("How every metric changes over time -- spot patterns, momentum shifts, and emerging risks.",
-               style={"color": GRAY, "margin": "0 0 14px 0", "fontSize": "13px"}),
-
-        chart_context(
-            "Green bars = daily revenue, orange bars = daily profit. Dashed lines = 30-day rolling averages that smooth out noise.",
-            metrics=[
-                ("Avg Rev/Day", f"${_daily_rev_avg:,.0f}", GREEN),
-                ("Avg Profit/Day", f"${_daily_profit_avg:,.0f}", ORANGE),
-                ("Best Day", f"${_best_day_rev:,.0f}", TEAL),
-            ],
-            look_for="Rolling averages trending up together. If revenue rises but profit flattens, costs are eating your growth.",
-            simple="Each bar is one day. Green = what you earned, orange = what you kept as profit. The smooth lines filter out the noise to show the overall direction. Lines going up = business improving.",
-        ),
-        dcc.Graph(figure=trend_profit_rev, config={"displayModeBar": False}, style={"height": "380px"}),
-
-        chart_context(
-            "Each line shows how many cents per dollar of sales go to that cost category. "
-            "Net Margin is what you keep after all Etsy deductions.",
-            metrics=[
-                ("Fees", f"{_last_fee_pct:.1f}%", RED),
-                ("Shipping", f"{_last_ship_pct:.1f}%", BLUE),
-                ("Marketing", f"{_last_mkt_pct:.1f}%", PURPLE),
-                ("Refunds", f"{_last_ref_pct:.1f}%", ORANGE),
-                ("Net Margin", f"{_last_margin_pct:.1f}%", TEAL),
-            ],
-            legend=[
-                (RED, "Fees %", "Etsy listing, transaction & payment processing fees combined"),
-                (BLUE, "Shipping %", "Cost of USPS/Asendia shipping labels you purchased"),
-                (PURPLE, "Marketing %", "Etsy Ads + Offsite Ads spend as % of sales"),
-                (ORANGE, "Refunds %", "Money returned to buyers — lower is better"),
-                (TEAL, "Net Margin %", "What you actually keep from each dollar of sales (dashed line)"),
-            ],
-            look_for="Lines trending down = improving efficiency. Net Margin trending up = you're keeping more per sale.",
-            simple="Each line tracks a different cost as a percentage of sales. Lines going DOWN means you're getting more efficient. The teal dashed line (Net Margin) going UP is the best sign -- it means you're keeping more of each dollar.",
-        ),
-        dcc.Graph(figure=cost_ratio_fig, config={"displayModeBar": False}, style={"height": "380px"}),
-
-        html.Div([
             html.Div([
                 chart_context(
-                    "Average Order Value = total revenue \u00f7 number of orders per week. Higher AOV means customers spend more per purchase.",
+                    "Linear regression forecast based on your monthly revenue trend. Solid lines = actual, dashed = projected. "
+                    "The shaded band shows the confidence range — wider band means less predictable.",
                     metrics=[
-                        ("Overall AOV", f"${avg_order:,.2f}", TEAL),
-                        ("Best Week", f"${_aov_best_week:,.2f}", GREEN),
-                        ("Worst Week", f"${_aov_worst_week:,.2f}", RED),
+                        ("Growth", f"{_growth_pct:+.1f}%/mo", GREEN if _growth_pct > 0 else RED),
+                        ("R\u00b2 Fit", f"{_r2_sales:.2f}", TEAL),
+                        ("Latest Month Rev", f"${_latest_month_rev:,.0f}", GREEN),
+                        ("Latest Month Net", f"${_latest_month_net:,.0f}", ORANGE),
                     ],
-                    look_for="Upward trend = customers spending more. Sudden drops may mean discounting or smaller product mix.",
-                    simple="This shows how much each customer spends on average per order. Line going up = customers spending more per purchase. The gray dashed line is your overall average.",
+                    look_for="Dashed lines trending up = growing business. R\u00b2 close to 1.0 = very predictable trend.",
+                    simple="Solid lines = your actual sales and profit each month. Dashed lines = where a computer model predicts you're headed. If dashed lines point up, the business is growing."
                 ),
-                dcc.Graph(figure=aov_fig, config={"displayModeBar": False}, style={"height": "340px"}),
-            ], style={"flex": "1"}),
-            html.Div([
+                dcc.Graph(figure=proj_chart, config={"displayModeBar": False}, style={"height": "380px"}),
+                html.Div(insight_cards),
+
                 chart_context(
-                    "How many orders you get each day, separated from dollar amounts. Blue bars = daily count, lines = smoothed averages.",
+                    "Green bars = daily revenue, orange bars = daily profit. Dashed lines = 30-day rolling averages that smooth out noise.",
                     metrics=[
+                        ("Avg Rev/Day", f"${_daily_rev_avg:,.0f}", GREEN),
+                        ("Avg Profit/Day", f"${_daily_profit_avg:,.0f}", ORANGE),
+                        ("Best Day", f"${_best_day_rev:,.0f}", TEAL),
+                    ],
+                    look_for="Rolling averages trending up together. If revenue rises but profit flattens, costs are eating your growth.",
+                    simple="Each bar is one day. Green = what you earned, orange = what you kept as profit. The smooth lines filter out the noise to show the overall direction. Lines going up = business improving.",
+                ),
+                dcc.Graph(figure=trend_profit_rev, config={"displayModeBar": False}, style={"height": "380px"}),
+
+                chart_context(
+                    "Each line shows how many cents per dollar of sales go to that cost category. "
+                    "Net Margin is what you keep after all Etsy deductions.",
+                    metrics=[
+                        ("Fees", f"{_last_fee_pct:.1f}%", RED),
+                        ("Shipping", f"{_last_ship_pct:.1f}%", BLUE),
+                        ("Marketing", f"{_last_mkt_pct:.1f}%", PURPLE),
+                        ("Refunds", f"{_last_ref_pct:.1f}%", ORANGE),
+                        ("Net Margin", f"{_last_margin_pct:.1f}%", TEAL),
+                    ],
+                    legend=[
+                        (RED, "Fees %", "Etsy listing, transaction & payment processing fees combined"),
+                        (BLUE, "Shipping %", "Cost of USPS/Asendia shipping labels you purchased"),
+                        (PURPLE, "Marketing %", "Etsy Ads + Offsite Ads spend as % of sales"),
+                        (ORANGE, "Refunds %", "Money returned to buyers — lower is better"),
+                        (TEAL, "Net Margin %", "What you actually keep from each dollar of sales (dashed line)"),
+                    ],
+                    look_for="Lines trending down = improving efficiency. Net Margin trending up = you're keeping more per sale.",
+                    simple="Each line tracks a different cost as a percentage of sales. Lines going DOWN means you're getting more efficient. The teal dashed line (Net Margin) going UP is the best sign -- it means you're keeping more of each dollar.",
+                ),
+                dcc.Graph(figure=cost_ratio_fig, config={"displayModeBar": False}, style={"height": "380px"}),
+
+                html.Div([
+                    html.Div([
+                        chart_context(
+                            "Average Order Value = total revenue \u00f7 number of orders per week. Higher AOV means customers spend more per purchase.",
+                            metrics=[
+                                ("Overall AOV", f"${avg_order:,.2f}", TEAL),
+                                ("Best Week", f"${_aov_best_week:,.2f}", GREEN),
+                                ("Worst Week", f"${_aov_worst_week:,.2f}", RED),
+                            ],
+                            look_for="Upward trend = customers spending more. Sudden drops may mean discounting or smaller product mix.",
+                            simple="This shows how much each customer spends on average per order. Line going up = customers spending more per purchase. The gray dashed line is your overall average.",
+                        ),
+                        dcc.Graph(figure=aov_fig, config={"displayModeBar": False}, style={"height": "340px"}),
+                    ], style={"flex": "1"}),
+                    html.Div([
+                        chart_context(
+                            "How many orders you get each day, separated from dollar amounts. Blue bars = daily count, lines = smoothed averages.",
+                            metrics=[
+                                ("Avg Orders/Day", f"{_daily_orders_avg:.1f}", BLUE),
+                                ("Peak Day", f"{_peak_orders_day:.0f}", GREEN),
+                            ],
+                            look_for="Rising trend = growing demand. Spikes often follow promotions, holidays, or viral listings.",
+                            simple="Each blue bar is how many orders came in that day. The smooth lines show the trend. More bars and higher lines = more customers finding your shop.",
+                        ),
+                        dcc.Graph(figure=orders_day_fig, config={"displayModeBar": False}, style={"height": "340px"}),
+                    ], style={"flex": "1"}),
+                ], style={"display": "flex", "gap": "8px"}),
+
+                chart_context(
+                    "Running totals since your first sale. The gap between the green (revenue) and orange (profit) lines = total costs paid to date.",
+                    metrics=[
+                        ("Total Revenue", f"${gross_sales:,.0f}", GREEN),
+                        ("Total Profit", f"${etsy_net:,.0f}", ORANGE),
+                        ("Total Costs", f"${_total_costs:,.0f}", RED),
+                        ("Margin", f"{_net_margin_overall:.1f}%", TEAL),
+                    ],
+                    look_for="Lines spreading apart = costs growing faster than revenue. Parallel lines = stable margins.",
+                    simple="These lines show your total earnings since day one -- green for revenue, orange for profit. The gap between them is your total costs. Both lines should keep climbing. If the gap widens, costs are growing faster than sales.",
+                ),
+                dcc.Graph(figure=cum_fig, config={"displayModeBar": False}, style={"height": "380px"}),
+
+                html.Div([
+                    html.Div([
+                        chart_context(
+                            "Smoothed daily profit using a 14-day rolling average. Above the red zero line = making money that period.",
+                            metrics=[
+                                ("Avg Profit/Day", f"${_daily_profit_avg:,.2f}", ORANGE),
+                                ("Current 14d Avg", f"${_current_14d_profit_avg:,.2f}", TEAL),
+                            ],
+                            look_for="Line staying above zero and trending up. Dips below zero = you were losing money those weeks.",
+                            simple="This smooths out daily ups and downs to show if you're actually making money. Line ABOVE the red zero line = making money. Line BELOW = losing money. The higher above zero, the better.",
+                        ),
+                        dcc.Graph(figure=profit_rolling_fig, config={"displayModeBar": False}, style={"height": "340px"}),
+                    ], style={"flex": "1"}),
+                    html.Div([
+                        chart_context(
+                            "Green/red bars = average profit you make per order each month. Dashed line = AOV (average order value) on right axis.",
+                            metrics=[
+                                ("Latest Profit/Order", f"${_last_ppo_val:,.2f}", GREEN if _last_ppo_val >= 0 else RED),
+                                ("Latest AOV", f"${_last_aov_val:,.2f}", TEAL),
+                            ],
+                            look_for="Green bars getting taller = more profit per sale. Red bars = losing money per order that month.",
+                            simple="Green bars = you made money per order that month. Red bars = you lost money. The dashed line shows average order size. You want green bars getting taller over time.",
+                        ),
+                        dcc.Graph(figure=ppo_fig, config={"displayModeBar": False}, style={"height": "340px"}),
+                    ], style={"flex": "1"}),
+                ], style={"display": "flex", "gap": "8px"}),
+
+                chart_context(
+                    "Green bars = daily revenue, blue line = order count (right axis), orange line = 7-day average revenue.",
+                    metrics=[
+                        ("Avg Rev/Day", f"${_daily_rev_avg:,.0f}", GREEN),
                         ("Avg Orders/Day", f"{_daily_orders_avg:.1f}", BLUE),
-                        ("Peak Day", f"{_peak_orders_day:.0f}", GREEN),
                     ],
-                    look_for="Rising trend = growing demand. Spikes often follow promotions, holidays, or viral listings.",
-                    simple="Each blue bar is how many orders came in that day. The smooth lines show the trend. More bars and higher lines = more customers finding your shop.",
+                    look_for="Orange trend line direction shows your momentum. Blue line diverging from green = order size changing.",
+                    simple="Green bars show daily sales dollars. Blue line shows number of orders. Orange line smooths out the daily noise. All three going up = healthy growing business.",
                 ),
-                dcc.Graph(figure=orders_day_fig, config={"displayModeBar": False}, style={"height": "340px"}),
-            ], style={"flex": "1"}),
-        ], style={"display": "flex", "gap": "8px"}),
+                dcc.Graph(figure=daily_fig, config={"displayModeBar": False}, style={"height": "380px"}),
+            ]),
+        ], style={"marginBottom": "8px"}),
 
-        chart_context(
-            "Running totals since your first sale. The gap between the green (revenue) and orange (profit) lines = total costs paid to date.",
-            metrics=[
-                ("Total Revenue", f"${gross_sales:,.0f}", GREEN),
-                ("Total Profit", f"${etsy_net:,.0f}", ORANGE),
-                ("Total Costs", f"${_total_costs:,.0f}", RED),
-                ("Margin", f"{_net_margin_overall:.1f}%", TEAL),
-            ],
-            look_for="Lines spreading apart = costs growing faster than revenue. Parallel lines = stable margins.",
-            simple="These lines show your total earnings since day one -- green for revenue, orange for profit. The gap between them is your total costs. Both lines should keep climbing. If the gap widens, costs are growing faster than sales.",
-        ),
-        dcc.Graph(figure=cum_fig, config={"displayModeBar": False}, style={"height": "380px"}),
+        # ── Section 2: Pattern Recognition ──
+        html.Details([
+            html.Summary("Pattern Recognition", style={
+                "color": CYAN, "fontSize": "14px", "fontWeight": "bold",
+                "cursor": "pointer", "padding": "10px 0", "listStyle": "none",
+            }),
+            html.Div([
+                html.Div([
+                    html.Div([
+                        chart_context(
+                            f"Average performance by day of week. Best day: {_best_dow}. Worst day: {_worst_dow}.",
+                            metrics=[
+                                ("Best Day", f"{_best_dow} (${max(_dow_rev_vals):,.0f})", GREEN),
+                                ("Worst Day", f"{_worst_dow} (${min(_dow_rev_vals):,.0f})", RED),
+                            ],
+                            look_for="Consistent patterns reveal when to run promotions or launch new listings.",
+                            simple="This shows which days of the week you sell the most. Taller bars = better days. Use this to know when to launch new products or run promotions.",
+                        ),
+                        dcc.Graph(figure=dow_fig, config={"displayModeBar": False}, style={"height": "340px"}),
+                    ], style={"flex": "1"}),
+                    html.Div([
+                        chart_context(
+                            f"Revenue outliers detected with z-scores. Spikes (>2\u03c3): {len(_anomaly_high)}. "
+                            f"Drops (<-1.5\u03c3): {len(_anomaly_low)}. Zero days: {len(_zero_days)}.",
+                            metrics=[
+                                ("Mean Revenue", f"${_daily_rev_mean:,.0f}/day", TEAL),
+                                ("Std Dev", f"${_daily_rev_std:,.0f}", GRAY),
+                                ("Spikes", str(len(_anomaly_high)), GREEN),
+                                ("Drops", str(len(_anomaly_low)), RED),
+                            ],
+                            look_for="Investigate spikes (what sold?) and drops (listing issues? shipping delays?).",
+                            simple="The gray line is your daily sales. Green triangles mark unusually GOOD days (big sales spikes). Red triangles mark unusually BAD days. Orange X's are days with zero sales. Investigate what happened on those days.",
+                        ),
+                        dcc.Graph(figure=anomaly_fig, config={"displayModeBar": False}, style={"height": "340px"}),
+                    ], style={"flex": "1"}),
+                ], style={"display": "flex", "gap": "8px"}),
 
-        html.Div([
+                chart_context(
+                    "Does spending more on ads actually drive more sales? Each dot is one month.",
+                    metrics=[
+                        ("Correlation R\u00b2", f"{_corr_r2:.2f}", GREEN if _corr_r2 > 0.5 else ORANGE),
+                        ("Total Ad Spend", money(total_marketing), PURPLE),
+                        ("Ad % of Sales", f"{total_marketing / gross_sales * 100:.1f}%" if gross_sales else "0%", ORANGE),
+                    ],
+                    look_for=f"{'Strong correlation -- ads are driving sales.' if _corr_r2 > 0.5 else 'Weak correlation -- sales may not depend much on ad spend. Test cutting ads.'}",
+                    simple="Each dot is one month. If dots make a line going up-right, ads are working (spend more \u2192 earn more). If dots are scattered randomly, ads might not be helping much.",
+                ),
+                dcc.Graph(figure=corr_fig, config={"displayModeBar": False}, style={"height": "320px"}),
+
+                chart_context(
+                    "Product performance over time. Bright = high revenue. Dark = low/no sales. "
+                    "Spot rising stars, declining products, and seasonal patterns.",
+                    metrics=[
+                        ("Products Tracked", str(len(_top_prod_names)), TEAL),
+                        ("Top Product", f"${product_revenue_est.values[0]:,.0f}" if len(product_revenue_est) > 0 else "N/A", GREEN),
+                    ],
+                    look_for="Products getting brighter over time are growing. Products going dark need attention or retirement.",
+                    simple="Each row is a product, each column is a month. Bright green = lots of sales. Dark purple = few sales. Black = no sales. Look for rows getting brighter (growing products) or darker (declining ones).",
+                ),
+                dcc.Graph(figure=product_heat, config={"displayModeBar": False}, style={"height": "360px"}),
+            ]),
+        ], style={"marginBottom": "8px"}),
+
+        # ── Section 3: Unit Economics & Inventory ──
+        html.Details([
+            html.Summary("Unit Economics & Inventory", style={
+                "color": CYAN, "fontSize": "14px", "fontWeight": "bold",
+                "cursor": "pointer", "padding": "10px 0", "listStyle": "none",
+            }),
+            html.Div([
+                html.Div([
+                    html.Div([
+                        chart_context(
+                            f"What happens to each ${avg_order:,.2f} order on average. Every dollar flows through fees, "
+                            f"shipping, ads, refunds, and COGS before becoming profit.",
+                            metrics=[
+                                ("Avg Revenue", money(_unit_rev), GREEN),
+                                ("Avg Profit", money(_unit_profit), CYAN),
+                                ("Unit Margin", f"{_unit_margin:.1f}%", GREEN if _unit_margin > 20 else ORANGE),
+                                ("COGS/Order", money(_unit_cogs), PURPLE),
+                            ],
+                            look_for="Profit bar should be at least 20% of revenue bar. If supply costs are the biggest deduction, find cheaper suppliers.",
+                            simple="Start with what a customer pays (left bar). Each red bar shows where that money goes -- fees, shipping, etc. The blue bar at the end is your actual profit per order. If the blue bar is small, your costs are eating too much.",
+                        ),
+                        dcc.Graph(figure=unit_wf, config={"displayModeBar": False}, style={"height": "340px"}),
+                    ], style={"flex": "3"}),
+                    html.Div([
+                        html.Div("BREAK-EVEN ANALYSIS", style={"color": CYAN, "fontWeight": "bold", "fontSize": "13px", "marginBottom": "8px"}),
+                        row_item("Monthly Fixed Costs", _monthly_fixed, color=RED),
+                        row_item("Contribution Margin", _contrib_margin_pct * 100, color=GREEN),
+                        html.Div(style={"borderTop": f"1px solid {CYAN}44", "margin": "6px 0"}),
+                        row_item("Break-Even Revenue/Mo", _breakeven_monthly, bold=True, color=CYAN),
+                        row_item("Break-Even Revenue/Day", _breakeven_daily, color=TEAL),
+                        row_item("Break-Even Orders/Mo", _breakeven_orders, color=BLUE),
+                        html.Div(style={"height": "10px"}),
+                        html.P(f"{'You are ABOVE break-even.' if val_monthly_run_rate > _breakeven_monthly else 'WARNING: Below break-even -- you need more revenue to cover fixed costs.'}"
+                               if _breakeven_monthly > 0 else "Insufficient data for break-even.",
+                               style={"color": GREEN if val_monthly_run_rate > _breakeven_monthly else RED,
+                                      "fontSize": "11px", "fontWeight": "bold"}),
+                        html.P(f"Surplus: {money(val_monthly_run_rate - _breakeven_monthly)}/mo above break-even"
+                               if val_monthly_run_rate > _breakeven_monthly and _breakeven_monthly > 0 else "",
+                               style={"color": TEAL, "fontSize": "11px"}),
+                    ], style={"flex": "2", "padding": "12px", "backgroundColor": CARD, "borderRadius": "8px",
+                              "border": f"1px solid {CYAN}33"}),
+                ], style={"display": "flex", "gap": "12px", "flexWrap": "wrap"}),
+
+                chart_context(
+                    "Revenue (green) vs inventory spend (purple) each month. Orange line = COGS ratio "
+                    "(% of revenue going to materials). Rising ratio = margins shrinking.",
+                    metrics=[
+                        ("Total Inventory", money(true_inventory_cost), PURPLE),
+                        ("Supply Cost Ratio", f"{true_inventory_cost / gross_sales * 100:.1f}%" if gross_sales else "N/A", ORANGE),
+                        ("Avg Monthly Spend", money(true_inventory_cost / _val_months_operating), TEAL),
+                    ],
+                    look_for="COGS ratio should stay flat or decrease. If it's rising, you're spending more on materials relative to sales.",
+                    simple="Green bars = what you earned. Purple bars = what you spent on supplies. The orange line shows supplies as a percentage of sales. If the orange line goes up, you're spending more on materials relative to what you're earning.",
+                ),
+                dcc.Graph(figure=rev_inv_fig, config={"displayModeBar": False}, style={"height": "360px"}),
+
+                html.Div([
+                    html.Div([
+                        chart_context(
+                            "What categories of supplies you're buying. Parsed from Amazon invoice PDFs.",
+                            metrics=[
+                                ("Total Categories", str(len(biz_inv_by_category)), TEAL),
+                                ("Biggest", f"{biz_inv_by_category.index[0] if len(biz_inv_by_category) > 0 else 'N/A'}", PURPLE),
+                            ],
+                            simple="Each bar shows how much you spent on a type of supply (filament, packaging, etc). The tallest bars are where most of your supply money goes. Look for categories that seem too high.",
+                        ),
+                        dcc.Graph(figure=inv_cat_bar, config={"displayModeBar": False}, style={"height": "340px"}),
+                    ], style={"flex": "1"}),
+                    html.Div([
+                        chart_context(
+                            "Inventory shipments split by location. Shows which partner location is ordering more supplies.",
+                            metrics=[
+                                ("Tulsa", money(tulsa_spend), TEAL),
+                                ("Texas", money(texas_spend), ORANGE),
+                            ],
+                            simple="Shows where your supplies are being shipped -- Tulsa vs Texas. This helps see if one location is ordering way more than the other.",
+                        ),
+                        dcc.Graph(figure=loc_fig, config={"displayModeBar": False}, style={"height": "340px"}),
+                    ], style={"flex": "1"}),
+                ], style={"display": "flex", "gap": "8px"}),
+
+                # Supplier analysis (top suppliers)
+                *([html.Div([
+                    html.Div("TOP SUPPLIERS", style={"color": PURPLE, "fontWeight": "bold", "fontSize": "13px", "marginBottom": "8px"}),
+                    *[html.Div([
+                        html.Span(seller[:30], style={"color": WHITE, "fontSize": "12px", "flex": "1"}),
+                        html.Span(f"{info['items']} items", style={"color": GRAY, "fontSize": "11px", "marginRight": "12px"}),
+                        html.Span(f"avg ${info['avg_price']:,.2f}", style={"color": GRAY, "fontSize": "11px", "marginRight": "12px"}),
+                        html.Span(money(info['total']), style={"color": PURPLE, "fontFamily": "monospace", "fontSize": "12px", "fontWeight": "bold"}),
+                    ], style={"display": "flex", "justifyContent": "space-between", "alignItems": "center",
+                              "padding": "4px 0", "borderBottom": "1px solid #ffffff08"})
+                      for seller, info in list(_supplier_spend.items())[:10]],
+                ], style={"backgroundColor": CARD, "padding": "14px", "borderRadius": "8px",
+                          "marginBottom": "14px", "borderLeft": f"3px solid {PURPLE}"})] if _supplier_spend else []),
+            ]),
+        ], style={"marginBottom": "8px"}),
+
+        # ── Section 4: Cash Flow ──
+        html.Details([
+            html.Summary("Cash Flow & Financial Health", style={
+                "color": CYAN, "fontSize": "14px", "fontWeight": "bold",
+                "cursor": "pointer", "padding": "10px 0", "listStyle": "none",
+            }),
             html.Div([
                 chart_context(
-                    "Smoothed daily profit using a 14-day rolling average. Above the red zero line = making money that period.",
+                    "Green = Etsy deposits to your bank. Red = business expenses paid. Cyan line = net cash flow each month.",
                     metrics=[
-                        ("Avg Profit/Day", f"${_daily_profit_avg:,.2f}", ORANGE),
-                        ("Current 14d Avg", f"${_current_14d_profit_avg:,.2f}", TEAL),
+                        ("Total Deposits", money(bank_total_deposits), GREEN),
+                        ("Total Expenses", money(bank_total_debits), RED),
+                        ("Net Cash", money(bank_net_cash), CYAN),
                     ],
-                    look_for="Line staying above zero and trending up. Dips below zero = you were losing money those weeks.",
-                    simple="This smooths out daily ups and downs to show if you're actually making money. Line ABOVE the red zero line = making money. Line BELOW = losing money. The higher above zero, the better.",
+                    look_for="Cyan line should stay positive. Negative months mean you spent more than Etsy deposited.",
+                    simple="Green bars = money coming IN (Etsy paying you). Red bars = money going OUT (expenses). The cyan line is the difference. Cyan line above zero = you kept more than you spent that month. Below zero = you overspent.",
                 ),
-                dcc.Graph(figure=profit_rolling_fig, config={"displayModeBar": False}, style={"height": "340px"}),
-            ], style={"flex": "1"}),
-            html.Div([
-                chart_context(
-                    "Green/red bars = average profit you make per order each month. Dashed line = AOV (average order value) on right axis.",
-                    metrics=[
-                        ("Latest Profit/Order", f"${_last_ppo_val:,.2f}", GREEN if _last_ppo_val >= 0 else RED),
-                        ("Latest AOV", f"${_last_aov_val:,.2f}", TEAL),
-                    ],
-                    look_for="Green bars getting taller = more profit per sale. Red bars = losing money per order that month.",
-                    simple="Green bars = you made money per order that month. Red bars = you lost money. The dashed line shows average order size. You want green bars getting taller over time.",
-                ),
-                dcc.Graph(figure=ppo_fig, config={"displayModeBar": False}, style={"height": "340px"}),
-            ], style={"flex": "1"}),
-        ], style={"display": "flex", "gap": "8px"}),
+                dcc.Graph(figure=cashflow_fig, config={"displayModeBar": False}, style={"height": "360px"}),
 
-        # Daily sales chart (from old Overview)
-        chart_context(
-            "Green bars = daily revenue, blue line = order count (right axis), orange line = 7-day average revenue.",
-            metrics=[
-                ("Avg Rev/Day", f"${_daily_rev_avg:,.0f}", GREEN),
-                ("Avg Orders/Day", f"{_daily_orders_avg:.1f}", BLUE),
-            ],
-            look_for="Orange trend line direction shows your momentum. Blue line diverging from green = order size changing.",
-            simple="Green bars show daily sales dollars. Blue line shows number of orders. Orange line smooths out the daily noise. All three going up = healthy growing business.",
-        ),
-        dcc.Graph(figure=daily_fig, config={"displayModeBar": False}, style={"height": "380px"}),
+                html.Div([
+                    _build_kpi_pill("\U0001f504", "INVENTORY TURNOVER",
+                             f"{gross_sales / true_inventory_cost:.1f}x" if true_inventory_cost > 0 else "N/A",
+                             TEAL,
+                             detail=(f"How many times your inventory investment generates revenue. {gross_sales / true_inventory_cost:.1f}x means "
+                                     f"every $1 of inventory generates ${gross_sales / true_inventory_cost:.2f} in revenue. "
+                                     f"Higher is better. Benchmark: 4-8x for handmade goods." if true_inventory_cost > 0 else "No inventory data.")),
+                    _build_kpi_pill("\U0001f4ca", "GROSS MARGIN",
+                             f"{(gross_sales - true_inventory_cost) / gross_sales * 100:.1f}%" if gross_sales else "N/A",
+                             GREEN, subtitle="Revenue minus COGS only",
+                             detail=(f"Revenue ({money(gross_sales)}) minus cost of goods ({money(true_inventory_cost)}) = "
+                                     f"{money(gross_sales - true_inventory_cost)} gross profit. This ignores Etsy fees and other expenses. "
+                                     f"Benchmark: >60% for handmade, >40% for resale.")),
+                    _build_kpi_pill("\U0001f4b0", "OPERATING MARGIN",
+                             f"{profit_margin:.1f}%", GREEN if profit_margin > 15 else ORANGE,
+                             subtitle="After ALL expenses",
+                             detail=(f"Revenue minus all costs. Cash on hand ({money(bank_cash_on_hand)}) "
+                                     f"+ owner draws ({money(bank_owner_draw_total)}) = {money(profit)} ({profit_margin:.1f}%). "
+                                     f"All expenses flow through bank.")),
+                    _build_kpi_pill("\U0001f4b5", "CASH CONVERSION",
+                             f"{bank_cash_on_hand / gross_sales * 100:.1f}%" if gross_sales else "N/A",
+                             CYAN, subtitle="Cash retained / Revenue",
+                             detail=(f"What % of gross sales you actually retained as cash: {money(bank_cash_on_hand)} / {money(gross_sales)}. "
+                                     f"The rest went to expenses, inventory, and owner draws. Higher = more efficient cash management.")),
+                ], style={"display": "flex", "gap": "8px", "flexWrap": "wrap", "marginBottom": "14px"}),
+            ]),
+        ], style={"marginBottom": "8px"}),
 
-        # ── PATTERN RECOGNITION ──
-        html.H3("PATTERN RECOGNITION", style={"color": CYAN, "margin": "30px 0 6px 0",
-                 "borderTop": f"2px solid {CYAN}33", "paddingTop": "14px"}),
-        html.P("Statistical pattern detection across all data sources -- day-of-week cycles, anomalies, and correlations.",
-               style={"color": GRAY, "margin": "0 0 14px 0", "fontSize": "13px"}),
-
-        html.Div([
-            html.Div([
-                chart_context(
-                    f"Average performance by day of week. Best day: {_best_dow}. Worst day: {_worst_dow}.",
-                    metrics=[
-                        ("Best Day", f"{_best_dow} (${max(_dow_rev_vals):,.0f})", GREEN),
-                        ("Worst Day", f"{_worst_dow} (${min(_dow_rev_vals):,.0f})", RED),
-                    ],
-                    look_for="Consistent patterns reveal when to run promotions or launch new listings.",
-                    simple="This shows which days of the week you sell the most. Taller bars = better days. Use this to know when to launch new products or run promotions.",
-                ),
-                dcc.Graph(figure=dow_fig, config={"displayModeBar": False}, style={"height": "340px"}),
-            ], style={"flex": "1"}),
-            html.Div([
-                chart_context(
-                    f"Revenue outliers detected with z-scores. Spikes (>2σ): {len(_anomaly_high)}. "
-                    f"Drops (<-1.5σ): {len(_anomaly_low)}. Zero days: {len(_zero_days)}.",
-                    metrics=[
-                        ("Mean Revenue", f"${_daily_rev_mean:,.0f}/day", TEAL),
-                        ("Std Dev", f"${_daily_rev_std:,.0f}", GRAY),
-                        ("Spikes", str(len(_anomaly_high)), GREEN),
-                        ("Drops", str(len(_anomaly_low)), RED),
-                    ],
-                    look_for="Investigate spikes (what sold?) and drops (listing issues? shipping delays?).",
-                    simple="The gray line is your daily sales. Green triangles mark unusually GOOD days (big sales spikes). Red triangles mark unusually BAD days. Orange X's are days with zero sales. Investigate what happened on those days.",
-                ),
-                dcc.Graph(figure=anomaly_fig, config={"displayModeBar": False}, style={"height": "340px"}),
-            ], style={"flex": "1"}),
-        ], style={"display": "flex", "gap": "8px"}),
-
-        chart_context(
-            "Does spending more on ads actually drive more sales? Each dot is one month.",
-            metrics=[
-                ("Correlation R²", f"{_corr_r2:.2f}", GREEN if _corr_r2 > 0.5 else ORANGE),
-                ("Total Ad Spend", money(total_marketing), PURPLE),
-                ("Ad % of Sales", f"{total_marketing / gross_sales * 100:.1f}%" if gross_sales else "0%", ORANGE),
-            ],
-            look_for=f"{'Strong correlation -- ads are driving sales.' if _corr_r2 > 0.5 else 'Weak correlation -- sales may not depend much on ad spend. Test cutting ads.'}",
-            simple="Each dot is one month. If dots make a line going up-right, ads are working (spend more → earn more). If dots are scattered randomly, ads might not be helping much.",
-        ),
-        dcc.Graph(figure=corr_fig, config={"displayModeBar": False}, style={"height": "320px"}),
-
-        chart_context(
-            "Product performance over time. Bright = high revenue. Dark = low/no sales. "
-            "Spot rising stars, declining products, and seasonal patterns.",
-            metrics=[
-                ("Products Tracked", str(len(_top_prod_names)), TEAL),
-                ("Top Product", f"${product_revenue_est.values[0]:,.0f}" if len(product_revenue_est) > 0 else "N/A", GREEN),
-            ],
-            look_for="Products getting brighter over time are growing. Products going dark need attention or retirement.",
-            simple="Each row is a product, each column is a month. Bright green = lots of sales. Dark purple = few sales. Black = no sales. Look for rows getting brighter (growing products) or darker (declining ones).",
-        ),
-        dcc.Graph(figure=product_heat, config={"displayModeBar": False}, style={"height": "360px"}),
-
-        # ── UNIT ECONOMICS & INVENTORY ──
-        html.H3("UNIT ECONOMICS & INVENTORY", style={"color": CYAN, "margin": "30px 0 6px 0",
-                 "borderTop": f"2px solid {CYAN}33", "paddingTop": "14px"}),
-        html.P("Per-order profitability, inventory spend tracking, and cost-of-goods analysis from invoice data.",
-               style={"color": GRAY, "margin": "0 0 14px 0", "fontSize": "13px"}),
-
-        html.Div([
-            html.Div([
-                chart_context(
-                    f"What happens to each ${avg_order:,.2f} order on average. Every dollar flows through fees, "
-                    f"shipping, ads, refunds, and COGS before becoming profit.",
-                    metrics=[
-                        ("Avg Revenue", money(_unit_rev), GREEN),
-                        ("Avg Profit", money(_unit_profit), CYAN),
-                        ("Unit Margin", f"{_unit_margin:.1f}%", GREEN if _unit_margin > 20 else ORANGE),
-                        ("COGS/Order", money(_unit_cogs), PURPLE),
-                    ],
-                    look_for="Profit bar should be at least 20% of revenue bar. If supply costs are the biggest deduction, find cheaper suppliers.",
-                    simple="Start with what a customer pays (left bar). Each red bar shows where that money goes -- fees, shipping, etc. The blue bar at the end is your actual profit per order. If the blue bar is small, your costs are eating too much.",
-                ),
-                dcc.Graph(figure=unit_wf, config={"displayModeBar": False}, style={"height": "340px"}),
-            ], style={"flex": "3"}),
-            html.Div([
-                html.Div("BREAK-EVEN ANALYSIS", style={"color": CYAN, "fontWeight": "bold", "fontSize": "13px", "marginBottom": "8px"}),
-                row_item("Monthly Fixed Costs", _monthly_fixed, color=RED),
-                row_item("Contribution Margin", _contrib_margin_pct * 100, color=GREEN),
-                html.Div(style={"borderTop": f"1px solid {CYAN}44", "margin": "6px 0"}),
-                row_item("Break-Even Revenue/Mo", _breakeven_monthly, bold=True, color=CYAN),
-                row_item("Break-Even Revenue/Day", _breakeven_daily, color=TEAL),
-                row_item("Break-Even Orders/Mo", _breakeven_orders, color=BLUE),
-                html.Div(style={"height": "10px"}),
-                html.P(f"{'You are ABOVE break-even.' if val_monthly_run_rate > _breakeven_monthly else 'WARNING: Below break-even -- you need more revenue to cover fixed costs.'}"
-                       if _breakeven_monthly > 0 else "Insufficient data for break-even.",
-                       style={"color": GREEN if val_monthly_run_rate > _breakeven_monthly else RED,
-                              "fontSize": "11px", "fontWeight": "bold"}),
-                html.P(f"Surplus: {money(val_monthly_run_rate - _breakeven_monthly)}/mo above break-even"
-                       if val_monthly_run_rate > _breakeven_monthly and _breakeven_monthly > 0 else "",
-                       style={"color": TEAL, "fontSize": "11px"}),
-            ], style={"flex": "2", "padding": "12px", "backgroundColor": CARD, "borderRadius": "8px",
-                      "border": f"1px solid {CYAN}33"}),
-        ], style={"display": "flex", "gap": "12px", "flexWrap": "wrap"}),
-
-        chart_context(
-            "Revenue (green) vs inventory spend (purple) each month. Orange line = COGS ratio "
-            "(% of revenue going to materials). Rising ratio = margins shrinking.",
-            metrics=[
-                ("Total Inventory", money(true_inventory_cost), PURPLE),
-                ("Supply Cost Ratio", f"{true_inventory_cost / gross_sales * 100:.1f}%" if gross_sales else "N/A", ORANGE),
-                ("Avg Monthly Spend", money(true_inventory_cost / _val_months_operating), TEAL),
-            ],
-            look_for="COGS ratio should stay flat or decrease. If it's rising, you're spending more on materials relative to sales.",
-            simple="Green bars = what you earned. Purple bars = what you spent on supplies. The orange line shows supplies as a percentage of sales. If the orange line goes up, you're spending more on materials relative to what you're earning.",
-        ),
-        dcc.Graph(figure=rev_inv_fig, config={"displayModeBar": False}, style={"height": "360px"}),
-
-        html.Div([
-            html.Div([
-                chart_context(
-                    "What categories of supplies you're buying. Parsed from Amazon invoice PDFs.",
-                    metrics=[
-                        ("Total Categories", str(len(biz_inv_by_category)), TEAL),
-                        ("Biggest", f"{biz_inv_by_category.index[0] if len(biz_inv_by_category) > 0 else 'N/A'}", PURPLE),
-                    ],
-                    simple="Each bar shows how much you spent on a type of supply (filament, packaging, etc). The tallest bars are where most of your supply money goes. Look for categories that seem too high.",
-                ),
-                dcc.Graph(figure=inv_cat_bar, config={"displayModeBar": False}, style={"height": "340px"}),
-            ], style={"flex": "1"}),
-            html.Div([
-                chart_context(
-                    "Inventory shipments split by location. Shows which partner location is ordering more supplies.",
-                    metrics=[
-                        ("Tulsa", money(tulsa_spend), TEAL),
-                        ("Texas", money(texas_spend), ORANGE),
-                    ],
-                    simple="Shows where your supplies are being shipped -- Tulsa vs Texas. This helps see if one location is ordering way more than the other.",
-                ),
-                dcc.Graph(figure=loc_fig, config={"displayModeBar": False}, style={"height": "340px"}),
-            ], style={"flex": "1"}),
-        ], style={"display": "flex", "gap": "8px"}),
-
-        # Supplier analysis (top suppliers)
-        *([html.Div([
-            html.Div("TOP SUPPLIERS", style={"color": PURPLE, "fontWeight": "bold", "fontSize": "13px", "marginBottom": "8px"}),
-            *[html.Div([
-                html.Span(seller[:30], style={"color": WHITE, "fontSize": "12px", "flex": "1"}),
-                html.Span(f"{info['items']} items", style={"color": GRAY, "fontSize": "11px", "marginRight": "12px"}),
-                html.Span(f"avg ${info['avg_price']:,.2f}", style={"color": GRAY, "fontSize": "11px", "marginRight": "12px"}),
-                html.Span(money(info['total']), style={"color": PURPLE, "fontFamily": "monospace", "fontSize": "12px", "fontWeight": "bold"}),
-            ], style={"display": "flex", "justifyContent": "space-between", "alignItems": "center",
-                      "padding": "4px 0", "borderBottom": "1px solid #ffffff08"})
-              for seller, info in list(_supplier_spend.items())[:10]],
-        ], style={"backgroundColor": CARD, "padding": "14px", "borderRadius": "8px",
-                  "marginBottom": "14px", "borderLeft": f"3px solid {PURPLE}"})] if _supplier_spend else []),
-
-        # ── CASH FLOW & FINANCIAL HEALTH ──
-        html.H3("CASH FLOW & FINANCIAL HEALTH", style={"color": CYAN, "margin": "30px 0 6px 0",
-                 "borderTop": f"2px solid {CYAN}33", "paddingTop": "14px"}),
-        html.P("Bank-reconciled cash movement -- every dollar deposited and spent through Capital One.",
-               style={"color": GRAY, "margin": "0 0 14px 0", "fontSize": "13px"}),
-
-        chart_context(
-            "Green = Etsy deposits to your bank. Red = business expenses paid. Cyan line = net cash flow each month.",
-            metrics=[
-                ("Total Deposits", money(bank_total_deposits), GREEN),
-                ("Total Expenses", money(bank_total_debits), RED),
-                ("Net Cash", money(bank_net_cash), CYAN),
-            ],
-            look_for="Cyan line should stay positive. Negative months mean you spent more than Etsy deposited.",
-            simple="Green bars = money coming IN (Etsy paying you). Red bars = money going OUT (expenses). The cyan line is the difference. Cyan line above zero = you kept more than you spent that month. Below zero = you overspent.",
-        ),
-        dcc.Graph(figure=cashflow_fig, config={"displayModeBar": False}, style={"height": "360px"}),
-
-        # Key financial metrics grid
-        html.Div([
-            _build_kpi_pill("🔄", "INVENTORY TURNOVER",
-                     f"{gross_sales / true_inventory_cost:.1f}x" if true_inventory_cost > 0 else "N/A",
-                     TEAL,
-                     detail=(f"How many times your inventory investment generates revenue. {gross_sales / true_inventory_cost:.1f}x means "
-                             f"every $1 of inventory generates ${gross_sales / true_inventory_cost:.2f} in revenue. "
-                             f"Higher is better. Benchmark: 4-8x for handmade goods." if true_inventory_cost > 0 else "No inventory data.")),
-            _build_kpi_pill("📊", "GROSS MARGIN",
-                     f"{(gross_sales - true_inventory_cost) / gross_sales * 100:.1f}%" if gross_sales else "N/A",
-                     GREEN, subtitle="Revenue minus COGS only",
-                     detail=(f"Revenue ({money(gross_sales)}) minus cost of goods ({money(true_inventory_cost)}) = "
-                             f"{money(gross_sales - true_inventory_cost)} gross profit. This ignores Etsy fees and other expenses. "
-                             f"Benchmark: >60% for handmade, >40% for resale.")),
-            _build_kpi_pill("💰", "OPERATING MARGIN",
-                     f"{profit_margin:.1f}%", GREEN if profit_margin > 15 else ORANGE,
-                     subtitle="After ALL expenses",
-                     detail=(f"Revenue minus all costs. Cash on hand ({money(bank_cash_on_hand)}) "
-                             f"+ owner draws ({money(bank_owner_draw_total)}) = {money(profit)} ({profit_margin:.1f}%). "
-                             f"All expenses flow through bank.")),
-            _build_kpi_pill("💵", "CASH CONVERSION",
-                     f"{bank_cash_on_hand / gross_sales * 100:.1f}%" if gross_sales else "N/A",
-                     CYAN, subtitle="Cash retained / Revenue",
-                     detail=(f"What % of gross sales you actually retained as cash: {money(bank_cash_on_hand)} / {money(gross_sales)}. "
-                             f"The rest went to expenses, inventory, and owner draws. Higher = more efficient cash management.")),
-        ], style={"display": "flex", "gap": "8px", "flexWrap": "wrap", "marginBottom": "14px"}),
-
-        # ── CHATBOT ──
+        # ══ CHATBOT (always visible) ══
         html.H3("DATA CHATBOT", style={"color": CYAN, "margin": "30px 0 4px 0",
                  "borderTop": f"2px solid {CYAN}33", "paddingTop": "14px"}),
         html.P("Ask any question about your Etsy store data. Try: \"How much money have I made?\" or \"What are my best sellers?\"",
@@ -10270,7 +11096,7 @@ def serve_layout():
         # Tabs — content rendered dynamically via callback so uploads refresh data
         dcc.Tabs(id="main-tabs", value="tab-overview", children=[
             dcc.Tab(label="Overview", value="tab-overview", style=tab_style, selected_style=tab_selected_style),
-            dcc.Tab(label="Deep Dive", value="tab-deep-dive", style=tab_style, selected_style=tab_selected_style),
+            dcc.Tab(label="JARVIS", value="tab-deep-dive", style=tab_style, selected_style=tab_selected_style),
             dcc.Tab(label="Financials", value="tab-financials", style=tab_style, selected_style=tab_selected_style),
             dcc.Tab(label=inv_label, value="tab-inventory", style=tab_style, selected_style=tab_selected_style),
             dcc.Tab(label="Tax Forms", value="tab-tax-forms", style=tab_style, selected_style=tab_selected_style),
