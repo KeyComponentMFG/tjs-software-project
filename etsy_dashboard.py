@@ -2427,8 +2427,219 @@ _recompute_analytics()
 
 # ── Chatbot Engine ──────────────────────────────────────────────────────────
 
-def chatbot_answer(question):
-    """Self-contained chatbot that answers ANY question about the Etsy data."""
+def _build_chat_context():
+    """Build a comprehensive data summary string for the AI chatbot."""
+    lines = []
+
+    # Revenue & Orders
+    lines.append("=== REVENUE & ORDERS ===")
+    lines.append(f"Gross Sales: ${gross_sales:,.2f}")
+    lines.append(f"Orders: {order_count} over {days_active} days ({order_count/days_active:.1f}/day)")
+    lines.append(f"Average Order Value: ${avg_order:,.2f}")
+    lines.append(f"After Etsy Fees (net from Etsy): ${etsy_net:,.2f}")
+    lines.append(f"Profit: ${profit:,.2f} ({profit_margin:.1f}% margin)")
+    lines.append(f"Profit/day: ${profit/days_active:,.2f}")
+
+    # Monthly Breakdown
+    lines.append("\n=== MONTHLY BREAKDOWN ===")
+    for m in months_sorted:
+        s = monthly_sales.get(m, 0)
+        f = monthly_fees.get(m, 0)
+        sh = monthly_shipping.get(m, 0)
+        mk = monthly_marketing.get(m, 0)
+        r = monthly_refunds.get(m, 0)
+        n = monthly_net_revenue.get(m, 0)
+        oc = monthly_order_counts.get(m, 0)
+        lines.append(f"{m}: Sales=${s:,.0f} Fees=${f:,.0f} Ship=${sh:,.0f} Ads=${mk:,.0f} Refunds=${r:,.0f} Net=${n:,.0f} Orders={oc} AOV=${monthly_aov.get(m, 0):,.2f}")
+
+    # Top Products
+    lines.append("\n=== TOP 20 PRODUCTS ===")
+    total_prod_rev = product_revenue_est.sum()
+    for i, (name, rev) in enumerate(product_revenue_est.head(20).items(), 1):
+        pct = rev / total_prod_rev * 100 if total_prod_rev else 0
+        lines.append(f"{i}. {name} -- ${rev:,.2f} ({pct:.1f}%)")
+    lines.append(f"Total unique products: {len(product_revenue_est)}")
+
+    # Fees
+    lines.append("\n=== FEES ===")
+    lines.append(f"Total Fees (gross): ${total_fees_gross:,.2f}")
+    lines.append(f"Listing fees: ${listing_fees:,.2f}")
+    lines.append(f"Transaction fees (product): ${transaction_fees_product:,.2f}")
+    lines.append(f"Transaction fees (shipping): ${transaction_fees_shipping:,.2f}")
+    lines.append(f"Processing fees: ${processing_fees:,.2f}")
+    lines.append(f"Total credits: ${abs(total_credits):,.2f}")
+    lines.append(f"Net fees: ${total_fees:,.2f}")
+
+    # Shipping
+    lines.append("\n=== SHIPPING ===")
+    lines.append(f"Total shipping cost: ${total_shipping_cost:,.2f}")
+    lines.append(f"Buyers paid: ${buyer_paid_shipping:,.2f}")
+    lines.append(f"Shipping P/L: ${shipping_profit:,.2f} ({shipping_margin:.1f}%)")
+    lines.append(f"USPS outbound: {usps_outbound_count} labels, ${usps_outbound:,.2f} (avg ${avg_outbound_label:.2f})")
+    lines.append(f"USPS returns: {usps_return_count} labels, ${usps_return:,.2f}")
+    lines.append(f"Asendia (intl): {asendia_count} labels, ${asendia_labels:,.2f}")
+    lines.append(f"Paid shipping orders: {paid_ship_count} | Free shipping: {free_ship_count}")
+
+    # Marketing
+    lines.append("\n=== MARKETING ===")
+    lines.append(f"Total marketing: ${total_marketing:,.2f}")
+    lines.append(f"Etsy Ads: ${etsy_ads:,.2f}")
+    lines.append(f"Offsite Ads: ${offsite_ads_fees:,.2f}")
+
+    # Refunds
+    lines.append("\n=== REFUNDS ===")
+    refund_rate = len(refund_df) / len(sales_df) * 100 if len(sales_df) else 0
+    lines.append(f"Total refunds: ${total_refunds:,.2f} ({len(refund_df)} orders, {refund_rate:.1f}% rate)")
+
+    # Bank / Cash
+    lines.append("\n=== BANK & CASH ===")
+    lines.append(f"Bank deposits (Etsy payouts): ${bank_total_deposits:,.2f}")
+    lines.append(f"Bank expenses: ${bank_total_debits:,.2f}")
+    lines.append(f"Bank net cash: ${bank_net_cash:,.2f}")
+    lines.append(f"Etsy balance: ${etsy_balance:,.2f}")
+    lines.append(f"Cash on hand: ${bank_cash_on_hand:,.2f}")
+    lines.append(f"Business expenses: ${bank_biz_expense_total:,.2f}")
+    lines.append(f"All expenses (incl draws): ${bank_all_expenses:,.2f}")
+    lines.append(f"Tax-deductible expenses: ${bank_tax_deductible:,.2f}")
+
+    # Bank by Category
+    lines.append("\nBank expense categories:")
+    for cat, amt in bank_by_cat.items():
+        lines.append(f"  {cat}: ${amt:,.2f}")
+
+    # Owner Draws
+    lines.append("\n=== OWNER DRAWS ===")
+    lines.append(f"Total draws: ${bank_owner_draw_total:,.2f}")
+    lines.append(f"Tulsa draws: ${tulsa_draw_total:,.2f}")
+    lines.append(f"Texas draws: ${texas_draw_total:,.2f}")
+    lines.append(f"Imbalance: ${draw_diff:,.2f} — {draw_owed_to}")
+
+    # Inventory
+    lines.append("\n=== INVENTORY ===")
+    lines.append(f"Total inventory spend: ${total_inventory_cost:,.2f} ({inv_order_count} Amazon orders)")
+    lines.append(f"True inventory cost: ${true_inventory_cost:,.2f}")
+    lines.append(f"Business orders: ${biz_inv_cost:,.2f}")
+    lines.append(f"Personal orders: ${personal_total:,.2f}")
+    if len(inv_by_category) > 0:
+        lines.append("Inventory by category:")
+        for cat, amt in inv_by_category.items():
+            lines.append(f"  {cat}: ${amt:,.2f}")
+
+    # Suppliers
+    if _supplier_spend:
+        lines.append("\nTop suppliers:")
+        for seller, info in list(_supplier_spend.items())[:8]:
+            lines.append(f"  {seller}: ${info['total']:,.2f} ({info['items']} items)")
+
+    # Stock Status
+    lines.append("\n=== STOCK STATUS ===")
+    lines.append(f"Out of stock items: {out_of_stock_count}")
+    lines.append(f"Low stock items (1-2 left): {low_stock_count}")
+
+    # Credit Card
+    lines.append("\n=== BEST BUY CREDIT CARD ===")
+    lines.append(f"Credit limit: ${bb_cc_limit:,.2f}")
+    lines.append(f"Total charged: ${bb_cc_total_charged:,.2f}")
+    lines.append(f"Total paid: ${bb_cc_total_paid:,.2f}")
+    lines.append(f"Balance owed: ${bb_cc_balance:,.2f}")
+    lines.append(f"Available credit: ${bb_cc_available:,.2f}")
+    lines.append(f"Equipment asset value: ${bb_cc_asset_value:,.2f}")
+
+    # Growth & Projections
+    lines.append("\n=== GROWTH & PROJECTIONS ===")
+    if analytics_projections:
+        gp = analytics_projections.get("growth_pct", 0)
+        r2 = analytics_projections.get("r2_sales", 0)
+        ps = analytics_projections.get("proj_sales", [0, 0, 0])
+        pn = analytics_projections.get("proj_net", [0, 0, 0])
+        lines.append(f"Monthly growth: {gp:+.1f}%")
+        lines.append(f"Model confidence (R²): {r2:.2f}")
+        lines.append(f"Projected next 3 months gross: ${max(0,ps[0]):,.0f}, ${max(0,ps[1]):,.0f}, ${max(0,ps[2]):,.0f}")
+        lines.append(f"Projected next 3 months net: ${max(0,pn[0]):,.0f}, ${max(0,pn[1]):,.0f}, ${max(0,pn[2]):,.0f}")
+
+    # Valuation
+    lines.append("\n=== BUSINESS VALUATION ===")
+    lines.append(f"Blended estimate: ${val_blended_mid:,.0f} (range ${val_blended_low:,.0f} — ${val_blended_high:,.0f})")
+    lines.append(f"Annual revenue (run rate): ${val_annual_revenue:,.0f}")
+    lines.append(f"Annual SDE: ${val_annual_sde:,.0f}")
+    lines.append(f"Total assets: ${val_total_assets:,.0f}")
+    lines.append(f"Total liabilities: ${val_total_liabilities:,.0f}")
+    lines.append(f"Equity: ${val_equity:,.0f}")
+    lines.append(f"Health score: {val_health_score}/100 ({val_health_grade})")
+    lines.append(f"Monthly run rate: ${val_monthly_run_rate:,.0f}")
+    lines.append(f"Monthly expenses: ${val_monthly_expenses:,.0f}")
+    lines.append(f"Runway: {val_runway_months:.1f} months")
+
+    # Patterns
+    lines.append("\n=== PATTERNS ===")
+    lines.append(f"Best day of week: {_best_dow}")
+    lines.append(f"Worst day of week: {_worst_dow}")
+    lines.append(f"Revenue anomaly spikes: {len(_anomaly_high)} days")
+    lines.append(f"Revenue anomaly drops: {len(_anomaly_low)} days")
+    lines.append(f"Daily avg revenue: ${_daily_rev_mean:,.0f} (std dev: ${_daily_rev_std:,.0f})")
+
+    # Unit Economics
+    lines.append("\n=== UNIT ECONOMICS ===")
+    lines.append(f"Revenue/order: ${_unit_rev:,.2f}")
+    lines.append(f"Fees/order: ${_unit_fees:,.2f}")
+    lines.append(f"Shipping/order: ${_unit_ship:,.2f}")
+    lines.append(f"Ads/order: ${_unit_ads:,.2f}")
+    lines.append(f"COGS/order: ${_unit_cogs:,.2f}")
+    lines.append(f"Profit/order: ${_unit_profit:,.2f} ({_unit_margin:.1f}% margin)")
+    lines.append(f"Break-even revenue: ${_breakeven_monthly:,.2f}/month")
+    lines.append(f"Break-even orders: {_breakeven_orders:.0f}/month")
+
+    return "\n".join(lines)
+
+
+def _chatbot_answer_claude(question, history, api_key):
+    """Call Claude API with full business context."""
+    import anthropic
+
+    ctx = _build_chat_context()
+
+    system_prompt = (
+        "You are JARVIS, an AI business intelligence advisor for TJs Software Project, "
+        "an Etsy shop selling 3D printed products. You have deep knowledge of the business.\n\n"
+        "RULES:\n"
+        "- Answer questions using ONLY the data provided below. Never make up numbers.\n"
+        "- Be specific with dollar amounts, percentages, and counts.\n"
+        "- Be concise but thorough. Use markdown formatting.\n"
+        "- When giving advice, back it up with the actual numbers from the data.\n"
+        "- If asked about something not in the data, say so honestly.\n"
+        "- The data covers Oct 2025 through Feb 2026.\n\n"
+        f"=== BUSINESS DATA ===\n{ctx}"
+    )
+
+    messages = []
+
+    # Add last 5 conversation turns for context
+    if history:
+        for turn in history[-5:]:
+            messages.append({"role": "user", "content": turn["q"]})
+            messages.append({"role": "assistant", "content": turn["a"]})
+
+    messages.append({"role": "user", "content": question})
+
+    client = anthropic.Anthropic(api_key=api_key)
+    response = client.messages.create(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=1024,
+        system=system_prompt,
+        messages=messages,
+    )
+
+    return response.content[0].text
+
+
+def chatbot_answer(question, history=None):
+    """AI-powered chatbot with keyword fallback."""
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if api_key:
+        try:
+            return _chatbot_answer_claude(question, history, api_key)
+        except Exception:
+            pass  # fall through to keyword system
     try:
         return _chatbot_answer_inner(question)
     except Exception as e:
@@ -12631,19 +12842,20 @@ def handle_chat(n_clicks, n_submit, quick_clicks, user_input, history_data, curr
         raise dash.exceptions.PreventUpdate
 
     # Get answer
-    answer = chatbot_answer(question)
+    history_data = history_data or []
+    answer = chatbot_answer(question, history_data)
 
     # Add to history
-    history_data = history_data or []
     history_data.append({"q": question, "a": answer})
 
     # Build chat bubbles
     children = [
         # Initial greeting
         html.Div([
-            html.Div("Hi! I'm your Etsy data assistant. Ask me anything about your store's "
-                     "financial data -- revenue, products, shipping, fees, trends, and more. "
-                     "Type **help** to see example questions!",
+            html.Div("Good evening, sir. I'm JARVIS, your AI business intelligence advisor. "
+                     "I can answer any question about TJs Software Project -- revenue, profit, "
+                     "products, shipping, inventory, trends, and strategic advice. "
+                     "Ask me anything!",
                 style={
                     "backgroundColor": f"{CYAN}15", "border": f"1px solid {CYAN}33",
                     "borderRadius": "12px", "padding": "12px 16px", "maxWidth": "85%",
