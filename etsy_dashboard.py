@@ -10225,15 +10225,7 @@ def build_tab3_financials():
     )
 
     return html.Div([
-        # ══════════════════════════════════════════════════════════════
-        # A: FINANCIAL SUMMARY
-        # ══════════════════════════════════════════════════════════════
-        html.H3("A: FINANCIAL SUMMARY", style={"color": CYAN, "margin": "0 0 10px 0",
-                 "borderBottom": f"2px solid {CYAN}33", "paddingBottom": "6px"}),
-        html.P("Complete breakdown of every dollar in and out.",
-               style={"color": GRAY, "margin": "0 0 10px 0", "fontSize": "13px"}),
-
-        # KPI pills
+        # KPI pills (always visible at top)
         html.Div([
             _build_kpi_pill("\U0001f4b3", "DEBT", f"${bb_cc_balance:,.2f}", RED,
                             f"Best Buy CC (${bb_cc_available:,.0f} avail)",
@@ -10251,6 +10243,47 @@ def build_tab3_financials():
                             f"{profit_margin:.1f}% margin",
                             f"Revenue minus all costs. Cash ({money(bank_cash_on_hand)}) + draws ({money(bank_owner_draw_total)})."),
         ], style={"display": "flex", "gap": "8px", "marginBottom": "14px", "flexWrap": "wrap"}),
+
+        # Business Snapshot banner
+        html.Div([
+            html.Div(f"You've earned ${gross_sales:,.2f} in gross sales across {order_count} orders. "
+                     f"After all Etsy fees, shipping, and expenses, your profit is ${profit:,.2f} ({profit_margin:.1f}% margin). "
+                     f"You have ${bank_cash_on_hand:,.2f} cash on hand.",
+                     style={"color": WHITE, "fontSize": "14px", "lineHeight": "1.6"}),
+        ], style={"backgroundColor": CARD, "borderRadius": "8px", "marginBottom": "14px",
+                   "borderLeft": f"4px solid {CYAN}", "padding": "16px 20px",
+                   "boxShadow": "0 2px 8px rgba(0,0,0,0.3)"}),
+
+        # 1. THE BIG PICTURE
+        html.Details([
+            html.Summary([
+                html.Span("\u25b6 ", style={"fontSize": "12px"}),
+                html.Span("THE BIG PICTURE", style={"fontWeight": "bold"}),
+                html.Span(" \u2014 see where every dollar goes", style={"color": GRAY, "fontWeight": "normal", "fontSize": "12px"}),
+            ], style={"color": CYAN, "fontSize": "14px", "fontWeight": "bold",
+                "cursor": "pointer", "padding": "10px 14px", "listStyle": "none",
+                "backgroundColor": "#ffffff08", "borderRadius": "6px",
+                "border": f"1px solid {CYAN}33"}),
+            html.Div([
+        # Expense donut + Reconciliation waterfall side by side
+        html.Div([
+            html.Div([dcc.Graph(figure=expense_pie, config={"displayModeBar": False})], style={"flex": "1"}),
+            html.Div([dcc.Graph(figure=recon_fig, config={"displayModeBar": False})], style={"flex": "1"}),
+        ], style={"display": "flex", "gap": "8px", "marginBottom": "10px"}),
+            ], style={"paddingTop": "10px"}),
+        ], style={"marginBottom": "8px"}),
+
+        # 2. PROFIT & LOSS
+        html.Details([
+            html.Summary([
+                html.Span("\u25b6 ", style={"fontSize": "12px"}),
+                html.Span("PROFIT & LOSS", style={"fontWeight": "bold"}),
+                html.Span(" \u2014 line-by-line from gross sales to final profit", style={"color": GRAY, "fontWeight": "normal", "fontSize": "12px"}),
+            ], style={"color": CYAN, "fontSize": "14px", "fontWeight": "bold",
+                "cursor": "pointer", "padding": "10px 14px", "listStyle": "none",
+                "backgroundColor": "#ffffff08", "borderRadius": "6px",
+                "border": f"1px solid {CYAN}33"}),
+            html.Div([
 
         # Full P&L
         section("PROFIT & LOSS", [
@@ -10311,20 +10344,20 @@ def build_tab3_financials():
             ], style={"display": "flex", "gap": "8px", "padding": "10px",
                        "backgroundColor": "#ffffff06", "borderRadius": "8px"}),
         ], GREEN),
+            ], style={"paddingTop": "10px"}),
+        ], style={"marginBottom": "8px"}),
 
-        # Expense donut + Reconciliation waterfall side by side
-        html.Div([
-            html.Div([dcc.Graph(figure=expense_pie, config={"displayModeBar": False})], style={"flex": "1"}),
-            html.Div([dcc.Graph(figure=recon_fig, config={"displayModeBar": False})], style={"flex": "1"}),
-        ], style={"display": "flex", "gap": "8px", "marginBottom": "10px"}),
-
-        # ══════════════════════════════════════════════════════════════
-        # B: CASH FLOW
-        # ══════════════════════════════════════════════════════════════
-        html.H3("B: CASH FLOW", style={"color": CYAN, "margin": "20px 0 10px 0",
-                 "borderBottom": f"2px solid {CYAN}33", "paddingBottom": "6px"}),
-        html.P("Where your cash is right now and how it moved through the business.",
-               style={"color": GRAY, "margin": "0 0 10px 0", "fontSize": "13px"}),
+        # 3. CASH & BALANCE SHEET
+        html.Details([
+            html.Summary([
+                html.Span("\u25b6 ", style={"fontSize": "12px"}),
+                html.Span("CASH & BALANCE SHEET", style={"fontWeight": "bold"}),
+                html.Span(" \u2014 bank balances, assets, debts, and owner draws", style={"color": GRAY, "fontWeight": "normal", "fontSize": "12px"}),
+            ], style={"color": CYAN, "fontSize": "14px", "fontWeight": "bold",
+                "cursor": "pointer", "padding": "10px 14px", "listStyle": "none",
+                "backgroundColor": "#ffffff08", "borderRadius": "6px",
+                "border": f"1px solid {CYAN}33"}),
+            html.Div([
 
         # Cash KPIs
         html.Div([
@@ -10475,14 +10508,19 @@ def build_tab3_financials():
                 for cat in dict.fromkeys(t["category"] for t in _bank_no_receipt)
             ] if items],
         ], style={"display": "flex", "gap": "8px", "flexWrap": "wrap", "marginBottom": "10px"}),
+            ], style={"paddingTop": "10px"}),
+        ], style={"marginBottom": "8px"}),
 
-        # ══════════════════════════════════════════════════════════════
-        # C: SHIPPING
-        # ══════════════════════════════════════════════════════════════
-        html.H3("C: SHIPPING", style={"color": CYAN, "margin": "20px 0 10px 0",
-                 "borderBottom": f"2px solid {CYAN}33", "paddingBottom": "6px"}),
-        html.P("Are you making or losing money on shipping?",
-               style={"color": GRAY, "margin": "0 0 10px 0", "fontSize": "13px"}),
+        html.Details([
+            html.Summary([
+                html.Span("\u25b6 ", style={"fontSize": "12px"}),
+                html.Span("SHIPPING", style={"fontWeight": "bold"}),
+                html.Span(" \u2014 are you making or losing money on shipping?", style={"color": GRAY, "fontWeight": "normal", "fontSize": "12px"}),
+            ], style={"color": CYAN, "fontSize": "14px", "fontWeight": "bold",
+                "cursor": "pointer", "padding": "10px 14px", "listStyle": "none",
+                "backgroundColor": "#ffffff08", "borderRadius": "6px",
+                "border": f"1px solid {CYAN}33"}),
+            html.Div([
 
         # Shipping KPIs
         html.Div([
@@ -10557,14 +10595,19 @@ def build_tab3_financials():
             ], style={"display": "flex", "padding": "3px 0", "borderBottom": "1px solid #ffffff08", "gap": "6px"})
             for m in return_label_matches
         ], PINK),
+            ], style={"paddingTop": "10px"}),
+        ], style={"marginBottom": "8px"}),
 
-        # ══════════════════════════════════════════════════════════════
-        # D: MONTHLY & PRODUCTS
-        # ══════════════════════════════════════════════════════════════
-        html.H3("D: MONTHLY & PRODUCTS", style={"color": CYAN, "margin": "20px 0 10px 0",
-                 "borderBottom": f"2px solid {CYAN}33", "paddingBottom": "6px"}),
-        html.P("Month-by-month performance and top products.",
-               style={"color": GRAY, "margin": "0 0 10px 0", "fontSize": "13px"}),
+        html.Details([
+            html.Summary([
+                html.Span("\u25b6 ", style={"fontSize": "12px"}),
+                html.Span("MONTHLY TRENDS", style={"fontWeight": "bold"}),
+                html.Span(" \u2014 month-by-month performance + top products", style={"color": GRAY, "fontWeight": "normal", "fontSize": "12px"}),
+            ], style={"color": CYAN, "fontSize": "14px", "fontWeight": "bold",
+                "cursor": "pointer", "padding": "10px 14px", "listStyle": "none",
+                "backgroundColor": "#ffffff08", "borderRadius": "6px",
+                "border": f"1px solid {CYAN}33"}),
+            html.Div([
 
         # Monthly Breakdown table
         section("MONTHLY BREAKDOWN", [
@@ -10619,14 +10662,19 @@ def build_tab3_financials():
 
         # Top Products chart
         dcc.Graph(figure=product_fig, config={"displayModeBar": False}),
+            ], style={"paddingTop": "10px"}),
+        ], style={"marginBottom": "8px"}),
 
-        # ══════════════════════════════════════════════════════════════
-        # E: FEE DETAIL & LEDGER
-        # ══════════════════════════════════════════════════════════════
-        html.H3("E: FEE DETAIL & LEDGER", style={"color": CYAN, "margin": "20px 0 10px 0",
-                 "borderBottom": f"2px solid {CYAN}33", "paddingBottom": "6px"}),
-        html.P("Detailed fee breakdown and full transaction ledger.",
-               style={"color": GRAY, "margin": "0 0 10px 0", "fontSize": "13px"}),
+        html.Details([
+            html.Summary([
+                html.Span("\u25b6 ", style={"fontSize": "12px"}),
+                html.Span("FEES & REFUNDS", style={"fontWeight": "bold"}),
+                html.Span(" \u2014 detailed fee breakdown + refund history", style={"color": GRAY, "fontWeight": "normal", "fontSize": "12px"}),
+            ], style={"color": CYAN, "fontSize": "14px", "fontWeight": "bold",
+                "cursor": "pointer", "padding": "10px 14px", "listStyle": "none",
+                "backgroundColor": "#ffffff08", "borderRadius": "6px",
+                "border": f"1px solid {CYAN}33"}),
+            html.Div([
 
         # Fee breakdown
         section("FEE & MARKETING DETAIL", [
@@ -10707,6 +10755,20 @@ def build_tab3_financials():
             ], style={"padding": "12px", "backgroundColor": "#ffffff04", "borderRadius": "8px",
                        "borderLeft": f"4px solid {ORANGE}", "marginBottom": "10px"}),
         ], RED),
+            ], style={"paddingTop": "10px"}),
+        ], style={"marginBottom": "8px"}),
+
+        # 7. BANK LEDGER
+        html.Details([
+            html.Summary([
+                html.Span("\u25b6 ", style={"fontSize": "12px"}),
+                html.Span("BANK LEDGER", style={"fontWeight": "bold"}),
+                html.Span(" \u2014 full transaction history with running balance", style={"color": GRAY, "fontWeight": "normal", "fontSize": "12px"}),
+            ], style={"color": CYAN, "fontSize": "14px", "fontWeight": "bold",
+                "cursor": "pointer", "padding": "10px 14px", "listStyle": "none",
+                "backgroundColor": "#ffffff08", "borderRadius": "6px",
+                "border": f"1px solid {CYAN}33"}),
+            html.Div([
 
         # Monthly cash flow chart
         dcc.Graph(figure=bank_monthly_fig, config={"displayModeBar": False}),
@@ -10765,6 +10827,8 @@ def build_tab3_financials():
                 ], style={"width": "100%", "borderCollapse": "collapse", "color": WHITE}),
             ], style={"maxHeight": "700px", "overflowY": "auto"}),
         ], CYAN),
+            ], style={"paddingTop": "10px"}),
+        ], style={"marginBottom": "8px"}),
 
     ], style={"padding": TAB_PADDING})
 
