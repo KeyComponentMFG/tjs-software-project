@@ -19,6 +19,10 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 _supabase_client_cache = {"client": None, "failed": False, "checked": False}
 
 
+_SUPABASE_URL_DEFAULT = "https://xmypdvbfjgpymvygldkk.supabase.co"
+_SUPABASE_KEY_DEFAULT = "sb_publishable_RiStZfpt5DF7UdJ1t96mqA_S5fyrr_P"
+
+
 def _get_supabase_client():
     """Return a Supabase client, or None if credentials are missing or connection failed."""
     # If we already know Supabase is down, don't retry (avoids 60s+ timeout per call)
@@ -30,8 +34,8 @@ def _get_supabase_client():
     from dotenv import load_dotenv
     load_dotenv(os.path.join(BASE_DIR, ".env"))
 
-    url = os.environ.get("SUPABASE_URL", "")
-    key = os.environ.get("SUPABASE_KEY", "")
+    url = os.environ.get("SUPABASE_URL", "") or _SUPABASE_URL_DEFAULT
+    key = os.environ.get("SUPABASE_KEY", "") or _SUPABASE_KEY_DEFAULT
     if not url or not key or "YOUR_PROJECT" in url:
         _supabase_client_cache["checked"] = True
         return None
