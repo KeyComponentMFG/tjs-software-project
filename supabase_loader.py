@@ -397,6 +397,7 @@ def save_new_order(order: dict) -> bool:
     Used by the receipt upload wizard to persist new orders immediately."""
     client = _get_supabase_client()
     if client is None:
+        print("save_new_order: no Supabase client available")
         return False
     try:
         client.table("inventory_orders").insert({
@@ -421,7 +422,8 @@ def save_new_order(order: dict) -> bool:
                 "image_url": item.get("image_url", ""),
             }).execute()
         return True
-    except Exception:
+    except Exception as e:
+        print(f"save_new_order failed: {e}")
         return False
 
 

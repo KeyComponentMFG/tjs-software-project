@@ -715,7 +715,7 @@ def _reload_etsy_data():
     global paid_ship_count, free_ship_count, avg_outbound_label
     global product_fee_totals, product_revenue_est
 
-    # Always read from local CSV files (not stale Supabase)
+    # Read from local CSV files
     import glob as _gl
     _ed = os.path.join(BASE_DIR, "data", "etsy_statements")
     _frames = []
@@ -725,7 +725,18 @@ def _reload_etsy_data():
         except Exception:
             pass
     if _frames:
-        DATA = pd.concat(_frames, ignore_index=True)
+        disk_data = pd.concat(_frames, ignore_index=True)
+        # On Railway (ephemeral disk), only the newly uploaded file exists.
+        # Merge with existing in-memory DATA (loaded from Supabase at startup)
+        # to avoid overwriting historical data when syncing back.
+        if len(DATA) > 0:
+            combined = pd.concat([DATA, disk_data], ignore_index=True)
+            # Deduplicate on core columns (keeps last = new upload wins)
+            dedup_cols = ["Date", "Type", "Title", "Amount", "Net"]
+            combined = combined.drop_duplicates(subset=dedup_cols, keep="last")
+            DATA = combined.reset_index(drop=True)
+        else:
+            DATA = disk_data
         DATA["Amount_Clean"] = DATA["Amount"].apply(parse_money)
         DATA["Net_Clean"] = DATA["Net"].apply(parse_money)
         DATA["Fees_Clean"] = DATA["Fees & Taxes"].apply(parse_money)
@@ -1024,7 +1035,18 @@ def _reload_bank_data():
     except Exception:
         pass
 
-    BANK_TXNS = all_txns
+    # On Railway (ephemeral disk), only the newly uploaded file exists.
+    # Merge with existing in-memory BANK_TXNS (loaded from Supabase at startup)
+    # to avoid overwriting historical data when syncing back.
+    if all_txns and BANK_TXNS:
+        existing_keys = set()
+        for t in all_txns:
+            existing_keys.add((t.get("date", ""), t.get("amount", 0), t.get("type", ""), t.get("desc", "")))
+        for t in BANK_TXNS:
+            key = (t.get("date", ""), t.get("amount", 0), t.get("type", ""), t.get("desc", ""))
+            if key not in existing_keys:
+                all_txns.append(t)
+    BANK_TXNS = all_txns if all_txns else BANK_TXNS
     bank_statement_count = len(source_files)
 
     # Rebuild aggregates (mirrors lines 407-474)
@@ -1120,13 +1142,17 @@ def _reload_inventory_data(new_order):
     INVOICES.append(new_order)
     _RECENT_UPLOADS.add(new_order["order_num"])
     try:
-        out_path = os.path.join(BASE_DIR, "data", "generated", "inventory_orders.json")
+        _gen_dir = os.path.join(BASE_DIR, "data", "generated")
+        os.makedirs(_gen_dir, exist_ok=True)
+        out_path = os.path.join(_gen_dir, "inventory_orders.json")
         with open(out_path, "w") as f:
             json.dump(INVOICES, f, indent=2)
     except Exception:
         pass
-    _save_new_order(new_order)
+    _sb_ok = _save_new_order(new_order)
     _notify_railway_reload()
+    if not _sb_ok:
+        print(f"WARNING: Failed to save order {new_order.get('order_num', '?')} to Supabase")
 
     # Build new INV_ITEMS rows (mirrors lines 8809-8851)
     try:
@@ -6984,7 +7010,24 @@ def serve_receipt_pdf(subfolder, filename):
 @server.route("/api/diagnostics")
 def api_diagnostics():
     """Return key financial metrics as JSON for remote debugging."""
+    # Check Supabase connectivity
+    sb_status = "unknown"
+    try:
+        from supabase_loader import _get_supabase_client
+        client = _get_supabase_client()
+        if client is None:
+            sb_status = "no_client (missing SUPABASE_URL/KEY?)"
+        else:
+            # Quick read test
+            client.table("config").select("key").limit(1).execute()
+            sb_status = "connected"
+    except Exception as e:
+        sb_status = f"error: {e}"
+
     return flask.jsonify({
+        "supabase": sb_status,
+        "env_has_supabase_url": bool(os.environ.get("SUPABASE_URL", "")),
+        "env_has_supabase_key": bool(os.environ.get("SUPABASE_KEY", "")),
         "etsy": {
             "rows": len(DATA),
             "gross_sales": round(gross_sales, 2),
@@ -12438,8 +12481,10 @@ def handle_receipt_wizard(contents, save_clicks, skip_clicks, done_clicks, back_
             pass
 
         # Push to Supabase
-        _save_new_order(order)
+        _sb_ok = _save_new_order(order)
         _notify_railway_reload()
+        if not _sb_ok:
+            print(f"WARNING: Failed to save order {order.get('order_num', '?')} to Supabase (wizard)")
 
         # Build INV_ITEMS rows for this new order
         try:
@@ -13083,15 +13128,20 @@ def handle_datahub_upload(etsy_contents, receipt_contents, bank_contents,
                     except Exception:
                         pass
 
-                save_path = os.path.join(BASE_DIR, "data", "etsy_statements", fname)
+                _etsy_dir = os.path.join(BASE_DIR, "data", "etsy_statements")
+                os.makedirs(_etsy_dir, exist_ok=True)
+                save_path = os.path.join(_etsy_dir, fname)
                 with open(save_path, "wb") as f:
                     f.write(decoded)
 
                 stats = _reload_etsy_data()
                 _cascade_reload("etsy")
                 # Auto-sync to Supabase so Railway stays in sync
-                _sync_etsy_to_supabase(DATA)
+                _sb_ok = _sync_etsy_to_supabase(DATA)
                 _notify_railway_reload()
+
+                if not _sb_ok:
+                    msg += " (WARNING: Supabase sync failed — data may not persist after restart)"
 
                 if has_overlap:
                     etsy_status = html.Div([
@@ -13133,6 +13183,7 @@ def handle_datahub_upload(etsy_contents, receipt_contents, bank_contents,
 
             fname = receipt_filename or "receipt.pdf"
             save_folder = os.path.join(BASE_DIR, "data", "invoices", "keycomp")
+            os.makedirs(save_folder, exist_ok=True)
             save_path = os.path.join(save_folder, fname)
             with open(save_path, "wb") as f:
                 f.write(decoded)
@@ -13237,13 +13288,14 @@ def handle_datahub_upload(etsy_contents, receipt_contents, bank_contents,
                 stats = _reload_bank_data()
                 _cascade_reload("bank")
                 # Auto-sync to Supabase so Railway stays in sync
-                _sync_bank_to_supabase(BANK_TXNS)
+                _sb_ok = _sync_bank_to_supabase(BANK_TXNS)
                 _notify_railway_reload()
+                _bank_warn = "" if _sb_ok else " (WARNING: Supabase sync failed)"
                 bank_status = html.Div([
                     html.Span("\u2713 ", style={"color": GREEN, "fontWeight": "bold"}),
                     html.Span(f"Uploaded {fname} — {stats['transactions']} total transactions, "
-                              f"Net: ${stats['net_cash']:,.2f}",
-                              style={"color": GREEN, "fontSize": "13px"}),
+                              f"Net: ${stats['net_cash']:,.2f}{_bank_warn}",
+                              style={"color": GREEN if _sb_ok else ORANGE, "fontSize": "13px"}),
                 ])
                 bank_stats = html.Div(
                     f"{stats['transactions']} transactions  |  Net: ${stats['net_cash']:,.2f}",
