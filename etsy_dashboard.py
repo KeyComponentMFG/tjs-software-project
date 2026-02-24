@@ -6281,10 +6281,45 @@ def _build_receipt_upload_section():
 
 
 def build_tab4_inventory():
-    """Tab 4 - Inventory: Business inventory only (personal items under Owner Draws)"""
+    """Tab 4 - Inventory: Business inventory only (personal items under Owner Draws).
+    Reorganized with daily-workflow-first design: collapsible sections, snapshot banner."""
     biz_order_count = len(BIZ_INV_DF)
+    skpi = _compute_stock_kpis()
 
-    # Build order table rows — EXCLUDE personal orders
+    # ── Shared collapsible header style ───────────────────────────────────
+    _det_style = {
+        "color": CYAN, "fontSize": "14px", "fontWeight": "bold",
+        "cursor": "pointer", "padding": "10px 14px", "listStyle": "none",
+        "backgroundColor": "#ffffff08", "borderRadius": "6px",
+        "border": f"1px solid {CYAN}33",
+    }
+
+    def _sec_header(title, subtitle, color=CYAN, badge=""):
+        parts = [
+            html.Span("\u25b6 ", style={"fontSize": "12px"}),
+            html.Span(title, style={"fontWeight": "bold", "color": color}),
+            html.Span(f" \u2014 {subtitle}", style={"color": GRAY, "fontWeight": "normal", "fontSize": "12px"}),
+        ]
+        if badge:
+            parts.append(html.Span(badge, style={
+                "marginLeft": "10px", "backgroundColor": f"{ORANGE}22", "color": ORANGE,
+                "padding": "2px 10px", "borderRadius": "10px", "fontSize": "11px",
+                "fontWeight": "bold", "border": f"1px solid {ORANGE}44",
+            }))
+        return html.Summary(parts, style={**_det_style, "color": color})
+
+    # ── Snapshot Banner ───────────────────────────────────────────────────
+    _low_msg = f" {skpi['low']} items are running low (1-2 left)" if skpi["low"] > 0 else ""
+    _oos_msg = f" and {skpi['oos']} are out of stock" if skpi["oos"] > 0 else ""
+    _dot = "." if not _low_msg and not _oos_msg else ""
+    snapshot_text = (
+        f"You have {skpi['in_stock']} items in stock worth ${skpi['value']:,.2f} "
+        f"across {skpi['unique']} unique products{_dot}."
+        f"{_low_msg}{_oos_msg}{'.' if _low_msg or _oos_msg else ''} "
+        f"Total supply spend: ${true_inventory_cost:,.2f} across {inv_order_count} orders."
+    )
+
+    # ── Build order & item table rows (used in All Orders / All Items) ────
     order_table_rows = []
     for _, r in INV_DF.iterrows():
         is_personal = r["source"] == "Personal Amazon" or (isinstance(r["file"], str) and "Gigi" in r["file"])
@@ -6312,7 +6347,6 @@ def build_tab4_inventory():
             ], style={"borderBottom": "1px solid #ffffff10"})
         )
 
-    # Build item detail table rows — exclude personal/gift and biz fees
     item_table_rows = []
     items_sorted = INV_ITEMS.sort_values("total", ascending=False)
     for _, r in items_sorted.iterrows():
@@ -6360,21 +6394,10 @@ def build_tab4_inventory():
             ], style={"borderBottom": "1px solid #ffffff10"})
         )
 
-    # Get categories for filter dropdown
-    _stock_cats = ["All"] + sorted(STOCK_SUMMARY["category"].unique().tolist()) if len(STOCK_SUMMARY) > 0 else ["All"]
-
-    _sort_options = [
-        {"label": "Category", "value": "Category"},
-        {"label": "Name", "value": "Name"},
-        {"label": "Stock Low\u2192High", "value": "Stock Low\u2192High"},
-        {"label": "Stock High\u2192Low", "value": "Stock High\u2192Low"},
-        {"label": "Value High\u2192Low", "value": "Value High\u2192Low"},
-    ]
-
     return html.Div([
 
         # ══════════════════════════════════════════════════════════════════════
-        # 1. HEADER ROW: title + subtitle + Quick Add button (right)
+        # HEADER + KPI STRIP
         # ══════════════════════════════════════════════════════════════════════
         html.Div([
             html.Div([
@@ -6396,16 +6419,20 @@ def build_tab4_inventory():
                                "boxShadow": f"0 3px 12px {GREEN}33"}),
         ], style={"display": "flex", "alignItems": "flex-start", "gap": "16px", "marginBottom": "14px"}),
 
-        # Editor-save trigger store
         dcc.Store(id="editor-save-trigger", data=0),
-
-        # ══════════════════════════════════════════════════════════════════════
-        # 2. KPI PILL STRIP
-        # ══════════════════════════════════════════════════════════════════════
         html.Div(id="inv-kpi-row", children=_build_inv_kpi_row()),
 
         # ══════════════════════════════════════════════════════════════════════
-        # 3. QUICK ADD PANEL (hidden by default, toggles via button)
+        # SNAPSHOT BANNER
+        # ══════════════════════════════════════════════════════════════════════
+        html.Div(
+            html.P(snapshot_text, style={"color": WHITE, "fontSize": "13px", "margin": "0", "lineHeight": "1.6"}),
+            style={"borderLeft": f"4px solid {CYAN}", "backgroundColor": CARD,
+                   "padding": "14px 18px", "borderRadius": "8px", "marginBottom": "16px"},
+        ),
+
+        # ══════════════════════════════════════════════════════════════════════
+        # QUICK ADD PANEL (hidden by default)
         # ══════════════════════════════════════════════════════════════════════
         html.Div([
             html.H4("QUICK ADD PURCHASE", style={"color": GREEN, "margin": "0 0 8px 0", "fontSize": "15px"}),
@@ -6416,28 +6443,29 @@ def build_tab4_inventory():
                   "borderLeft": f"4px solid {GREEN}"}),
 
         # ══════════════════════════════════════════════════════════════════════
-        # RECEIPTS TO INVENTORY OPTIMIZER (detailed per-item with split wizard)
+        # SECTION 1: RECEIPTS TO INVENTORY (review/organize items)
         # ══════════════════════════════════════════════════════════════════════
         _build_inventory_editor(),
 
         # ══════════════════════════════════════════════════════════════════════
-        # 6. RECEIPT UPLOAD
+        # SECTION 2: RECEIPT UPLOAD
         # ══════════════════════════════════════════════════════════════════════
         _build_receipt_upload_section(),
 
         # ══════════════════════════════════════════════════════════════════════
-        # 7. WAREHOUSES (location cards)
-        # ══════════════════════════════════════════════════════════════════════
-        _build_enhanced_location_section(),
-
-        # ══════════════════════════════════════════════════════════════════════
-        # 9. ANALYTICS (collapsed)
+        # SECTION 3: WAREHOUSES (collapsible)
         # ══════════════════════════════════════════════════════════════════════
         html.Details([
-            html.Summary("ANALYTICS & REFERENCE DATA", style={
-                "color": PURPLE, "fontSize": "16px", "fontWeight": "700", "cursor": "pointer",
-                "padding": "10px 0", "letterSpacing": "1.5px",
-            }),
+            _sec_header("WAREHOUSES", "Who has what \u2014 inventory by location", color=CYAN),
+            html.Div([_build_enhanced_location_section()], style={"padding": "0"}),
+        ], open=False,
+           style={"marginBottom": "14px"}),
+
+        # ══════════════════════════════════════════════════════════════════════
+        # SECTION 4: SPENDING ANALYTICS (collapsible)
+        # ══════════════════════════════════════════════════════════════════════
+        html.Details([
+            _sec_header("SPENDING ANALYTICS", "Charts and trends for inventory spending", color=PURPLE),
             html.Div([
                 # Charts
                 html.Div([
@@ -6508,77 +6536,6 @@ def build_tab4_inventory():
                    style={"backgroundColor": CARD2, "padding": "12px 16px", "borderRadius": "10px",
                           "marginBottom": "14px", "border": f"1px solid {CYAN}33"}),
 
-                # All Orders Table
-                html.Details([
-                    html.Summary(f"ALL ORDERS ({inv_order_count} orders)", style={
-                        "color": PURPLE, "fontSize": "14px", "fontWeight": "bold", "cursor": "pointer",
-                        "padding": "8px 0",
-                    }),
-                    html.Div([
-                        html.Table([
-                            html.Thead(html.Tr([
-                                html.Th("Date", style={"textAlign": "left", "padding": "6px 8px"}),
-                                html.Th("Order #", style={"textAlign": "left", "padding": "6px 8px"}),
-                                html.Th("Store", style={"textAlign": "left", "padding": "6px 8px"}),
-                                html.Th("Shipped To", style={"textAlign": "left", "padding": "6px 8px"}),
-                                html.Th("Items", style={"textAlign": "center", "padding": "6px 8px"}),
-                                html.Th("Subtotal", style={"textAlign": "right", "padding": "6px 8px"}),
-                                html.Th("Tax", style={"textAlign": "right", "padding": "6px 8px"}),
-                                html.Th("Total", style={"textAlign": "right", "padding": "6px 8px"}),
-                            ], style={"borderBottom": f"2px solid {PURPLE}"})),
-                            html.Tbody(order_table_rows + [
-                                html.Tr([
-                                    html.Td("TOTAL", style={"color": ORANGE, "fontWeight": "bold", "padding": "6px 8px"}),
-                                    html.Td("", style={"padding": "6px 8px"}),
-                                    html.Td("", style={"padding": "6px 8px"}),
-                                    html.Td("", style={"padding": "6px 8px"}),
-                                    html.Td(str(INV_DF["item_count"].sum()), style={"textAlign": "center", "color": ORANGE,
-                                                                                     "fontWeight": "bold", "padding": "6px 8px"}),
-                                    html.Td(f"${total_inv_subtotal:,.2f}", style={"textAlign": "right", "color": ORANGE,
-                                                                                   "fontWeight": "bold", "padding": "6px 8px"}),
-                                    html.Td(f"${total_inv_tax:,.2f}", style={"textAlign": "right", "color": ORANGE,
-                                                                               "fontWeight": "bold", "padding": "6px 8px"}),
-                                    html.Td(f"${total_inventory_cost:,.2f}", style={"textAlign": "right", "color": ORANGE,
-                                                                                     "fontWeight": "bold", "fontSize": "14px",
-                                                                                     "padding": "6px 8px"}),
-                                ], style={"borderTop": f"3px solid {ORANGE}"}),
-                            ]),
-                        ], style={"width": "100%", "borderCollapse": "collapse", "color": WHITE}),
-                    ]),
-                ], open=False,
-                   style={"backgroundColor": CARD2, "padding": "12px 16px", "borderRadius": "10px",
-                          "marginBottom": "14px", "border": f"1px solid {PURPLE}33"}),
-
-                # All Items Table
-                html.Details([
-                    html.Summary("ALL INVENTORY ITEMS (sorted by cost)", style={
-                        "color": TEAL, "fontSize": "14px", "fontWeight": "bold", "cursor": "pointer",
-                        "padding": "8px 0",
-                    }),
-                    html.Div([
-                        html.P("Business supplies only.", style={"color": GRAY, "fontSize": "12px", "marginBottom": "8px"}),
-                        html.Div([
-                            html.Table([
-                                html.Thead(html.Tr([
-                                    html.Th("", style={"padding": "6px 4px", "width": "44px"}),
-                                    html.Th("Type", style={"textAlign": "center", "padding": "6px 8px", "width": "80px"}),
-                                    html.Th("Item Name", style={"textAlign": "left", "padding": "6px 8px"}),
-                                    html.Th("Category", style={"textAlign": "left", "padding": "6px 8px"}),
-                                    html.Th("Store", style={"textAlign": "left", "padding": "6px 8px"}),
-                                    html.Th("Shipped To", style={"textAlign": "left", "padding": "6px 8px"}),
-                                    html.Th("Qty", style={"textAlign": "center", "padding": "6px 8px"}),
-                                    html.Th("Unit Price", style={"textAlign": "right", "padding": "6px 8px"}),
-                                    html.Th("Total", style={"textAlign": "right", "padding": "6px 8px"}),
-                                    html.Th("Date", style={"textAlign": "left", "padding": "6px 8px"}),
-                                ], style={"borderBottom": f"2px solid {TEAL}"})),
-                                html.Tbody(item_table_rows),
-                            ], style={"width": "100%", "borderCollapse": "collapse", "color": WHITE}),
-                        ], style={"maxHeight": "600px", "overflowY": "auto"}),
-                    ]),
-                ], open=False,
-                   style={"backgroundColor": CARD2, "padding": "12px 16px", "borderRadius": "10px",
-                          "marginBottom": "14px", "border": f"1px solid {TEAL}33"}),
-
                 # Spending by Category
                 html.Details([
                     html.Summary("SPENDING BY CATEGORY", style={
@@ -6597,11 +6554,80 @@ def build_tab4_inventory():
                 ], open=False,
                    style={"backgroundColor": CARD2, "padding": "12px 16px", "borderRadius": "10px",
                           "marginBottom": "14px", "border": f"1px solid {ORANGE}33"}),
-            ]),
+            ], style={"padding": "14px"}),
         ], open=False,
-           style={"backgroundColor": CARD2, "padding": "14px 20px", "borderRadius": "12px",
+           style={"backgroundColor": CARD2, "padding": "0", "borderRadius": "12px",
                   "marginBottom": "14px", "border": f"1px solid {PURPLE}33",
                   "borderTop": f"4px solid {PURPLE}"}),
+
+        # ══════════════════════════════════════════════════════════════════════
+        # SECTION 5: ALL ORDERS (collapsible)
+        # ══════════════════════════════════════════════════════════════════════
+        html.Details([
+            _sec_header("ALL ORDERS", f"Every purchase order with date, store, and totals ({inv_order_count})", color=PURPLE),
+            html.Div([
+                html.Table([
+                    html.Thead(html.Tr([
+                        html.Th("Date", style={"textAlign": "left", "padding": "6px 8px"}),
+                        html.Th("Order #", style={"textAlign": "left", "padding": "6px 8px"}),
+                        html.Th("Store", style={"textAlign": "left", "padding": "6px 8px"}),
+                        html.Th("Shipped To", style={"textAlign": "left", "padding": "6px 8px"}),
+                        html.Th("Items", style={"textAlign": "center", "padding": "6px 8px"}),
+                        html.Th("Subtotal", style={"textAlign": "right", "padding": "6px 8px"}),
+                        html.Th("Tax", style={"textAlign": "right", "padding": "6px 8px"}),
+                        html.Th("Total", style={"textAlign": "right", "padding": "6px 8px"}),
+                    ], style={"borderBottom": f"2px solid {PURPLE}"})),
+                    html.Tbody(order_table_rows + [
+                        html.Tr([
+                            html.Td("TOTAL", style={"color": ORANGE, "fontWeight": "bold", "padding": "6px 8px"}),
+                            html.Td("", style={"padding": "6px 8px"}),
+                            html.Td("", style={"padding": "6px 8px"}),
+                            html.Td("", style={"padding": "6px 8px"}),
+                            html.Td(str(INV_DF["item_count"].sum()), style={"textAlign": "center", "color": ORANGE,
+                                                                             "fontWeight": "bold", "padding": "6px 8px"}),
+                            html.Td(f"${total_inv_subtotal:,.2f}", style={"textAlign": "right", "color": ORANGE,
+                                                                           "fontWeight": "bold", "padding": "6px 8px"}),
+                            html.Td(f"${total_inv_tax:,.2f}", style={"textAlign": "right", "color": ORANGE,
+                                                                       "fontWeight": "bold", "padding": "6px 8px"}),
+                            html.Td(f"${total_inventory_cost:,.2f}", style={"textAlign": "right", "color": ORANGE,
+                                                                             "fontWeight": "bold", "fontSize": "14px",
+                                                                             "padding": "6px 8px"}),
+                        ], style={"borderTop": f"3px solid {ORANGE}"}),
+                    ]),
+                ], style={"width": "100%", "borderCollapse": "collapse", "color": WHITE}),
+            ], style={"padding": "14px", "maxHeight": "500px", "overflowY": "auto"}),
+        ], open=False,
+           style={"backgroundColor": CARD2, "padding": "0", "borderRadius": "10px",
+                  "marginBottom": "14px", "border": f"1px solid {PURPLE}33"}),
+
+        # ══════════════════════════════════════════════════════════════════════
+        # SECTION 6: ALL ITEMS (collapsible)
+        # ══════════════════════════════════════════════════════════════════════
+        html.Details([
+            _sec_header("ALL ITEMS", "Every inventory item sorted by cost", color=TEAL),
+            html.Div([
+                html.P("Business supplies only.", style={"color": GRAY, "fontSize": "12px", "marginBottom": "8px"}),
+                html.Div([
+                    html.Table([
+                        html.Thead(html.Tr([
+                            html.Th("", style={"padding": "6px 4px", "width": "44px"}),
+                            html.Th("Type", style={"textAlign": "center", "padding": "6px 8px", "width": "80px"}),
+                            html.Th("Item Name", style={"textAlign": "left", "padding": "6px 8px"}),
+                            html.Th("Category", style={"textAlign": "left", "padding": "6px 8px"}),
+                            html.Th("Store", style={"textAlign": "left", "padding": "6px 8px"}),
+                            html.Th("Shipped To", style={"textAlign": "left", "padding": "6px 8px"}),
+                            html.Th("Qty", style={"textAlign": "center", "padding": "6px 8px"}),
+                            html.Th("Unit Price", style={"textAlign": "right", "padding": "6px 8px"}),
+                            html.Th("Total", style={"textAlign": "right", "padding": "6px 8px"}),
+                            html.Th("Date", style={"textAlign": "left", "padding": "6px 8px"}),
+                        ], style={"borderBottom": f"2px solid {TEAL}"})),
+                        html.Tbody(item_table_rows),
+                    ], style={"width": "100%", "borderCollapse": "collapse", "color": WHITE}),
+                ], style={"maxHeight": "600px", "overflowY": "auto"}),
+            ], style={"padding": "14px"}),
+        ], open=False,
+           style={"backgroundColor": CARD2, "padding": "0", "borderRadius": "10px",
+                  "marginBottom": "14px", "border": f"1px solid {TEAL}33"}),
 
         # ── Receipt Gallery ─────────────────────────────────────────────────
         _build_receipt_gallery(),
