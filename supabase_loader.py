@@ -663,6 +663,89 @@ def sync_etsy_transactions(data_df) -> bool:
         return False
 
 
+def append_etsy_transactions(data_df) -> bool:
+    """Add new Etsy rows to Supabase WITHOUT deleting existing data.
+    Used by Railway uploads where only the new CSV is on disk."""
+    client = _get_supabase_client()
+    if client is None:
+        print("append_etsy: no Supabase client")
+        return False
+    try:
+        # Fetch existing dates to avoid duplicates
+        existing = client.table("etsy_transactions").select("date,type,title,amount,net").execute()
+        existing_keys = set()
+        for r in existing.data:
+            existing_keys.add((r.get("date", ""), r.get("type", ""), r.get("title", ""),
+                               r.get("amount", ""), r.get("net", "")))
+
+        rows = []
+        for _, r in data_df.iterrows():
+            key = (str(r.get("Date", "")), str(r.get("Type", "")), str(r.get("Title", "")),
+                   str(r.get("Amount", "")), str(r.get("Net", "")))
+            if key not in existing_keys:
+                rows.append({
+                    "date": str(r.get("Date", "")),
+                    "type": str(r.get("Type", "")),
+                    "title": str(r.get("Title", "")),
+                    "info": str(r.get("Info", "")),
+                    "currency": str(r.get("Currency", "USD")),
+                    "amount": str(r.get("Amount", "--")),
+                    "fees_and_taxes": str(r.get("Fees & Taxes", "--")),
+                    "net": str(r.get("Net", "--")),
+                    "tax_details": str(r.get("Tax Details", "--")),
+                })
+        if rows:
+            for i in range(0, len(rows), 500):
+                client.table("etsy_transactions").insert(rows[i:i+500]).execute()
+            print(f"Appended {len(rows)} new Etsy rows to Supabase")
+        else:
+            print("No new Etsy rows to append (all duplicates)")
+        return True
+    except Exception as e:
+        print(f"Etsy append to Supabase failed: {e}")
+        return False
+
+
+def append_bank_transactions(bank_txns: list[dict]) -> bool:
+    """Add new bank transactions to Supabase WITHOUT deleting existing data.
+    Used by Railway uploads where only the new PDF is on disk."""
+    client = _get_supabase_client()
+    if client is None:
+        print("append_bank: no Supabase client")
+        return False
+    try:
+        # Fetch existing to avoid duplicates
+        existing = client.table("bank_transactions").select("date,description,amount,type").execute()
+        existing_keys = set()
+        for r in existing.data:
+            existing_keys.add((r.get("date", ""), str(r.get("amount", 0)), r.get("type", ""),
+                               r.get("description", "")))
+
+        rows = []
+        for t in bank_txns:
+            key = (t.get("date", ""), str(t.get("amount", 0)), t.get("type", ""), t.get("desc", ""))
+            if key not in existing_keys:
+                rows.append({
+                    "date": t["date"],
+                    "description": t["desc"],
+                    "amount": t["amount"],
+                    "type": t["type"],
+                    "category": t.get("category", ""),
+                    "source_file": t.get("source_file", ""),
+                    "raw_description": t.get("raw_desc", ""),
+                })
+        if rows:
+            for i in range(0, len(rows), 500):
+                client.table("bank_transactions").insert(rows[i:i+500]).execute()
+            print(f"Appended {len(rows)} new bank transactions to Supabase")
+        else:
+            print("No new bank transactions to append (all duplicates)")
+        return True
+    except Exception as e:
+        print(f"Bank append to Supabase failed: {e}")
+        return False
+
+
 # ── Public API ──────────────────────────────────────────────────────────────
 
 def load_data() -> dict:

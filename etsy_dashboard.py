@@ -69,6 +69,8 @@ from supabase_loader import (
     save_new_order as _save_new_order,
     sync_bank_transactions as _sync_bank_to_supabase,
     sync_etsy_transactions as _sync_etsy_to_supabase,
+    append_bank_transactions as _append_bank_to_supabase,
+    append_etsy_transactions as _append_etsy_to_supabase,
 )
 
 RAILWAY_URL = os.environ.get("RAILWAY_URL", "https://web-production-7f385.up.railway.app")
@@ -725,18 +727,7 @@ def _reload_etsy_data():
         except Exception:
             pass
     if _frames:
-        disk_data = pd.concat(_frames, ignore_index=True)
-        # On Railway (ephemeral disk), only the newly uploaded file exists.
-        # Merge with existing in-memory DATA (loaded from Supabase at startup)
-        # to avoid overwriting historical data when syncing back.
-        if len(DATA) > 0:
-            combined = pd.concat([DATA, disk_data], ignore_index=True)
-            # Deduplicate on core columns (keeps last = new upload wins)
-            dedup_cols = ["Date", "Type", "Title", "Amount", "Net"]
-            combined = combined.drop_duplicates(subset=dedup_cols, keep="last")
-            DATA = combined.reset_index(drop=True)
-        else:
-            DATA = disk_data
+        DATA = pd.concat(_frames, ignore_index=True)
         DATA["Amount_Clean"] = DATA["Amount"].apply(parse_money)
         DATA["Net_Clean"] = DATA["Net"].apply(parse_money)
         DATA["Fees_Clean"] = DATA["Fees & Taxes"].apply(parse_money)
@@ -1035,18 +1026,7 @@ def _reload_bank_data():
     except Exception:
         pass
 
-    # On Railway (ephemeral disk), only the newly uploaded file exists.
-    # Merge with existing in-memory BANK_TXNS (loaded from Supabase at startup)
-    # to avoid overwriting historical data when syncing back.
-    if all_txns and BANK_TXNS:
-        existing_keys = set()
-        for t in all_txns:
-            existing_keys.add((t.get("date", ""), t.get("amount", 0), t.get("type", ""), t.get("desc", "")))
-        for t in BANK_TXNS:
-            key = (t.get("date", ""), t.get("amount", 0), t.get("type", ""), t.get("desc", ""))
-            if key not in existing_keys:
-                all_txns.append(t)
-    BANK_TXNS = all_txns if all_txns else BANK_TXNS
+    BANK_TXNS = all_txns
     bank_statement_count = len(source_files)
 
     # Rebuild aggregates (mirrors lines 407-474)
@@ -13136,8 +13116,8 @@ def handle_datahub_upload(etsy_contents, receipt_contents, bank_contents,
 
                 stats = _reload_etsy_data()
                 _cascade_reload("etsy")
-                # Auto-sync to Supabase so Railway stays in sync
-                _sb_ok = _sync_etsy_to_supabase(DATA)
+                # Append new rows to Supabase (doesn't delete existing data)
+                _sb_ok = _append_etsy_to_supabase(df)
                 _notify_railway_reload()
 
                 if not _sb_ok:
@@ -13287,8 +13267,8 @@ def handle_datahub_upload(etsy_contents, receipt_contents, bank_contents,
 
                 stats = _reload_bank_data()
                 _cascade_reload("bank")
-                # Auto-sync to Supabase so Railway stays in sync
-                _sb_ok = _sync_bank_to_supabase(BANK_TXNS)
+                # Append new transactions to Supabase (doesn't delete existing data)
+                _sb_ok = _append_bank_to_supabase(BANK_TXNS)
                 _notify_railway_reload()
                 _bank_warn = "" if _sb_ok else " (WARNING: Supabase sync failed)"
                 bank_status = html.Div([
