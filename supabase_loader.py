@@ -671,12 +671,18 @@ def append_etsy_transactions(data_df) -> bool:
         print("append_etsy: no Supabase client")
         return False
     try:
-        # Fetch existing dates to avoid duplicates
-        existing = client.table("etsy_transactions").select("date,type,title,amount,net").execute()
+        # Fetch ALL existing rows (paginate past 1000-row default limit)
         existing_keys = set()
-        for r in existing.data:
-            existing_keys.add((r.get("date", ""), r.get("type", ""), r.get("title", ""),
-                               r.get("amount", ""), r.get("net", "")))
+        _page_size = 1000
+        _offset = 0
+        while True:
+            _resp = client.table("etsy_transactions").select("date,type,title,amount,net").range(_offset, _offset + _page_size - 1).execute()
+            for r in _resp.data:
+                existing_keys.add((r.get("date", ""), r.get("type", ""), r.get("title", ""),
+                                   r.get("amount", ""), r.get("net", "")))
+            if len(_resp.data) < _page_size:
+                break
+            _offset += _page_size
 
         rows = []
         for _, r in data_df.iterrows():
@@ -714,12 +720,18 @@ def append_bank_transactions(bank_txns: list[dict]) -> bool:
         print("append_bank: no Supabase client")
         return False
     try:
-        # Fetch existing to avoid duplicates
-        existing = client.table("bank_transactions").select("date,description,amount,type").execute()
+        # Fetch ALL existing rows (paginate past 1000-row default limit)
         existing_keys = set()
-        for r in existing.data:
-            existing_keys.add((r.get("date", ""), str(r.get("amount", 0)), r.get("type", ""),
-                               r.get("description", "")))
+        _page_size = 1000
+        _offset = 0
+        while True:
+            _resp = client.table("bank_transactions").select("date,description,amount,type").range(_offset, _offset + _page_size - 1).execute()
+            for r in _resp.data:
+                existing_keys.add((r.get("date", ""), str(r.get("amount", 0)), r.get("type", ""),
+                                   r.get("description", "")))
+            if len(_resp.data) < _page_size:
+                break
+            _offset += _page_size
 
         rows = []
         for t in bank_txns:

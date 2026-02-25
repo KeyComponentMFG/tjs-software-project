@@ -6,7 +6,8 @@
       "2026-02-16_transaction_download.csv",
       "2026-02-18_transaction_download.csv",
       "2026-02-19_transaction_download.csv",
-      "2026-02-21_transaction_download.csv"
+      "2026-02-21_transaction_download.csv",
+      "2026-02-24_transaction_download.csv"
     ]
   },
   "transactions": [
@@ -700,7 +701,7 @@
       "amount": 34.55,
       "type": "debit",
       "category": "Owner Draw - Tulsa",
-      "source_file": "2026-02-21_transaction_download.csv",
+      "source_file": "2026-02-24_transaction_download.csv",
       "raw_desc": "Debit Card Purchase QT 41                      TULSA          OK"
     },
     {
@@ -709,7 +710,7 @@
       "amount": 15.97,
       "type": "debit",
       "category": "Amazon Inventory",
-      "source_file": "2026-02-21_transaction_download.csv",
+      "source_file": "2026-02-24_transaction_download.csv",
       "raw_desc": "Debit Card Purchase AMAZON MKTPL B89DU0TH3     AMZN COM BIL   WA"
     },
     {
@@ -718,7 +719,7 @@
       "amount": 1052.86,
       "type": "deposit",
       "category": "Etsy Payout",
-      "source_file": "2026-02-21_transaction_download.csv",
+      "source_file": "2026-02-24_transaction_download.csv",
       "raw_desc": "ACH deposit ETSY, INC.       PAYOUT Key Component Manufact etsy"
     },
     {
@@ -727,7 +728,7 @@
       "amount": 23.86,
       "type": "debit",
       "category": "Amazon Inventory",
-      "source_file": "2026-02-21_transaction_download.csv",
+      "source_file": "2026-02-24_transaction_download.csv",
       "raw_desc": "Debit Card Purchase AMAZON MKTPL 9O7994ZL3     AMZN COM BIL   WA"
     },
     {
@@ -736,7 +737,7 @@
       "amount": 23.79,
       "type": "debit",
       "category": "Amazon Inventory",
-      "source_file": "2026-02-21_transaction_download.csv",
+      "source_file": "2026-02-24_transaction_download.csv",
       "raw_desc": "Debit Card Purchase AMAZON MKTPL XM21T5V53     AMZN COM BIL   WA"
     },
     {
@@ -745,7 +746,7 @@
       "amount": 17.25,
       "type": "debit",
       "category": "Amazon Inventory",
-      "source_file": "2026-02-21_transaction_download.csv",
+      "source_file": "2026-02-24_transaction_download.csv",
       "raw_desc": "Debit Card Purchase AMAZON MKTPL 8176E0453     AMZN COM BIL   WA"
     },
     {
@@ -754,7 +755,7 @@
       "amount": 483.28,
       "type": "deposit",
       "category": "Etsy Payout",
-      "source_file": "2026-02-21_transaction_download.csv",
+      "source_file": "2026-02-24_transaction_download.csv",
       "raw_desc": "ACH deposit ETSY, INC.       PAYOUT Key Component Manufact etsy"
     },
     {
@@ -763,7 +764,7 @@
       "amount": 350.0,
       "type": "debit",
       "category": "Owner Draw - Tulsa",
-      "source_file": "2026-02-21_transaction_download.csv",
+      "source_file": "2026-02-24_transaction_download.csv",
       "raw_desc": "Debit Card Purchase VENMO  MORGAN MCNULTY      888 221 1161   NY"
     },
     {
@@ -772,7 +773,7 @@
       "amount": 36.84,
       "type": "debit",
       "category": "Amazon Inventory",
-      "source_file": "2026-02-21_transaction_download.csv",
+      "source_file": "2026-02-24_transaction_download.csv",
       "raw_desc": "Debit Card Purchase AMAZON MKTPL 7P1SB3TM3     AMZN COM BIL   WA"
     },
     {
@@ -781,7 +782,7 @@
       "amount": 31.46,
       "type": "debit",
       "category": "Amazon Inventory",
-      "source_file": "2026-02-21_transaction_download.csv",
+      "source_file": "2026-02-24_transaction_download.csv",
       "raw_desc": "Debit Card Purchase AMAZON MKTPL 7L6XL6F43     AMZN COM BIL   WA"
     },
     {
@@ -790,7 +791,7 @@
       "amount": 29.21,
       "type": "debit",
       "category": "Amazon Inventory",
-      "source_file": "2026-02-21_transaction_download.csv",
+      "source_file": "2026-02-24_transaction_download.csv",
       "raw_desc": "Debit Card Purchase AMAZON MKTPL PU21O7NF3     AMZN COM BIL   WA"
     },
     {
@@ -799,7 +800,7 @@
       "amount": 16.44,
       "type": "debit",
       "category": "Amazon Inventory",
-      "source_file": "2026-02-21_transaction_download.csv",
+      "source_file": "2026-02-24_transaction_download.csv",
       "raw_desc": "Debit Card Purchase AMAZON MKTPL HO1FY9NR3     AMZN COM BIL   WA"
     },
     {
@@ -808,7 +809,7 @@
       "amount": 10.0,
       "type": "debit",
       "category": "Etsy Fees",
-      "source_file": "2026-02-21_transaction_download.csv",
+      "source_file": "2026-02-24_transaction_download.csv",
       "raw_desc": "Debit Card Purchase ETSY COM US ETSY 000000 ETSY COM US ETSY COM A     BROOKLYN       NY"
     },
     {
@@ -817,7 +818,7 @@
       "amount": 13.98,
       "type": "debit",
       "category": "Etsy Fees",
-      "source_file": "2026-02-21_transaction_download.csv",
+      "source_file": "2026-02-24_transaction_download.csv",
       "raw_desc": "Debit Card Purchase ETSY COM US ETSY 000000 ETSY COM US ETSY COM L     BROOKLYN       NY"
     },
     {
@@ -826,7 +827,7 @@
       "amount": 100.0,
       "type": "debit",
       "category": "Business Credit Card",
-      "source_file": "2026-02-21_transaction_download.csv",
+      "source_file": "2026-02-24_transaction_download.csv",
       "raw_desc": "ACH Withdrawal BEST BUY         AUTO PYMT THOMAS J MCNULTY       ...0353"
     },
     {
@@ -835,7 +836,7 @@
       "amount": 69.81,
       "type": "debit",
       "category": "Amazon Inventory",
-      "source_file": "2026-02-21_transaction_download.csv",
+      "source_file": "2026-02-24_transaction_download.csv",
       "raw_desc": "Debit Card Purchase AMAZON MKTPL E539P5YE3     AMZN COM BIL   WA"
     },
     {
@@ -844,7 +845,7 @@
       "amount": 69.25,
       "type": "debit",
       "category": "Amazon Inventory",
-      "source_file": "2026-02-21_transaction_download.csv",
+      "source_file": "2026-02-24_transaction_download.csv",
       "raw_desc": "Debit Card Purchase AMAZON MKTPL 671KV9Z93     AMZN COM BIL   WA"
     },
     {
@@ -853,7 +854,7 @@
       "amount": 29.28,
       "type": "debit",
       "category": "Amazon Inventory",
-      "source_file": "2026-02-21_transaction_download.csv",
+      "source_file": "2026-02-24_transaction_download.csv",
       "raw_desc": "Debit Card Purchase AMAZON MKTPL R27S48LE3     AMZN COM BIL   WA"
     },
     {
@@ -862,7 +863,7 @@
       "amount": 28.84,
       "type": "debit",
       "category": "Amazon Inventory",
-      "source_file": "2026-02-21_transaction_download.csv",
+      "source_file": "2026-02-24_transaction_download.csv",
       "raw_desc": "Debit Card Purchase AMAZON MKTPL AW4BF5493     AMZN COM BIL   WA"
     },
     {
@@ -871,7 +872,7 @@
       "amount": 20.56,
       "type": "debit",
       "category": "Amazon Inventory",
-      "source_file": "2026-02-21_transaction_download.csv",
+      "source_file": "2026-02-24_transaction_download.csv",
       "raw_desc": "Debit Card Purchase AMAZON MKTPL Z92UI8X33     AMZN COM BIL   WA"
     },
     {
@@ -880,7 +881,7 @@
       "amount": 1292.35,
       "type": "deposit",
       "category": "Etsy Payout",
-      "source_file": "2026-02-21_transaction_download.csv",
+      "source_file": "2026-02-24_transaction_download.csv",
       "raw_desc": "ACH deposit ETSY, INC.       PAYOUT Key Component Manufact etsy"
     },
     {
@@ -889,7 +890,7 @@
       "amount": 47.82,
       "type": "debit",
       "category": "Amazon Inventory",
-      "source_file": "2026-02-21_transaction_download.csv",
+      "source_file": "2026-02-24_transaction_download.csv",
       "raw_desc": "Debit Card Purchase AMAZON MKTPL B95XJ10L2     AMZN COM BIL   WA"
     },
     {
@@ -898,7 +899,7 @@
       "amount": 20.34,
       "type": "debit",
       "category": "Amazon Inventory",
-      "source_file": "2026-02-21_transaction_download.csv",
+      "source_file": "2026-02-24_transaction_download.csv",
       "raw_desc": "Debit Card Purchase AMAZON MKTPL 025ML0WL3     AMZN COM BIL   WA"
     },
     {
@@ -907,7 +908,7 @@
       "amount": 17.06,
       "type": "debit",
       "category": "Amazon Inventory",
-      "source_file": "2026-02-21_transaction_download.csv",
+      "source_file": "2026-02-24_transaction_download.csv",
       "raw_desc": "Debit Card Purchase AMAZON MKTPL 9061J43Z3     AMZN COM BIL   WA"
     },
     {
@@ -916,8 +917,62 @@
       "amount": 17.06,
       "type": "debit",
       "category": "Amazon Inventory",
-      "source_file": "2026-02-21_transaction_download.csv",
+      "source_file": "2026-02-24_transaction_download.csv",
       "raw_desc": "Debit Card Purchase AMAZON MKTPL 8Z6R86MZ3     AMZN COM BIL   WA"
+    },
+    {
+      "date": "02/23/2026",
+      "desc": "Recur Debit Card Purchase COURSERA ORG",
+      "amount": 49.0,
+      "type": "debit",
+      "category": "Uncategorized",
+      "source_file": "2026-02-24_transaction_download.csv",
+      "raw_desc": "Recur Debit Card Purchase COURSERA ORG               ...9884     CA"
+    },
+    {
+      "date": "02/23/2026",
+      "desc": "AMAZON MKTPL RX1Z95WC3",
+      "amount": 31.46,
+      "type": "debit",
+      "category": "Amazon Inventory",
+      "source_file": "2026-02-24_transaction_download.csv",
+      "raw_desc": "Debit Card Purchase AMAZON MKTPL RX1Z95WC3     AMZN COM BIL   WA"
+    },
+    {
+      "date": "02/23/2026",
+      "desc": "AMAZON MKTPL B460I6ZS3",
+      "amount": 17.25,
+      "type": "debit",
+      "category": "Amazon Inventory",
+      "source_file": "2026-02-24_transaction_download.csv",
+      "raw_desc": "Debit Card Purchase AMAZON MKTPL B460I6ZS3     AMZN COM BIL   WA"
+    },
+    {
+      "date": "02/23/2026",
+      "desc": "AMAZON MKTPL YL9P65N93",
+      "amount": 11.66,
+      "type": "debit",
+      "category": "Amazon Inventory",
+      "source_file": "2026-02-24_transaction_download.csv",
+      "raw_desc": "Debit Card Purchase AMAZON MKTPL YL9P65N93     AMZN COM BIL   WA"
+    },
+    {
+      "date": "02/23/2026",
+      "desc": "Debit Card Purchase WM SUPERCENTER   099200 WM SUP",
+      "amount": 10.33,
+      "type": "debit",
+      "category": "Uncategorized",
+      "source_file": "2026-02-24_transaction_download.csv",
+      "raw_desc": "Debit Card Purchase WM SUPERCENTER   099200 WM SUPERCENTER  992        TULSA          OK"
+    },
+    {
+      "date": "02/23/2026",
+      "desc": "QT OUTSIDE 00",
+      "amount": 15.28,
+      "type": "debit",
+      "category": "Owner Draw - Tulsa",
+      "source_file": "2026-02-24_transaction_download.csv",
+      "raw_desc": "Debit Card Purchase QT 41 OUTSIDE    001 QT 41 OUTSIDE              TULSA          OK"
     }
   ]
 }

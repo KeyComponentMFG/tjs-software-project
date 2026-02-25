@@ -156,6 +156,14 @@ def _fetch_amazon_image(item_name):
 _sb = _load_data()
 CONFIG = _sb["CONFIG"]
 INVOICES = _sb["INVOICES"]
+# Deduplicate invoices by order_num
+_seen_orders = set()
+_deduped_invoices = []
+for _inv in INVOICES:
+    if _inv["order_num"] not in _seen_orders:
+        _seen_orders.add(_inv["order_num"])
+        _deduped_invoices.append(_inv)
+INVOICES = _deduped_invoices
 
 # Always re-parse Etsy data from local CSVs so new uploads are picked up immediately
 import glob as _glob_mod
@@ -169,6 +177,7 @@ if os.path.isdir(_etsy_dir):
             pass
 if _etsy_frames:
     DATA = pd.concat(_etsy_frames, ignore_index=True)
+    DATA = DATA.drop_duplicates(subset=["Date", "Type", "Title", "Info", "Amount", "Net"], keep="last")
     # Add computed columns (same as supabase_loader._add_computed_columns)
     def _pm(val):
         if pd.isna(val) or val == "--" or val == "":
@@ -187,6 +196,8 @@ if _etsy_frames:
     print(f"Loaded {len(DATA)} Etsy transactions from local CSVs")
 else:
     DATA = _sb["DATA"]
+    if len(DATA) > 0:
+        DATA = DATA.drop_duplicates(subset=["Date", "Type", "Title", "Info", "Amount", "Net"], keep="last")
     print("Using Etsy data from Supabase (no local CSVs found)")
 
 # Auto-calculate Etsy balance from CSV deposit titles instead of stale config value
@@ -728,6 +739,7 @@ def _reload_etsy_data():
             pass
     if _frames:
         DATA = pd.concat(_frames, ignore_index=True)
+        DATA = DATA.drop_duplicates(subset=["Date", "Type", "Title", "Info", "Amount", "Net"], keep="last")
         DATA["Amount_Clean"] = DATA["Amount"].apply(parse_money)
         DATA["Net_Clean"] = DATA["Net"].apply(parse_money)
         DATA["Fees_Clean"] = DATA["Fees & Taxes"].apply(parse_money)
@@ -1119,7 +1131,12 @@ def _reload_inventory_data(new_order):
     global monthly_inv_spend, biz_inv_by_category, gigi_cost, personal_inv_items
 
     # Append to INVOICES and persist (mirrors lines 8796-8807)
-    INVOICES.append(new_order)
+    # Skip if this order_num is already in the list (prevents duplicates)
+    existing_order_nums = {inv["order_num"] for inv in INVOICES}
+    if new_order["order_num"] in existing_order_nums:
+        pass  # Already exists, don't append again
+    else:
+        INVOICES.append(new_order)
     _RECENT_UPLOADS.add(new_order["order_num"])
     try:
         _gen_dir = os.path.join(BASE_DIR, "data", "generated")
@@ -1177,6 +1194,7 @@ def _reload_inventory_data(new_order):
         else:
             new_df["total_with_tax"] = new_df["total"]
         INV_ITEMS = pd.concat([INV_ITEMS, new_df], ignore_index=True)
+        INV_ITEMS = INV_ITEMS.drop_duplicates(subset=["order_num", "name"], keep="last")
 
     # Rebuild INV_DF row
     inv_rows = []
@@ -7087,7 +7105,18 @@ def api_reload():
         INVOICES = sb["INVOICES"]
         BANK_TXNS = sb["BANK_TXNS"]
 
-        # 2. Rebuild Etsy derived metrics (mirrors _reload_etsy_data logic)
+        # Deduplicate invoices by order_num
+        _seen_o = set()
+        _deduped = []
+        for _inv in INVOICES:
+            if _inv["order_num"] not in _seen_o:
+                _seen_o.add(_inv["order_num"])
+                _deduped.append(_inv)
+        INVOICES = _deduped
+
+        # 2. Deduplicate Supabase data and rebuild Etsy metrics (matches _reload_etsy_data)
+        DATA = DATA.drop_duplicates(subset=["Date", "Type", "Title", "Info", "Amount", "Net"], keep="last")
+
         sales_df = DATA[DATA["Type"] == "Sale"]
         fee_df = DATA[DATA["Type"] == "Fee"]
         ship_df = DATA[DATA["Type"] == "Shipping"]
@@ -7095,21 +7124,23 @@ def api_reload():
         refund_df = DATA[DATA["Type"] == "Refund"]
         tax_df = DATA[DATA["Type"] == "Tax"]
         deposit_df = DATA[DATA["Type"] == "Deposit"]
-        buyer_fee_df = fee_df[fee_df["Title"].str.contains("Regulatory operating fee|Sales tax paid", case=False, na=False)]
+        buyer_fee_df = DATA[DATA["Type"] == "Buyer Fee"]
 
-        gross_sales = sales_df["Amount_Clean"].sum()
+        gross_sales = sales_df["Net_Clean"].sum()
         total_refunds = abs(refund_df["Net_Clean"].sum())
         net_sales = gross_sales - total_refunds
         total_fees = abs(fee_df["Net_Clean"].sum())
-        total_fees_gross = abs(fee_df["Net_Clean"].sum())
         total_shipping_cost = abs(ship_df["Net_Clean"].sum())
         total_marketing = abs(mkt_df["Net_Clean"].sum())
         total_taxes = abs(tax_df["Net_Clean"].sum())
-        total_buyer_fees = abs(buyer_fee_df["Net_Clean"].sum())
-        etsy_net = DATA["Net_Clean"].sum()
-        order_count = sales_df["Title"].str.extract(r"(Order #\d+)", expand=False).nunique()
+        total_buyer_fees = abs(buyer_fee_df["Net_Clean"].sum()) if len(buyer_fee_df) else 0.0
+        etsy_net_earned = (gross_sales - total_fees - total_shipping_cost
+                           - total_marketing - total_refunds - total_taxes - total_buyer_fees)
+        etsy_net = etsy_net_earned
+        order_count = len(sales_df)
         avg_order = gross_sales / order_count if order_count else 0
         etsy_net_margin = (etsy_net / gross_sales * 100) if gross_sales else 0
+        total_fees_gross = listing_fees + transaction_fees_product + transaction_fees_shipping + processing_fees if 'listing_fees' in dir() else abs(fee_df["Net_Clean"].sum())
 
         # Etsy balance auto-calculation
         _dep_total = 0.0
@@ -7118,12 +7149,11 @@ def api_reload():
             if _m:
                 _dep_total += float(_m.group(1).replace(",", ""))
         etsy_total_deposited = _dep_total
-        etsy_net_earned = etsy_net
         etsy_balance_calculated = round(etsy_net - _dep_total, 2)
         etsy_balance = max(0, etsy_balance_calculated)
 
         # Monthly aggregations
-        monthly_sales = sales_df.groupby("Month")["Amount_Clean"].sum()
+        monthly_sales = sales_df.groupby("Month")["Net_Clean"].sum()
         monthly_fees = fee_df.groupby("Month")["Net_Clean"].sum().abs()
         monthly_shipping = ship_df.groupby("Month")["Net_Clean"].sum().abs()
         monthly_marketing = mkt_df.groupby("Month")["Net_Clean"].sum().abs()
@@ -7132,9 +7162,8 @@ def api_reload():
         months_sorted = sorted(monthly_sales.index.tolist())
 
         # Daily aggregations
-        daily_sales = sales_df.groupby(sales_df["Date_Parsed"].dt.date)["Amount_Clean"].sum()
-        daily_orders = sales_df.groupby(sales_df["Date_Parsed"].dt.date)["Title"].apply(
-            lambda x: x.str.extract(r"(Order #\d+)", expand=False).nunique())
+        daily_sales = sales_df.groupby(sales_df["Date_Parsed"].dt.date)["Net_Clean"].sum()
+        daily_orders = sales_df.groupby(sales_df["Date_Parsed"].dt.date)["Net_Clean"].count()
         days_active = len(daily_sales)
 
         # 3. Rebuild bank derived metrics (mirrors _reload_bank_data logic)
