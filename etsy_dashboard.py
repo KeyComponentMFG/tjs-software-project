@@ -244,9 +244,8 @@ if os.path.isdir(_init_bank_dir):
 BANK_TXNS = _init_bank_txns if _init_bank_txns else _sb["BANK_TXNS"]
 
 # ── Extract config values ───────────────────────────────────────────────────
-# Etsy balance from config (actual Etsy account balance — CSVs don't cover full history)
-_cfg_etsy_balance = CONFIG.get("etsy_balance", 0)
-etsy_balance = float(_cfg_etsy_balance) if isinstance(_cfg_etsy_balance, str) else float(_cfg_etsy_balance or 0)
+# Use auto-calculated Etsy balance from CSV data (not stale config value)
+etsy_balance = _etsy_balance_auto
 etsy_pre_capone_deposits = CONFIG.get("etsy_pre_capone_deposits", 0)
 pre_capone_detail = [tuple(row) for row in CONFIG.get("pre_capone_detail", [])]
 draw_reasons = CONFIG.get("draw_reasons", {})
@@ -764,9 +763,14 @@ def _reload_etsy_data():
     etsy_net = etsy_net_earned
     etsy_net_margin = (etsy_net / gross_sales * 100) if gross_sales else 0
 
-    # Etsy balance from config (actual Etsy account balance)
-    _cfg_bal = CONFIG.get("etsy_balance", 0)
-    etsy_balance = float(_cfg_bal) if isinstance(_cfg_bal, str) else float(_cfg_bal or 0)
+    # Auto-calculate Etsy balance from deposit titles
+    import re as _re
+    _dep_total = 0.0
+    for _, _dr in deposit_df.iterrows():
+        _m = _re.search(r'([\d,]+\.\d+)', str(_dr.get("Title", "")))
+        if _m:
+            _dep_total += float(_m.group(1).replace(",", ""))
+    etsy_balance = max(0, round(DATA["Net_Clean"].sum() - _dep_total, 2))
 
     etsy_total_deposited = etsy_pre_capone_deposits + bank_total_deposits
     etsy_balance_calculated = etsy_net_earned - etsy_total_deposited
@@ -7091,9 +7095,9 @@ def api_reload():
         refund_df = DATA[DATA["Type"] == "Refund"]
         tax_df = DATA[DATA["Type"] == "Tax"]
         deposit_df = DATA[DATA["Type"] == "Deposit"]
-        buyer_fee_df = DATA[DATA["Type"] == "Buyer Fee"]
+        buyer_fee_df = fee_df[fee_df["Title"].str.contains("Regulatory operating fee|Sales tax paid", case=False, na=False)]
 
-        gross_sales = sales_df["Net_Clean"].sum()
+        gross_sales = sales_df["Amount_Clean"].sum()
         total_refunds = abs(refund_df["Net_Clean"].sum())
         net_sales = gross_sales - total_refunds
         total_fees = abs(fee_df["Net_Clean"].sum())
@@ -7101,26 +7105,25 @@ def api_reload():
         total_shipping_cost = abs(ship_df["Net_Clean"].sum())
         total_marketing = abs(mkt_df["Net_Clean"].sum())
         total_taxes = abs(tax_df["Net_Clean"].sum())
-        total_buyer_fees = abs(buyer_fee_df["Net_Clean"].sum()) if len(buyer_fee_df) else 0.0
-        order_count = len(sales_df)
+        total_buyer_fees = abs(buyer_fee_df["Net_Clean"].sum())
+        etsy_net = DATA["Net_Clean"].sum()
+        order_count = sales_df["Title"].str.extract(r"(Order #\d+)", expand=False).nunique()
         avg_order = gross_sales / order_count if order_count else 0
-
-        # Full accounting (matches _reload_etsy_data logic)
-        etsy_net_earned = (gross_sales - total_fees - total_shipping_cost
-                           - total_marketing - total_refunds - total_taxes - total_buyer_fees)
-        etsy_net = etsy_net_earned
         etsy_net_margin = (etsy_net / gross_sales * 100) if gross_sales else 0
 
         # Etsy balance auto-calculation
-        # Etsy balance from config (actual Etsy account balance)
-        _cfg_bal = CONFIG.get("etsy_balance", 0)
-        etsy_balance = float(_cfg_bal) if isinstance(_cfg_bal, str) else float(_cfg_bal or 0)
-        etsy_total_deposited = etsy_pre_capone_deposits + bank_total_deposits
-        etsy_balance_calculated = etsy_net_earned - etsy_total_deposited
-        etsy_csv_gap = round(etsy_balance_calculated - etsy_balance, 2)
+        _dep_total = 0.0
+        for _, _dr in deposit_df.iterrows():
+            _m = _re_mod.search(r'([\d,]+\.\d+)', str(_dr.get("Title", "")))
+            if _m:
+                _dep_total += float(_m.group(1).replace(",", ""))
+        etsy_total_deposited = _dep_total
+        etsy_net_earned = etsy_net
+        etsy_balance_calculated = round(etsy_net - _dep_total, 2)
+        etsy_balance = max(0, etsy_balance_calculated)
 
         # Monthly aggregations
-        monthly_sales = sales_df.groupby("Month")["Net_Clean"].sum()
+        monthly_sales = sales_df.groupby("Month")["Amount_Clean"].sum()
         monthly_fees = fee_df.groupby("Month")["Net_Clean"].sum().abs()
         monthly_shipping = ship_df.groupby("Month")["Net_Clean"].sum().abs()
         monthly_marketing = mkt_df.groupby("Month")["Net_Clean"].sum().abs()
@@ -7129,8 +7132,9 @@ def api_reload():
         months_sorted = sorted(monthly_sales.index.tolist())
 
         # Daily aggregations
-        daily_sales = sales_df.groupby(sales_df["Date_Parsed"].dt.date)["Net_Clean"].sum()
-        daily_orders = sales_df.groupby(sales_df["Date_Parsed"].dt.date).size()
+        daily_sales = sales_df.groupby(sales_df["Date_Parsed"].dt.date)["Amount_Clean"].sum()
+        daily_orders = sales_df.groupby(sales_df["Date_Parsed"].dt.date)["Title"].apply(
+            lambda x: x.str.extract(r"(Order #\d+)", expand=False).nunique())
         days_active = len(daily_sales)
 
         # 3. Rebuild bank derived metrics (mirrors _reload_bank_data logic)
