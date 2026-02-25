@@ -1,493 +1,564 @@
-﻿Date,Type,Title,Info,Currency,Amount,"Fees & Taxes",Net,"Tax Details"
-"February 21, 2026",Shipping,"Asendia shipping label","Label #299639561948",USD,--,-$30.34,-$30.34,--
-"February 21, 2026",Shipping,"USPS shipping label","Label #300392867111",USD,--,-$5.89,-$5.89,--
-"February 21, 2026",Shipping,"USPS shipping label","Label #299639267700",USD,--,-$9.81,-$9.81,--
-"February 21, 2026",Shipping,"Asendia shipping label","Label #300392703041",USD,--,-$34.20,-$34.20,--
-"February 21, 2026",Shipping,"USPS shipping label","Label #300392691189",USD,--,-$10.64,-$10.64,--
-"February 21, 2026",Shipping,"USPS shipping label","Label #300392617727",USD,--,-$10.64,-$10.64,--
-"February 21, 2026",Shipping,"USPS shipping label","Label #299637807398",USD,--,-$6.51,-$6.51,--
-"February 21, 2026",Shipping,"Shipsurance Package Insurance","Label #300391024791",USD,--,-$1.35,-$1.35,--
-"February 21, 2026",Shipping,"Asendia shipping label","Label #300391024791",USD,--,-$29.60,-$29.60,--
-"February 21, 2026",Marketing,"Etsy Ads","Bill for click-throughs to your shop on Feb 20, 2026",USD,--,-$10.00,-$10.00,--
-"February 21, 2026",Fee,"Transaction fee: Shipping","Order #3980031066",USD,--,-$0.48,-$0.48,--
-"February 21, 2026",Fee,"Transaction fee: Retro Cinema Marquee Sign | Arrow Lightb...","Order #3980031066",USD,--,-$1.38,-$1.38,--
-"February 21, 2026",Tax,"Sales tax paid by buyer","Order #3980031066",USD,--,-$2.01,-$2.01,--
-"February 21, 2026",Fee,"Processing fee","Order #3980031066",USD,--,-$1.17,-$1.17,--
-"February 21, 2026",Sale,"Payment for Order #3980031066",,USD,$30.71,--,$30.71,--
-"February 21, 2026",Fee,"Listing fee","Listing #4426215313",USD,--,-$0.20,-$0.20,--
-"February 20, 2026",Shipping,"USPS shipping label","Label #300319837489",USD,--,-$27.65,-$27.65,--
-"February 20, 2026",Shipping,"Adjustment for USPS shipping label","Adjustment #299875976203",USD,--,-$1.78,-$1.78,--
-"February 20, 2026",Marketing,"Etsy Ads","Bill for click-throughs to your shop on Feb 19, 2026",USD,--,-$10.00,-$10.00,--
-"February 20, 2026",Shipping,"USPS shipping label","Label #300310870821",USD,--,-$10.72,-$10.72,--
-"February 20, 2026",Shipping,"USPS shipping label","Label #299558733774",USD,--,-$27.65,-$27.65,--
-"February 20, 2026",Fee,"Transaction fee: Shipping","Order #3979144674",USD,--,-$1.59,-$1.59,--
-"February 20, 2026",Fee,"Transaction fee: Skateboard Shelf Mounts: Floating Skateb...","Order #3979144674",USD,--,-$0.78,-$0.78,--
-"February 20, 2026",Tax,"Sales tax paid by buyer","Order #3979144674",USD,--,-$7.29,-$7.29,--
-"February 20, 2026",Fee,"Processing fee","Order #3979144674",USD,--,-$1.56,-$1.56,--
-"February 20, 2026",Sale,"Payment for Order #3979144674",,USD,$43.75,--,$43.75,--
-"February 20, 2026",Fee,"Listing fee","Listing #4389560293",USD,--,-$0.20,-$0.20,--
-"February 19, 2026",Marketing,"Fee for sale made through Offsite Ads","Order #3982281407",USD,--,-$19.83,-$19.83,--
-"February 19, 2026",Fee,"Listing fee","Listing #4460131881",USD,--,-$0.20,-$0.20,--
-"February 19, 2026",Fee,"Transaction fee: Ski Gondola Table Lamp Rustic Cabin Deco...","Order #3982281407",USD,--,-$8.59,-$8.59,--
-"February 19, 2026",Tax,"Sales tax paid by buyer","Order #3982281407",USD,--,-$7.93,-$7.93,--
-"February 19, 2026",Fee,"Processing fee","Order #3982281407",USD,--,-$4.45,-$4.45,--
-"February 19, 2026",Sale,"Payment for Order #3982281407",,USD,$140.10,--,$140.10,--
-"February 19, 2026",Fee,"Transaction fee: Bamboo-Style Polaroid Photo Display | Mi...","Order #3982133569",USD,--,-$2.92,-$2.92,--
-"February 19, 2026",Tax,"Sales tax paid by buyer","Order #3982133569",USD,--,-$3.83,-$3.83,--
-"February 19, 2026",Sale,"Payment for Order #3982133569",,USD,$48.82,--,$48.82,--
-"February 19, 2026",Fee,"Processing fee","Order #3982133569",USD,--,-$1.71,-$1.71,--
-"February 19, 2026",Fee,"Listing fee","Listing #4426880576",USD,--,-$0.20,-$0.20,--
-"February 19, 2026",Fee,"Listing fee","Listing #4389054153",USD,--,-$0.20,-$0.20,--
-"February 19, 2026",Shipping,"USPS shipping label","Label #300238412975",USD,--,-$10.64,-$10.64,--
-"February 19, 2026",Shipping,"Asendia shipping label","Label #300238175355",USD,--,-$31.27,-$31.27,--
-"February 19, 2026",Shipping,"Asendia shipping label","Label #300238146201",USD,--,-$27.92,-$27.92,--
-"February 19, 2026",Shipping,"USPS shipping label","Label #300238126989",USD,--,-$6.83,-$6.83,--
-"February 19, 2026",Shipping,"USPS shipping label","Label #299489491064",USD,--,-$6.51,-$6.51,--
-"February 19, 2026",Marketing,"Etsy Ads","Bill for click-throughs to your shop on Feb 18, 2026",USD,--,-$10.00,-$10.00,--
-"February 19, 2026",Shipping,"USPS shipping label","Label #299488744848",USD,--,-$7.57,-$7.57,--
-"February 19, 2026",Shipping,"USPS shipping label","Label #299488700518",USD,--,-$8.53,-$8.53,--
-"February 19, 2026",Shipping,"USPS shipping label","Label #299488633380",USD,--,-$12.58,-$12.58,--
-"February 19, 2026",Fee,"Transaction fee: Mid-Century Modern Tiered Sconce | Tiere...","Order #3981518805",USD,--,-$5.52,-$5.52,--
-"February 19, 2026",Tax,"Sales tax paid by buyer","Order #3981518805",USD,--,-$8.29,-$8.29,--
-"February 19, 2026",Fee,"Processing fee","Order #3981518805",USD,--,-$3.05,-$3.05,--
-"February 19, 2026",Sale,"Payment for Order #3981518805",,USD,$93.27,--,$93.27,--
-"February 19, 2026",Fee,"Listing fee","Listing #4426233970",USD,--,-$0.20,-$0.20,--
-"February 19, 2026",Fee,"Listing fee","Listing #4426233970",USD,--,-$0.20,-$0.20,--
-"February 19, 2026",Fee,"Transaction fee: Shipping","Order #3981449149",USD,--,-$0.55,-$0.55,--
-"February 19, 2026",Fee,"Transaction fee: Rotating Photo Reel | Polaroid & Instax ...","Order #3981449149",USD,--,-$1.95,-$1.95,--
-"February 19, 2026",Tax,"Sales tax paid by buyer","Order #3981449149",USD,--,-$2.55,-$2.55,--
-"February 19, 2026",Fee,"Processing fee","Order #3981449149",USD,--,-$1.48,-$1.48,--
-"February 19, 2026",Sale,"Payment for Order #3981449149",,USD,$41.00,--,$41.00,--
-"February 19, 2026",Fee,"Listing fee","Listing #4387205694",USD,--,-$0.20,-$0.20,--
-"February 18, 2026",Fee,"Transaction fee: Ski Gondola Table Lamp | Rustic Cabin De...","Order #3978209428",USD,--,-$4.22,-$4.22,--
-"February 18, 2026",Tax,"Sales tax paid by buyer","Order #3978209428",USD,--,-$5.80,-$5.80,--
-"February 18, 2026",Sale,"Payment for Order #3978209428",,USD,$70.79,--,$70.79,--
-"February 18, 2026",Fee,"Processing fee","Order #3978209428",USD,--,-$2.37,-$2.37,--
-"February 18, 2026",Fee,"Listing fee","Listing #4437653641",USD,--,-$0.20,-$0.20,--
-"February 18, 2026",Marketing,"Etsy Ads","Bill for click-throughs to your shop on Feb 17, 2026",USD,--,-$9.99,-$9.99,--
-"February 18, 2026",Fee,"Transaction fee: Mid-Century Modern Tiered Sconce | Tiere...","Order #3977575112",USD,--,-$5.20,-$5.20,--
-"February 18, 2026",Tax,"Sales tax paid by buyer","Order #3977575112",USD,--,-$3.60,-$3.60,--
-"February 18, 2026",Fee,"Processing fee","Order #3977575112",USD,--,-$2.76,-$2.76,--
-"February 18, 2026",Sale,"Payment for Order #3977575112",,USD,$83.58,--,$83.58,--
-"February 18, 2026",Fee,"Listing fee","Listing #4426233970",USD,--,-$0.20,-$0.20,--
-"February 18, 2026",Fee,"Listing fee","Listing #4426233970",USD,--,-$0.20,-$0.20,--
-"February 18, 2026",Shipping,"USPS shipping label","Label #300168795061",USD,--,-$71.62,-$71.62,--
-"February 18, 2026",Shipping,"Asendia shipping label","Label #300168655703",USD,--,-$47.60,-$47.60,--
-"February 17, 2026",Shipping,"USPS shipping label","Label #299408657088",USD,--,-$12.37,-$12.37,--
-"February 17, 2026",Fee,"Transaction fee: Ski Gondola Table Lamp | Rustic Cabin De...","Order #3977170262",USD,--,-$3.38,-$3.38,--
-"February 17, 2026",Fee,"Processing fee","Order #3977170262",USD,--,-$1.81,-$1.81,--
-"February 17, 2026",Sale,"Payment for Order #3977170262",,USD,$51.99,--,$51.99,--
-"February 17, 2026",Fee,"Listing fee","Listing #4437653641",USD,--,-$0.20,-$0.20,--
-"February 17, 2026",Deposit,"$1,292.35 sent to your bank account",,USD,--,--,--,--
-"February 17, 2026",Marketing,"Etsy Ads","Bill for click-throughs to your shop on Feb 16, 2026",USD,--,-$10.00,-$10.00,--
-"February 17, 2026",Fee,"Transaction fee: Ski Gondola Table Lamp | Rustic Cabin De...","Order #3979843709",USD,--,-$2.34,-$2.34,--
-"February 17, 2026",Sale,"Payment for Order #3979843709",,USD,$35.99,--,$35.99,--
-"February 17, 2026",Fee,"Processing fee","Order #3979843709",USD,--,-$1.33,-$1.33,--
-"February 17, 2026",Fee,"Listing fee","Listing #4437653641",USD,--,-$0.20,-$0.20,--
-"February 16, 2026",Fee,"Transaction fee: Shipping","Order #3979613815",USD,--,-$2.49,-$2.49,--
-"February 16, 2026",Fee,"Transaction fee: Ski Gondola Table Lamp | Rustic Cabin De...","Order #3979613815",USD,--,-$3.38,-$3.38,--
-"February 16, 2026",Tax,"Sales tax paid by buyer","Order #3979613815",USD,--,-$7.31,-$7.31,--
-"February 16, 2026",Fee,"Processing fee","Order #3979613815",USD,--,-$3.18,-$3.18,--
-"February 16, 2026",Sale,"Payment for Order #3979613815",,USD,$97.60,--,$97.60,--
-"February 16, 2026",Fee,"Listing fee","Listing #4437653641",USD,--,-$0.20,-$0.20,--
-"February 16, 2026",Fee,"Transaction fee: Shipping","Order #3979559795",USD,--,-$0.48,-$0.48,--
-"February 16, 2026",Fee,"Transaction fee: Modern Minimalist Incense Holder | Custo...","Order #3979559795",USD,--,-$1.30,-$1.30,--
-"February 16, 2026",Fee,"Processing fee","Order #3979559795",USD,--,-$1.13,-$1.13,--
-"February 16, 2026",Tax,"Sales tax paid by buyer","Order #3979559795",USD,--,-$2.02,-$2.02,--
-"February 16, 2026",Sale,"Payment for Order #3979559795",,USD,$29.47,--,$29.47,--
-"February 16, 2026",Fee,"Listing fee","Listing #4392223549",USD,--,-$0.20,-$0.20,--
-"February 16, 2026",Fee,"Transaction fee: Ski Gondola Table Lamp | Rustic Cabin De...","Order #3979492551",USD,--,-$3.38,-$3.38,--
-"February 16, 2026",Tax,"Sales tax paid by buyer","Order #3979492551",USD,--,-$4.55,-$4.55,--
-"February 16, 2026",Fee,"Processing fee","Order #3979492551",USD,--,-$1.95,-$1.95,--
-"February 16, 2026",Sale,"Payment for Order #3979492551",,USD,$56.54,--,$56.54,--
-"February 16, 2026",Fee,"Listing fee","Listing #4437653641",USD,--,-$0.20,-$0.20,--
-"February 16, 2026",Fee,"Transaction fee: Deluxe Miniature Ski Lift Chair Ornament...","Order #3979441985",USD,--,-$4.16,-$4.16,--
-"February 16, 2026",Tax,"Sales tax paid by buyer","Order #3979441985",USD,--,-$5.60,-$5.60,--
-"February 16, 2026",Fee,"Processing fee","Order #3979441985",USD,--,-$2.34,-$2.34,--
-"February 16, 2026",Sale,"Payment for Order #3979441985",,USD,$69.57,--,$69.57,--
-"February 16, 2026",Fee,"Listing fee","Listing #4410735065",USD,--,-$0.20,-$0.20,--
-"February 16, 2026",Fee,"Listing fee","Listing #4410735065",USD,--,-$0.60,-$0.60,--
-"February 16, 2026",Fee,"Transaction fee: Mid-Century Modern Starburst Wall Clock ...","Order #3979259509",USD,--,-$2.60,-$2.60,--
-"February 16, 2026",Sale,"Payment for Order #3979259509",,USD,$39.99,--,$39.99,--
-"February 16, 2026",Fee,"Processing fee","Order #3979259509",USD,--,-$1.45,-$1.45,--
-"February 16, 2026",Fee,"Listing fee","Listing #4446278361",USD,--,-$0.20,-$0.20,--
-"February 16, 2026",Marketing,"Etsy Ads","Bill for click-throughs to your shop on Feb 15, 2026",USD,--,-$10.00,-$10.00,--
-"February 16, 2026",Marketing,"Fee for sale made through Offsite Ads","Order #3979083903",USD,--,-$13.20,-$13.20,--
-"February 16, 2026",Fee,"Transaction fee: Ski Gondola Table Lamp | Alpine Mountain...","Order #3979083903",USD,--,-$2.34,-$2.34,--
-"February 16, 2026",Fee,"Transaction fee: Ski Gondola Table Lamp | Alpine Mountain...","Order #3979083903",USD,--,-$3.38,-$3.38,--
-"February 16, 2026",Tax,"Sales tax paid by buyer","Order #3979083903",USD,--,-$5.28,-$5.28,--
-"February 16, 2026",Sale,"Payment for Order #3979083903",,USD,$93.26,--,$93.26,--
-"February 16, 2026",Fee,"Processing fee","Order #3979083903",USD,--,-$3.05,-$3.05,--
-"February 16, 2026",Fee,"Listing fee","Listing #4414036249",USD,--,-$0.20,-$0.20,--
-"February 16, 2026",Fee,"Listing fee","Listing #4414036249",USD,--,-$0.20,-$0.20,--
-"February 16, 2026",Fee,"Transaction fee: Ski Gondola Table Lamp | Rustic Cabin De...","Order #3979051091",USD,--,-$3.38,-$3.38,--
-"February 16, 2026",Tax,"Sales tax paid by buyer","Order #3979051091",USD,--,-$4.16,-$4.16,--
-"February 16, 2026",Fee,"Processing fee","Order #3979051091",USD,--,-$1.93,-$1.93,--
-"February 16, 2026",Sale,"Payment for Order #3979051091",,USD,$56.15,--,$56.15,--
-"February 16, 2026",Fee,"Listing fee","Listing #4437653641",USD,--,-$0.20,-$0.20,--
-"February 15, 2026",Marketing,"Fee for sale made through Offsite Ads","Order #3975557776",USD,--,-$5.40,-$5.40,--
-"February 15, 2026",Fee,"Transaction fee: Ski Gondola Table Lamp | Alpine Mountain...","Order #3975557776",USD,--,-$2.34,-$2.34,--
-"February 15, 2026",Fee,"Processing fee","Order #3975557776",USD,--,-$1.33,-$1.33,--
-"February 15, 2026",Sale,"Payment for Order #3975557776",,USD,$35.99,--,$35.99,--
-"February 15, 2026",Fee,"Listing fee","Listing #4414036249",USD,--,-$0.20,-$0.20,--
-"February 15, 2026",Fee,"Transaction fee: Shipping","Order #3978562575",USD,--,-$2.15,-$2.15,--
-"February 15, 2026",Fee,"Transaction fee: Ski Gondola Table Lamp | Rustic Cabin De...","Order #3978562575",USD,--,-$3.38,-$3.38,--
-"February 15, 2026",Tax,"Sales tax paid by buyer","Order #3978562575",USD,--,-$21.29,-$21.29,--
-"February 15, 2026",Fee,"Processing fee","Order #3978562575",USD,--,-$3.44,-$3.44,--
-"February 15, 2026",Sale,"Payment for Order #3978562575",,USD,$106.43,--,$106.43,--
-"February 15, 2026",Fee,"Listing fee","Listing #4437653641",USD,--,-$0.20,-$0.20,--
-"February 15, 2026",Fee,"Transaction fee: Shipping","Order #3978320693",USD,--,-$2.49,-$2.49,--
-"February 15, 2026",Fee,"Transaction fee: Ski Gondola Table Lamp | Rustic Cabin De...","Order #3978320693",USD,--,-$2.34,-$2.34,--
-"February 15, 2026",Tax,"Sales tax paid by buyer","Order #3978320693",USD,--,-$6.02,-$6.02,--
-"February 15, 2026",Fee,"Processing fee","Order #3978320693",USD,--,-$2.66,-$2.66,--
-"February 15, 2026",Sale,"Payment for Order #3978320693",,USD,$80.31,--,$80.31,--
-"February 15, 2026",Fee,"Listing fee","Listing #4437653641",USD,--,-$0.20,-$0.20,--
-"February 15, 2026",Fee,"Transaction fee: Modern Ribbed Wall Sconce Light – Beige ...","Order #3974949296",USD,--,-$4.78,-$4.78,--
-"February 15, 2026",Tax,"Sales tax paid by buyer","Order #3974949296",USD,--,-$4.60,-$4.60,--
-"February 15, 2026",Fee,"Processing fee","Order #3974949296",USD,--,-$2.60,-$2.60,--
-"February 15, 2026",Sale,"Payment for Order #3974949296",,USD,$78.18,--,$78.18,--
-"February 15, 2026",Fee,"Listing fee","Listing #4426590790",USD,--,-$0.20,-$0.20,--
-"February 15, 2026",Fee,"Listing fee","Listing #4426590790",USD,--,-$0.20,-$0.20,--
-"February 15, 2026",Marketing,"Etsy Ads","Bill for click-throughs to your shop on Feb 14, 2026",USD,--,-$9.97,-$9.97,--
-"February 15, 2026",Marketing,"Fee for sale made through Offsite Ads","Order #3974828286",USD,--,-$7.20,-$7.20,--
-"February 15, 2026",Fee,"Transaction fee: Hot Air Balloon Nursery Light – Whimsica...","Order #3974828286",USD,--,-$3.12,-$3.12,--
-"February 15, 2026",Tax,"Sales tax paid by buyer","Order #3974828286",USD,--,-$3.79,-$3.79,--
-"February 15, 2026",Sale,"Payment for Order #3974828286",,USD,$51.78,--,$51.78,--
-"February 15, 2026",Fee,"Processing fee","Order #3974828286",USD,--,-$1.80,-$1.80,--
-"February 15, 2026",Fee,"Listing fee","Listing #4444100924",USD,--,-$0.20,-$0.20,--
-"February 14, 2026",Fee,"Transaction fee: Shipping","Order #3978048397",USD,--,-$0.55,-$0.55,--
-"February 14, 2026",Fee,"Transaction fee: Rotating Photo Reel | Polaroid & Instax ...","Order #3978048397",USD,--,-$1.56,-$1.56,--
-"February 14, 2026",Tax,"Sales tax paid by buyer","Order #3978048397",USD,--,-$1.95,-$1.95,--
-"February 14, 2026",Fee,"Processing fee","Order #3978048397",USD,--,-$1.28,-$1.28,--
-"February 14, 2026",Sale,"Payment for Order #3978048397",,USD,$34.40,--,$34.40,--
-"February 14, 2026",Fee,"Listing fee","Listing #4387205694",USD,--,-$0.20,-$0.20,--
-"February 14, 2026",Fee,"Transaction fee: Mid-Century Modern Starburst Wall Clock ...","Order #3974585444",USD,--,-$2.60,-$2.60,--
-"February 14, 2026",Tax,"Sales tax paid by buyer","Order #3974585444",USD,--,-$2.40,-$2.40,--
-"February 14, 2026",Fee,"Processing fee","Order #3974585444",USD,--,-$1.52,-$1.52,--
-"February 14, 2026",Sale,"Payment for Order #3974585444",,USD,$42.39,--,$42.39,--
-"February 14, 2026",Fee,"Listing fee","Listing #4446278361",USD,--,-$0.20,-$0.20,--
-"February 14, 2026",Shipping,"USPS shipping label","Label #299189983914",USD,--,-$10.64,-$10.64,--
-"February 14, 2026",Marketing,"Etsy Ads","Bill for click-throughs to your shop on Feb 13, 2026",USD,--,-$10.00,-$10.00,--
-"February 14, 2026",Fee,"Listing fee","Listing #4385940447",USD,--,-$0.20,-$0.20,--
-"February 13, 2026",Fee,"Transaction fee: Shipping","Order #3973693744",USD,--,-$2.21,-$2.21,--
-"February 13, 2026",Fee,"Transaction fee: Blimp Pendant Light | Airship Hanging La...","Order #3973693744",USD,--,-$3.12,-$3.12,--
-"February 13, 2026",Tax,"Sales tax paid by buyer","Order #3973693744",USD,--,-$16.39,-$16.39,--
-"February 13, 2026",Fee,"Processing fee","Order #3973693744",USD,--,-$3.20,-$3.20,--
-"February 13, 2026",Sale,"Payment for Order #3973693744",,USD,$98.36,--,$98.36,--
-"February 13, 2026",Fee,"Listing fee","Listing #4444069229",USD,--,-$0.20,-$0.20,--
-"February 13, 2026",Shipping,"USPS shipping label","Label #299121496686",USD,--,-$8.46,-$8.46,--
-"February 13, 2026",Shipping,"USPS shipping label","Label #299876240813",USD,--,-$10.64,-$10.64,--
-"February 13, 2026",Shipping,"USPS shipping label","Label #299876035917",USD,--,-$24.69,-$24.69,--
-"February 13, 2026",Shipping,"USPS shipping label","Label #299875976203",USD,--,-$7.03,-$7.03,--
-"February 13, 2026",Fee,"Transaction fee: Ski Gondola Table Lamp | Rustic Cabin De...","Order #3976844917",USD,--,-$3.38,-$3.38,--
-"February 13, 2026","Buyer Fee","Colorado Retail Delivery Fee (paid by buyer)","Order #3976844917",USD,--,-$0.28,-$0.28,--
-"February 13, 2026",Tax,"Sales tax paid by buyer","Order #3976844917",USD,--,-$4.65,-$4.65,--
-"February 13, 2026",Fee,"Processing fee","Order #3976844917",USD,--,-$1.96,-$1.96,--
-"February 13, 2026",Sale,"Payment for Order #3976844917",,USD,$56.92,--,$56.92,--
-"February 13, 2026",Fee,"Listing fee","Listing #4437653641",USD,--,-$0.20,-$0.20,--
-"February 13, 2026",Shipping,"USPS shipping label","Label #299076823732",USD,--,-$5.62,-$5.62,--
-"February 13, 2026",Shipping,"USPS shipping label","Label #299076811144",USD,--,-$5.52,-$5.52,--
-"February 13, 2026",Shipping,"USPS shipping label","Label #299076769210",USD,--,-$9.20,-$9.20,--
-"February 13, 2026",Shipping,"USPS shipping label","Label #299831057787",USD,--,-$11.01,-$11.01,--
-"February 13, 2026",Shipping,"USPS shipping label","Label #299830972025",USD,--,-$7.57,-$7.57,--
-"February 13, 2026",Shipping,"USPS shipping label","Label #299820102595",USD,--,-$5.52,-$5.52,--
-"February 13, 2026",Shipping,"USPS shipping label","Label #299065745426",USD,--,-$5.29,-$5.29,--
-"February 13, 2026",Shipping,"USPS shipping label","Label #299065704820",USD,--,-$5.20,-$5.20,--
-"February 13, 2026",Marketing,"Etsy Ads","Bill for click-throughs to your shop on Feb 12, 2026",USD,--,-$9.99,-$9.99,--
-"February 12, 2026",Marketing,"Fee for sale made through Offsite Ads","Order #3976289445",USD,--,-$7.80,-$7.80,--
-"February 12, 2026",Fee,"Transaction fee: Ski Gondola Table Lamp | Rustic Cabin De...","Order #3976289445",USD,--,-$3.38,-$3.38,--
-"February 12, 2026",Fee,"Processing fee","Order #3976289445",USD,--,-$1.81,-$1.81,--
-"February 12, 2026",Sale,"Payment for Order #3976289445",,USD,$51.99,--,$51.99,--
-"February 12, 2026",Fee,"Listing fee","Listing #4437653641",USD,--,-$0.20,-$0.20,--
-"February 12, 2026",Shipping,"Adjustment for USPS shipping label","Adjustment #299022937419",USD,--,-$2.81,-$2.81,--
-"February 12, 2026",Marketing,"Etsy Ads","Bill for click-throughs to your shop on Feb 11, 2026",USD,--,-$10.00,-$10.00,--
-"February 12, 2026",Marketing,"Fee for sale made through Offsite Ads","Order #3975808989",USD,--,-$6.60,-$6.60,--
-"February 12, 2026",Fee,"Transaction fee: Blimp Pendant Light | Airship Hanging La...","Order #3975808989",USD,--,-$2.86,-$2.86,--
-"February 12, 2026",Tax,"Sales tax paid by buyer","Order #3975808989",USD,--,-$2.33,-$2.33,--
-"February 12, 2026",Fee,"Processing fee","Order #3975808989",USD,--,-$1.64,-$1.64,--
-"February 12, 2026",Sale,"Payment for Order #3975808989",,USD,$46.32,--,$46.32,--
-"February 12, 2026",Fee,"Listing fee","Listing #4444069229",USD,--,-$0.20,-$0.20,--
-"February 11, 2026",Fee,"Transaction fee: Shipping","Order #3975663257",USD,--,-$0.57,-$0.57,--
-"February 11, 2026",Fee,"Transaction fee: Retro Cinema Marquee Sign | Arrow Lightb...","Order #3975663257",USD,--,-$1.30,-$1.30,--
-"February 11, 2026",Tax,"Sales tax paid by buyer","Order #3975663257",USD,--,-$2.00,-$2.00,--
-"February 11, 2026",Fee,"Processing fee","Order #3975663257",USD,--,-$1.17,-$1.17,--
-"February 11, 2026",Sale,"Payment for Order #3975663257",,USD,$30.71,--,$30.71,--
-"February 11, 2026",Fee,"Listing fee","Listing #4426215313",USD,--,-$0.20,-$0.20,--
-"February 11, 2026",Fee,"Transaction fee: Ski Gondola Table Lamp | Rustic Cabin De...","Order #3972029328",USD,--,-$2.34,-$2.34,--
-"February 11, 2026","Buyer Fee","Colorado Retail Delivery Fee (paid by buyer)","Order #3972029328",USD,--,-$0.28,-$0.28,--
-"February 11, 2026",Tax,"Sales tax paid by buyer","Order #3972029328",USD,--,-$2.93,-$2.93,--
-"February 11, 2026",Fee,"Processing fee","Order #3972029328",USD,--,-$1.43,-$1.43,--
-"February 11, 2026",Sale,"Payment for Order #3972029328",,USD,$39.20,--,$39.20,--
-"February 11, 2026",Fee,"Listing fee","Listing #4437653641",USD,--,-$0.20,-$0.20,--
-"February 11, 2026",Shipping,"USPS shipping label","Label #299701658085",USD,--,-$6.51,-$6.51,--
-"February 11, 2026",Shipping,"USPS shipping label","Label #299701600847",USD,--,-$10.64,-$10.64,--
-"February 11, 2026",Fee,"Transaction fee: Shipping","Order #3971977780",USD,--,-$1.80,-$1.80,--
-"February 11, 2026",Fee,"Transaction fee: Ski Gondola Table Lamp | Alpine Mountain...","Order #3971977780",USD,--,-$3.38,-$3.38,--
-"February 11, 2026",Fee,"Processing fee","Order #3971977780",USD,--,-$2.64,-$2.64,--
-"February 11, 2026",Sale,"Payment for Order #3971977780",,USD,$79.64,--,$79.64,--
-"February 11, 2026",Fee,"Listing fee","Listing #4414036249",USD,--,-$0.20,-$0.20,--
-"February 11, 2026",Shipping,"Adjustment for USPS shipping label","Adjustment #298092913634",USD,--,-$2.81,-$2.81,--
-"February 11, 2026",Fee,"Listing fee","Listing #4426233970",USD,--,-$0.20,-$0.20,--
-"February 11, 2026",Fee,"Listing fee","Listing #4455454596",USD,--,-$0.20,-$0.20,--
-"February 11, 2026",Marketing,"Etsy Ads","Bill for click-throughs to your shop on Feb 10, 2026",USD,--,-$10.00,-$10.00,--
-"February 11, 2026",Fee,"Transaction fee: Shipping","Order #3974930473",USD,--,-$1.80,-$1.80,--
-"February 11, 2026",Fee,"Transaction fee: Mid-Century Modern Tiered Sconce | Tiere...","Order #3974930473",USD,--,-$2.60,-$2.60,--
-"February 11, 2026",Fee,"Processing fee","Order #3974930473",USD,--,-$2.28,-$2.28,--
-"February 11, 2026",Sale,"Payment for Order #3974930473",,USD,$67.64,--,$67.64,--
-"February 11, 2026",Fee,"Transaction fee: Shipping","Order #3974590525",USD,--,-$5.27,-$5.27,--
-"February 11, 2026",Fee,"Transaction fee: Color Changing Desk Lamp, Wireless and R...","Order #3974590525",USD,--,-$2.34,-$2.34,--
-"February 11, 2026",Fee,"Transaction fee: Color Changing Desk Lamp, Wireless and R...","Order #3974590525",USD,--,-$2.34,-$2.34,--
-"February 11, 2026",Tax,"Sales tax paid by buyer","Order #3974590525",USD,--,-$30.61,-$30.61,--
-"February 11, 2026",Sale,"Payment for Order #3974590525",,USD,$183.64,--,$183.64,--
-"February 11, 2026",Fee,"Processing fee","Order #3974590525",USD,--,-$5.76,-$5.76,--
-"February 10, 2026",Fee,"Listing fee","Listing #4440303243",USD,--,-$0.20,-$0.20,--
-"February 10, 2026",Fee,"Listing fee","Listing #4440303243",USD,--,-$0.20,-$0.20,--
-"February 10, 2026",Fee,"Transaction fee: Shipping","Order #3974380721",USD,--,-$0.55,-$0.55,--
-"February 10, 2026",Fee,"Transaction fee: Retro Cinema Marquee Sign | Arrow Lightb...","Order #3974380721",USD,--,-$1.30,-$1.30,--
-"February 10, 2026",Tax,"Sales tax paid by buyer","Order #3974380721",USD,--,-$1.88,-$1.88,--
-"February 10, 2026",Fee,"Processing fee","Order #3974380721",USD,--,-$1.16,-$1.16,--
-"February 10, 2026",Sale,"Payment for Order #3974380721",,USD,$30.33,--,$30.33,--
-"February 10, 2026",Fee,"Listing fee","Listing #4426215313",USD,--,-$0.20,-$0.20,--
-"February 10, 2026",Shipping,"USPS shipping label","Label #299570408411",USD,--,-$8.81,-$8.81,--
-"February 10, 2026",Shipping,"USPS shipping label","Label #299570176223",USD,--,-$6.83,-$6.83,--
-"February 10, 2026",Shipping,"USPS shipping label","Label #298811496948",USD,--,-$12.58,-$12.58,--
-"February 10, 2026",Fee,"Transaction fee: Shipping","Order #3970489204",USD,--,-$3.93,-$3.93,--
-"February 10, 2026",Fee,"Transaction fee: Ski Gondola Table Lamp | Rustic Cabin De...","Order #3970489204",USD,--,-$3.38,-$3.38,--
-"February 10, 2026",Fee,"Transaction fee: Ski Gondola Table Lamp | Rustic Cabin De...","Order #3970489204",USD,--,-$2.34,-$2.34,--
-"February 10, 2026",Sale,"Payment for Order #3970489204",,USD,$148.50,--,$148.50,--
-"February 10, 2026",Fee,"Processing fee","Order #3970489204",USD,--,-$4.71,-$4.71,--
-"February 10, 2026",Fee,"Listing fee","Listing #4437653641",USD,--,-$0.20,-$0.20,--
-"February 10, 2026",Fee,"Listing fee","Listing #4437653641",USD,--,-$0.20,-$0.20,--
-"February 10, 2026",Marketing,"Etsy Ads","Bill for click-throughs to your shop on Feb 9, 2026",USD,--,-$10.00,-$10.00,--
-"February 9, 2026",Shipping,"USPS shipping label","Label #298778463844",USD,--,-$27.65,-$27.65,--
-"February 9, 2026",Fee,"Transaction fee: Shipping","Order #3973793029",USD,--,-$2.03,-$2.03,--
-"February 9, 2026",Fee,"Transaction fee: Ski Gondola Table Lamp | Alpine Mountain...","Order #3973793029",USD,--,-$3.12,-$3.12,--
-"February 9, 2026",Tax,"Sales tax paid by buyer","Order #3973793029",USD,--,-$15.06,-$15.06,--
-"February 9, 2026",Fee,"Processing fee","Order #3973793029",USD,--,-$3.08,-$3.08,--
-"February 9, 2026",Sale,"Payment for Order #3973793029",,USD,$94.32,--,$94.32,--
-"February 9, 2026",Fee,"Listing fee","Listing #4414036249",USD,--,-$0.20,-$0.20,--
-"February 9, 2026",Fee,"Listing fee","Listing #4455212951",USD,--,-$0.20,-$0.20,--
-"February 9, 2026",Fee,"Transaction fee: Mid-Century Modern Tiered Sconce | Tiere...","Order #3969948704",USD,--,-$2.34,-$2.34,--
-"February 9, 2026",Tax,"Sales tax paid by buyer","Order #3969948704",USD,--,-$1.52,-$1.52,--
-"February 9, 2026",Fee,"Processing fee","Order #3969948704",USD,--,-$1.38,-$1.38,--
-"February 9, 2026",Sale,"Payment for Order #3969948704",,USD,$37.51,--,$37.51,--
-"February 9, 2026",Fee,"Listing fee","Listing #4426233970",USD,--,-$0.20,-$0.20,--
-"February 9, 2026",Fee,"Transaction fee: Mid-Century Modern Tiered Sconce | Tiere...","Order #3973543155",USD,--,-$4.68,-$4.68,--
-"February 9, 2026",Tax,"Sales tax paid by buyer","Order #3973543155",USD,--,-$5.11,-$5.11,--
-"February 9, 2026",Fee,"Processing fee","Order #3973543155",USD,--,-$2.56,-$2.56,--
-"February 9, 2026",Sale,"Payment for Order #3973543155",,USD,$77.09,--,$77.09,--
-"February 9, 2026",Fee,"Listing fee","Listing #4426233970",USD,--,-$0.20,-$0.20,--
-"February 9, 2026",Fee,"Listing fee","Listing #4426233970",USD,--,-$0.20,-$0.20,--
-"February 9, 2026",Deposit,"$1,052.86 sent to your bank account",,USD,--,--,--,--
-"February 9, 2026",Shipping,"USPS shipping label","Label #299474189749",USD,--,-$5.39,-$5.39,--
-"February 9, 2026",Shipping,"USPS shipping label","Label #299473025541",USD,--,-$10.64,-$10.64,--
-"February 9, 2026",Shipping,"USPS shipping label","Label #299472990749",USD,--,-$12.37,-$12.37,--
-"February 9, 2026",Shipping,"USPS shipping label","Label #298701353700",USD,--,-$8.81,-$8.81,--
-"February 9, 2026",Shipping,"USPS shipping label","Label #299464884061",USD,--,-$5.45,-$5.45,--
-"February 9, 2026",Shipping,"USPS shipping label","Label #298700373938",USD,--,-$5.45,-$5.45,--
-"February 9, 2026",Marketing,"Etsy Ads","Bill for click-throughs to your shop on Feb 8, 2026",USD,--,-$10.00,-$10.00,--
-"February 8, 2026",Fee,"Transaction fee: Shipping","Order #3972875349",USD,--,-$0.73,-$0.73,--
-"February 8, 2026",Fee,"Transaction fee: Deluxe Miniature Ski Lift Chair Ornament...","Order #3972875349",USD,--,-$1.04,-$1.04,--
-"February 8, 2026",Tax,"Sales tax paid by buyer","Order #3972875349",USD,--,-$1.27,-$1.27,--
-"February 8, 2026",Fee,"Processing fee","Order #3972875349",USD,--,-$1.10,-$1.10,--
-"February 8, 2026",Sale,"Payment for Order #3972875349",,USD,$28.42,--,$28.42,--
-"February 8, 2026",Fee,"Listing fee","Listing #4410735065",USD,--,-$0.20,-$0.20,--
-"February 8, 2026",Fee,"Transaction fee: Mid-Century Modern Tiered Sconce | Tiere...","Order #3968895858",USD,--,-$2.34,-$2.34,--
-"February 8, 2026",Fee,"Processing fee","Order #3968895858",USD,--,-$1.33,-$1.33,--
-"February 8, 2026",Sale,"Payment for Order #3968895858",,USD,$35.99,--,$35.99,--
-"February 8, 2026",Fee,"Listing fee","Listing #4426233970",USD,--,-$0.20,-$0.20,--
-"February 8, 2026",Marketing,"Etsy Ads","Bill for click-throughs to your shop on Feb 7, 2026",USD,--,-$10.00,-$10.00,--
-"February 8, 2026",Shipping,"USPS shipping label","Label #298630875648",USD,--,-$6.09,-$6.09,--
-"February 8, 2026",Fee,"Transaction fee: Deluxe Miniature Ski Lift Chair Ornament...","Order #3968273646",USD,--,-$5.20,-$5.20,--
-"February 8, 2026",Tax,"Sales tax paid by buyer","Order #3968273646",USD,--,-$6.40,-$6.40,--
-"February 8, 2026",Sale,"Payment for Order #3968273646",,USD,$86.36,--,$86.36,--
-"February 8, 2026",Fee,"Processing fee","Order #3968273646",USD,--,-$2.84,-$2.84,--
-"February 8, 2026",Fee,"Listing fee","Listing #4410735065",USD,--,-$0.20,-$0.20,--
-"February 8, 2026",Fee,"Listing fee","Listing #4410735065",USD,--,-$0.80,-$0.80,--
-"February 8, 2026",Fee,"Listing fee","Listing #4437653641",USD,--,-$0.20,-$0.20,--
-"February 8, 2026",Fee,"Transaction fee: Ski Gondola Table Lamp | Rustic Cabin De...","Order #3968195738",USD,--,-$2.34,-$2.34,--
-"February 8, 2026",Tax,"Sales tax paid by buyer","Order #3968195738",USD,--,-$2.88,-$2.88,--
-"February 8, 2026",Fee,"Processing fee","Order #3968195738",USD,--,-$1.42,-$1.42,--
-"February 8, 2026",Sale,"Payment for Order #3968195738",,USD,$38.87,--,$38.87,--
-"February 7, 2026",Fee,"Transaction fee: Ski Gondola Table Lamp | Rustic Mountain...","Order #3972007551",USD,--,-$3.38,-$3.38,--
-"February 7, 2026",Tax,"Sales tax paid by buyer","Order #3972007551",USD,--,-$3.12,-$3.12,--
-"February 7, 2026",Fee,"Processing fee","Order #3972007551",USD,--,-$1.90,-$1.90,--
-"February 7, 2026",Sale,"Payment for Order #3972007551",,USD,$55.11,--,$55.11,--
-"February 7, 2026",Fee,"Listing fee","Listing #4437653641",USD,--,-$0.20,-$0.20,--
-"February 7, 2026",Marketing,"Fee for sale made through Offsite Ads","Order #3967950912",USD,--,-$8.40,-$8.40,--
-"February 7, 2026",Fee,"Transaction fee: Dimmable Mid Century Table Lamp | LED Be...","Order #3967950912",USD,--,-$1.82,-$1.82,--
-"February 7, 2026",Fee,"Transaction fee: Dimmable Mid Century Table Lamp | LED Be...","Order #3967950912",USD,--,-$1.82,-$1.82,--
-"February 7, 2026",Tax,"Sales tax paid by buyer","Order #3967950912",USD,--,-$4.20,-$4.20,--
-"February 7, 2026",Fee,"Processing fee","Order #3967950912",USD,--,-$2.06,-$2.06,--
-"February 7, 2026",Sale,"Payment for Order #3967950912",,USD,$60.18,--,$60.18,--
-"February 7, 2026",Fee,"Listing fee","Listing #4393433581",USD,--,-$0.20,-$0.20,--
-"February 7, 2026",Fee,"Listing fee","Listing #4393433581",USD,--,-$0.20,-$0.20,--
-"February 7, 2026",Fee,"Transaction fee: Ski Gondola Table Lamp | Rustic Mountain...","Order #3971443623",USD,--,-$3.12,-$3.12,--
-"February 7, 2026",Tax,"Sales tax paid by buyer","Order #3971443623",USD,--,-$2.88,-$2.88,--
-"February 7, 2026",Fee,"Processing fee","Order #3971443623",USD,--,-$1.78,-$1.78,--
-"February 7, 2026",Sale,"Payment for Order #3971443623",,USD,$50.87,--,$50.87,--
-"February 7, 2026",Fee,"Listing fee","Listing #4437653641",USD,--,-$0.20,-$0.20,--
-"February 7, 2026",Marketing,"Etsy Ads","Bill for click-throughs to your shop on Feb 6, 2026",USD,--,-$10.00,-$10.00,--
-"February 6, 2026",Shipping,"USPS shipping label","Label #298530018682",USD,--,-$12.37,-$12.37,--
-"February 6, 2026",Fee,"Transaction fee: Shipping","Order #3971128407",USD,--,-$0.48,-$0.48,--
-"February 6, 2026",Fee,"Transaction fee: Rotating Photo Reel | Polaroid & Instax ...","Order #3971128407",USD,--,-$1.56,-$1.56,--
-"February 6, 2026",Tax,"Sales tax paid by buyer","Order #3971128407",USD,--,-$2.52,-$2.52,--
-"February 6, 2026",Fee,"Processing fee","Order #3971128407",USD,--,-$1.27,-$1.27,--
-"February 6, 2026",Sale,"Payment for Order #3971128407",,USD,$33.97,--,$33.97,--
-"February 6, 2026",Fee,"Listing fee","Listing #4387205694",USD,--,-$0.20,-$0.20,--
-"February 6, 2026",Fee,"Transaction fee: Mid-Century Modern Tiered Sconce | Tiere...","Order #3967154056",USD,--,-$4.68,-$4.68,--
-"February 6, 2026",Sale,"Payment for Order #3967154056",,USD,$71.98,--,$71.98,--
-"February 6, 2026",Fee,"Processing fee","Order #3967154056",USD,--,-$2.41,-$2.41,--
-"February 6, 2026",Fee,"Listing fee","Listing #4426233970",USD,--,-$0.20,-$0.20,--
-"February 6, 2026",Fee,"Listing fee","Listing #4426233970",USD,--,-$0.20,-$0.20,--
-"February 6, 2026",Fee,"Transaction fee: Deluxe Miniature Ski Lift Chair Ornament...","Order #3971118385",USD,--,-$2.08,-$2.08,--
-"February 6, 2026",Fee,"Transaction fee: Deluxe Miniature Ski Lift Chair Ornament...","Order #3971118385",USD,--,-$2.08,-$2.08,--
-"February 6, 2026",Fee,"Transaction fee: Deluxe Miniature Ski Lift Chair Ornament...","Order #3971118385",USD,--,-$2.08,-$2.08,--
-"February 6, 2026",Fee,"Processing fee","Order #3971118385",USD,--,-$3.13,-$3.13,--
-"February 6, 2026",Sale,"Payment for Order #3971118385",,USD,$95.95,--,$95.95,--
-"February 6, 2026",Fee,"Listing fee","Listing #4410735065",USD,--,-$0.20,-$0.20,--
-"February 6, 2026",Fee,"Listing fee","Listing #4410735065",USD,--,-$0.20,-$0.20,--
-"February 6, 2026",Fee,"Listing fee","Listing #4410735065",USD,--,-$0.20,-$0.20,--
-"February 6, 2026",Fee,"Listing fee","Listing #4410735065",USD,--,-$0.20,-$0.20,--
-"February 6, 2026",Fee,"Listing fee","Listing #4410735065",USD,--,-$0.20,-$0.20,--
-"February 6, 2026",Fee,"Listing fee","Listing #4410735065",USD,--,-$0.20,-$0.20,--
-"February 6, 2026",Fee,"Transaction fee: Ski Gondola Table Lamp | Rustic Mountain...","Order #3970885409",USD,--,-$3.12,-$3.12,--
-"February 6, 2026","Buyer Fee","Colorado Retail Delivery Fee (paid by buyer)","Order #3970885409",USD,--,-$0.28,-$0.28,--
-"February 6, 2026",Tax,"Sales tax paid by buyer","Order #3970885409",USD,--,-$2.53,-$2.53,--
-"February 6, 2026",Sale,"Payment for Order #3970885409",,USD,$50.80,--,$50.80,--
-"February 6, 2026",Fee,"Processing fee","Order #3970885409",USD,--,-$1.77,-$1.77,--
-"February 6, 2026",Fee,"Listing fee","Listing #4437653641",USD,--,-$0.20,-$0.20,--
-"February 6, 2026",Fee,"Transaction fee: Shipping","Order #3970598583",USD,--,-$1.80,-$1.80,--
-"February 6, 2026",Fee,"Transaction fee: Hot Air Balloon Nursery Light – Whimsica...","Order #3970598583",USD,--,-$2.60,-$2.60,--
-"February 6, 2026",Fee,"Processing fee","Order #3970598583",USD,--,-$2.28,-$2.28,--
-"February 6, 2026",Sale,"Payment for Order #3970598583",,USD,$67.64,--,$67.64,--
-"February 6, 2026",Fee,"Listing fee","Listing #4444100924",USD,--,-$0.20,-$0.20,--
-"February 6, 2026",Shipping,"USPS shipping label","Label #299241442069",USD,--,-$8.81,-$8.81,--
-"February 6, 2026",Shipping,"USPS shipping label","Label #299241433413",USD,--,-$5.22,-$5.22,--
-"February 6, 2026",Shipping,"Asendia shipping label","Label #299241424761",USD,--,-$33.98,-$33.98,--
-"February 6, 2026",Shipping,"USPS shipping label","Label #299241324731",USD,--,-$8.81,-$8.81,--
-"February 6, 2026",Shipping,"Adjustment for USPS shipping label","Adjustment #298551663139",USD,--,-$3.61,-$3.61,--
-"February 6, 2026",Shipping,"USPS shipping label","Label #299230228355",USD,--,-$8.46,-$8.46,--
-"February 6, 2026",Shipping,"USPS shipping label","Label #299230142499",USD,--,-$5.07,-$5.07,--
-"February 6, 2026",Shipping,"USPS return shipping label","Label #298307352733",USD,--,-$8.81,-$8.81,--
-"February 6, 2026",Marketing,"Etsy Ads","Bill for click-throughs to your shop on Feb 5, 2026",USD,--,-$8.74,-$8.74,--
-"February 5, 2026",Fee,"Transaction fee: Shipping","Order #3970189083",USD,--,-$0.87,-$0.87,--
-"February 5, 2026",Fee,"Transaction fee: Ski Gondola Table Lamp | Alpine Mountain...","Order #3970189083",USD,--,-$2.08,-$2.08,--
-"February 5, 2026",Tax,"Sales tax paid by buyer","Order #3970189083",USD,--,-$2.00,-$2.00,--
-"February 5, 2026",Fee,"Processing fee","Order #3970189083",USD,--,-$1.67,-$1.67,--
-"February 5, 2026",Sale,"Payment for Order #3970189083",,USD,$47.37,--,$47.37,--
-"February 5, 2026",Fee,"Listing fee","Listing #4414036249",USD,--,-$0.20,-$0.20,--
-"February 5, 2026",Shipping,"Adjustment for Globegistics shipping label","Adjustment #298379191037",USD,--,-$29.21,-$29.21,--
-"February 5, 2026",Fee,"Transaction fee: Desk Valet & Headphone Stand | Personali...","Order #3965615100",USD,--,-$1.56,-$1.56,--
-"February 5, 2026",Fee,"Transaction fee: Shipping","Order #3965615100",USD,--,-$0.73,-$0.73,--
-"February 5, 2026",Tax,"Sales tax paid by buyer","Order #3965615100",USD,--,-$2.81,-$2.81,--
-"February 5, 2026",Fee,"Processing fee","Order #3965615100",USD,--,-$1.39,-$1.39,--
-"February 5, 2026",Sale,"Payment for Order #3965615100",,USD,$37.96,--,$37.96,--
-"February 5, 2026",Fee,"Listing fee","Listing #4389039835",USD,--,-$0.20,-$0.20,--
-"February 5, 2026",Shipping,"USPS shipping label","Label #299129303991",USD,--,-$5.52,-$5.52,--
-"February 5, 2026",Shipping,"USPS shipping label","Label #299129261063",USD,--,-$5.45,-$5.45,--
-"February 5, 2026",Shipping,"USPS shipping label","Label #298347900292",USD,--,-$11.92,-$11.92,--
-"February 5, 2026",Shipping,"USPS shipping label","Label #299128993405",USD,--,-$9.20,-$9.20,--
-"February 5, 2026",Shipping,"Adjustment for USPS shipping label","Adjustment #297527150960",USD,--,-$1.78,-$1.78,--
-"February 5, 2026",Marketing,"Etsy Ads","Bill for click-throughs to your shop on Feb 4, 2026",USD,--,-$7.50,-$7.50,--
-"February 4, 2026",Shipping,"Adjustment for Globegistics shipping label","Adjustment #298548872367",USD,--,-$13.83,-$13.83,--
-"February 4, 2026",Marketing,"Credit for Offsite Ads fee","Order #3965066744",USD,--,$5.09,$5.09,--
-"February 4, 2026",Fee,"Credit for transaction fee on Skateboard Shelf Mounts: Floating Skateb...","Order #3965066744",USD,--,$0.78,$0.78,--
-"February 4, 2026",Fee,"Credit for transaction fee on shipping","Order #3965066744",USD,--,$1.43,$1.43,--
-"February 4, 2026",Fee,"Credit for listing fee","Listing #4389560293",USD,--,$0.20,$0.20,--
-"February 4, 2026",Fee,"Credit for processing fee","Order #3965066744",USD,--,$1.47,$1.47,--
-"February 4, 2026",Tax,"Refund to buyer for sales tax","Order #3965066744",USD,--,$6.79,$6.79,--
-"February 4, 2026",Refund,"Refund for Order #3965066744",,USD,-$40.73,--,-$40.73,--
-"February 4, 2026",Marketing,"Fee for sale made through Offsite Ads","Order #3965066744",USD,--,-$5.09,-$5.09,--
-"February 4, 2026",Fee,"Transaction fee: Shipping","Order #3965066744",USD,--,-$1.43,-$1.43,--
-"February 4, 2026",Fee,"Transaction fee: Skateboard Shelf Mounts: Floating Skateb...","Order #3965066744",USD,--,-$0.78,-$0.78,--
-"February 4, 2026",Tax,"Sales tax paid by buyer","Order #3965066744",USD,--,-$6.79,-$6.79,--
-"February 4, 2026",Sale,"Payment for Order #3965066744",,USD,$40.73,--,$40.73,--
-"February 4, 2026",Fee,"Processing fee","Order #3965066744",USD,--,-$1.47,-$1.47,--
-"February 4, 2026",Fee,"Listing fee","Listing #4389560293",USD,--,-$0.20,-$0.20,--
-"February 4, 2026",Fee,"Transaction fee: Ski Gondola Table Lamp | Alpine Mountain...","Order #3964944950",USD,--,-$3.12,-$3.12,--
-"February 4, 2026",Tax,"Sales tax paid by buyer","Order #3964944950",USD,--,-$3.18,-$3.18,--
-"February 4, 2026",Fee,"Processing fee","Order #3964944950",USD,--,-$1.79,-$1.79,--
-"February 4, 2026",Sale,"Payment for Order #3964944950",,USD,$51.17,--,$51.17,--
-"February 4, 2026",Fee,"Listing fee","Listing #4414036249",USD,--,-$0.20,-$0.20,--
-"February 4, 2026",Fee,"Transaction fee: Shipping","Order #3968904067",USD,--,-$0.82,-$0.82,--
-"February 4, 2026",Fee,"Transaction fee: Ski Gondola Table Lamp | Alpine Mountain...","Order #3968904067",USD,--,-$2.08,-$2.08,--
-"February 4, 2026",Fee,"Processing fee","Order #3968904067",USD,--,-$1.71,-$1.71,--
-"February 4, 2026",Sale,"Payment for Order #3968904067",,USD,$48.53,--,$48.53,--
-"February 4, 2026",Tax,"Sales tax paid by buyer","Order #3968904067",USD,--,-$3.96,-$3.96,--
-"February 4, 2026",Fee,"Listing fee","Listing #4414036249",USD,--,-$0.20,-$0.20,--
-"February 4, 2026",Fee,"Transaction fee: Shipping","Order #3964674022",USD,--,-$0.73,-$0.73,--
-"February 4, 2026",Fee,"Transaction fee: Minimalist Photo Holder Desk Tray – Adju...","Order #3964674022",USD,--,-$1.82,-$1.82,--
-"February 4, 2026",Tax,"Sales tax paid by buyer","Order #3964674022",USD,--,-$2.15,-$2.15,--
-"February 4, 2026",Fee,"Processing fee","Order #3964674022",USD,--,-$1.49,-$1.49,--
-"February 4, 2026",Sale,"Payment for Order #3964674022",,USD,$41.30,--,$41.30,--
-"February 4, 2026",Fee,"Listing fee","Listing #4426858902",USD,--,-$0.20,-$0.20,--
-"February 4, 2026",Marketing,"Fee for sale made through Offsite Ads","Order #3968684953",USD,--,-$4.27,-$4.27,--
-"February 4, 2026",Fee,"Transaction fee: Shipping","Order #3968684953",USD,--,-$0.55,-$0.55,--
-"February 4, 2026",Fee,"Transaction fee: Retro Cinema Marquee Sign | Arrow Lightb...","Order #3968684953",USD,--,-$1.30,-$1.30,--
-"February 4, 2026",Tax,"Sales tax paid by buyer","Order #3968684953",USD,--,-$1.71,-$1.71,--
-"February 4, 2026",Fee,"Processing fee","Order #3968684953",USD,--,-$1.15,-$1.15,--
-"February 4, 2026",Sale,"Payment for Order #3968684953",,USD,$30.16,--,$30.16,--
-"February 4, 2026",Fee,"Listing fee","Listing #4426215313",USD,--,-$0.20,-$0.20,--
-"February 4, 2026",Shipping,"Adjustment for USPS shipping label","Adjustment #298046935071",USD,--,-$1.14,-$1.14,--
-"February 4, 2026",Marketing,"Etsy Ads","Bill for click-throughs to your shop on Feb 3, 2026",USD,--,-$7.50,-$7.50,--
-"February 4, 2026",Fee,"Credit for transaction fee on Modern Ribbed Wall Sconce Light – Beige ...","Order #3939984830",USD,--,$5.85,$5.85,--
-"February 4, 2026",Fee,"Credit for processing fee","Order #3939984830",USD,--,$2.95,$2.95,--
-"February 4, 2026",Refund,"Refund for Order #3939984830",,USD,-$89.98,--,-$89.98,--
-"February 4, 2026",Shipping,"USPS shipping label","Label #298236692938",USD,--,-$5.52,-$5.52,--
-"February 3, 2026",Shipping,"USPS shipping label","Label #299022937419",USD,--,-$8.81,-$8.81,--
-"February 3, 2026",Fee,"Transaction fee: Shipping","Order #3963400860",USD,--,-$1.80,-$1.80,--
-"February 3, 2026",Fee,"Transaction fee: Hot Air Balloon Nursery Light – Whimsica...","Order #3963400860",USD,--,-$3.12,-$3.12,--
-"February 3, 2026",Fee,"Processing fee","Order #3963400860",USD,--,-$2.52,-$2.52,--
-"February 3, 2026",Sale,"Payment for Order #3963400860",,USD,$75.64,--,$75.64,--
-"February 3, 2026",Fee,"Listing fee","Listing #4444100924",USD,--,-$0.20,-$0.20,--
-"February 3, 2026",Marketing,"Etsy Ads","Bill for click-throughs to your shop on Feb 2, 2026",USD,--,-$7.50,-$7.50,--
-"February 2, 2026",Marketing,"Fee for sale made through Offsite Ads","Order #3962722676",USD,--,-$7.20,-$7.20,--
-"February 2, 2026",Fee,"Transaction fee: Ski Gondola Table Lamp | Alpine Mountain...","Order #3962722676",USD,--,-$3.12,-$3.12,--
-"February 2, 2026","Buyer Fee","Colorado Retail Delivery Fee (paid by buyer)","Order #3962722676",USD,--,-$0.28,-$0.28,--
-"February 2, 2026",Tax,"Sales tax paid by buyer","Order #3962722676",USD,--,-$4.39,-$4.39,--
-"February 2, 2026",Fee,"Processing fee","Order #3962722676",USD,--,-$1.83,-$1.83,--
-"February 2, 2026",Sale,"Payment for Order #3962722676",,USD,$52.66,--,$52.66,--
-"February 2, 2026",Fee,"Listing fee","Listing #4414036249",USD,--,-$0.20,-$0.20,--
-"February 2, 2026",Shipping,"USPS shipping label","Label #298097285576",USD,--,-$11.87,-$11.87,--
-"February 2, 2026",Shipping,"USPS shipping label","Label #298092913634",USD,--,-$8.81,-$8.81,--
-"February 2, 2026",Fee,"Credit for transaction fee on Mid-Century Modern Tiered Sconce | Tiere...","Order #3944905295",USD,--,$5.85,$5.85,--
-"February 2, 2026",Fee,"Credit for processing fee","Order #3944905295",USD,--,$2.95,$2.95,--
-"February 2, 2026",Refund,"Refund for Order #3944905295",,USD,-$89.98,--,-$89.98,--
-"February 2, 2026",Fee,"Transaction fee: Deluxe Miniature Ski Lift Chair Ornament...","Order #3966863239",USD,--,-$3.12,-$3.12,--
-"February 2, 2026",Tax,"Sales tax paid by buyer","Order #3966863239",USD,--,-$3.96,-$3.96,--
-"February 2, 2026",Fee,"Processing fee","Order #3966863239",USD,--,-$1.81,-$1.81,--
-"February 2, 2026",Sale,"Payment for Order #3966863239",,USD,$51.94,--,$51.94,--
-"February 2, 2026",Fee,"Listing fee","Listing #4410735065",USD,--,-$0.20,-$0.20,--
-"February 2, 2026",Fee,"Listing fee","Listing #4410735065",USD,--,-$0.40,-$0.40,--
-"February 2, 2026",Deposit,"$483.28 sent to your bank account",,USD,--,--,--,--
-"February 2, 2026",Shipping,"USPS shipping label","Label #298846828471",USD,--,-$8.81,-$8.81,--
-"February 2, 2026",Shipping,"USPS shipping label","Label #298846490267",USD,--,-$36.57,-$36.57,--
-"February 2, 2026",Shipping,"Adjustment for USPS shipping label","Adjustment #297142374132",USD,--,-$1.60,-$1.60,--
-"February 2, 2026",Shipping,"USPS return shipping label","Label #298032439237",USD,--,-$9.20,-$9.20,--
-"February 2, 2026",Marketing,"Etsy Ads","Bill for click-throughs to your shop on Feb 1, 2026",USD,--,-$7.50,-$7.50,--
-"February 1, 2026",Marketing,"Fee for sale made through Offsite Ads","Order #3966028343",USD,--,-$7.20,-$7.20,--
-"February 1, 2026",Fee,"Transaction fee: Ski Gondola Table Lamp | Rustic Mountain...","Order #3966028343",USD,--,-$3.12,-$3.12,--
-"February 1, 2026",Tax,"Sales tax paid by buyer","Order #3966028343",USD,--,-$5.09,-$5.09,--
-"February 1, 2026",Fee,"Processing fee","Order #3966028343",USD,--,-$1.84,-$1.84,--
-"February 1, 2026",Sale,"Payment for Order #3966028343",,USD,$53.08,--,$53.08,--
-"February 1, 2026",Fee,"Listing fee","Listing #4437653641",USD,--,-$0.20,-$0.20,--
-"February 1, 2026",Marketing,"Fee for sale made through Offsite Ads","Order #3961549986",USD,--,-$7.20,-$7.20,--
-"February 1, 2026",Fee,"Transaction fee: Ski Gondola Table Lamp | Rustic Mountain...","Order #3961549986",USD,--,-$3.12,-$3.12,--
-"February 1, 2026",Tax,"Sales tax paid by buyer","Order #3961549986",USD,--,-$3.00,-$3.00,--
-"February 1, 2026",Fee,"Processing fee","Order #3961549986",USD,--,-$1.78,-$1.78,--
-"February 1, 2026",Sale,"Payment for Order #3961549986",,USD,$50.99,--,$50.99,--
-"February 1, 2026",Fee,"Listing fee","Listing #4437653641",USD,--,-$0.20,-$0.20,--
-"February 1, 2026",Marketing,"Etsy Ads","Bill for click-throughs to your shop on Jan 31, 2026",USD,--,-$7.50,-$7.50,--
-"February 1, 2026",Fee,"Transaction fee: Shipping","Order #3961136370",USD,--,-$0.45,-$0.45,--
-"February 1, 2026",Fee,"Transaction fee: Case for Oura Ring Gen 3 Charger: Portab...","Order #3961136370",USD,--,-$1.30,-$1.30,--
-"February 1, 2026",Tax,"Sales tax paid by buyer","Order #3961136370",USD,--,-$2.22,-$2.22,--
-"February 1, 2026",Fee,"Processing fee","Order #3961136370",USD,--,-$1.12,-$1.12,--
-"February 1, 2026",Sale,"Payment for Order #3961136370",,USD,$29.16,--,$29.16,--
-"February 1, 2026",Fee,"Listing fee","Listing #4389851071",USD,--,-$0.20,-$0.20,--
-"February 1, 2026",Fee,"Transaction fee: Shipping","Order #3961051210",USD,--,-$0.82,-$0.82,--
-"February 1, 2026",Fee,"Transaction fee: Ski Gondola Table Lamp | Alpine Mountain...","Order #3961051210",USD,--,-$2.08,-$2.08,--
-"February 1, 2026",Tax,"Sales tax paid by buyer","Order #3961051210",USD,--,-$3.12,-$3.12,--
-"February 1, 2026",Fee,"Processing fee","Order #3961051210",USD,--,-$1.68,-$1.68,--
-"February 1, 2026",Sale,"Payment for Order #3961051210",,USD,$47.69,--,$47.69,--
-"February 1, 2026",Fee,"Listing fee","Listing #4414036249",USD,--,-$0.20,-$0.20,--
+Date,Type,Title,Info,Currency,Amount,Fees & Taxes,Net,Tax Details
+"February 21, 2026",Shipping,Asendia shipping label,Label #299639561948,USD,--,-$30.34,-$30.34,--
+"February 21, 2026",Shipping,USPS shipping label,Label #300392867111,USD,--,-$5.89,-$5.89,--
+"February 21, 2026",Shipping,USPS shipping label,Label #299639267700,USD,--,-$9.81,-$9.81,--
+"February 21, 2026",Shipping,Asendia shipping label,Label #300392703041,USD,--,-$34.20,-$34.20,--
+"February 21, 2026",Shipping,USPS shipping label,Label #300392691189,USD,--,-$10.64,-$10.64,--
+"February 21, 2026",Shipping,USPS shipping label,Label #300392617727,USD,--,-$10.64,-$10.64,--
+"February 21, 2026",Shipping,USPS shipping label,Label #299637807398,USD,--,-$6.51,-$6.51,--
+"February 21, 2026",Shipping,Shipsurance Package Insurance,Label #300391024791,USD,--,-$1.35,-$1.35,--
+"February 21, 2026",Shipping,Asendia shipping label,Label #300391024791,USD,--,-$29.60,-$29.60,--
+"February 21, 2026",Marketing,Etsy Ads,"Bill for click-throughs to your shop on Feb 20, 2026",USD,--,-$10.00,-$10.00,--
+"February 21, 2026",Fee,Transaction fee: Shipping,Order #3980031066,USD,--,-$0.48,-$0.48,--
+"February 21, 2026",Fee,Transaction fee: Retro Cinema Marquee Sign | Arrow Lightb...,Order #3980031066,USD,--,-$1.38,-$1.38,--
+"February 21, 2026",Tax,Sales tax paid by buyer,Order #3980031066,USD,--,-$2.01,-$2.01,--
+"February 21, 2026",Fee,Processing fee,Order #3980031066,USD,--,-$1.17,-$1.17,--
+"February 21, 2026",Sale,Payment for Order #3980031066,nan,USD,$30.71,--,$30.71,--
+"February 21, 2026",Fee,Listing fee,Listing #4426215313,USD,--,-$0.20,-$0.20,--
+"February 20, 2026",Shipping,USPS shipping label,Label #300319837489,USD,--,-$27.65,-$27.65,--
+"February 20, 2026",Shipping,Adjustment for USPS shipping label,Adjustment #299875976203,USD,--,-$1.78,-$1.78,--
+"February 20, 2026",Marketing,Etsy Ads,"Bill for click-throughs to your shop on Feb 19, 2026",USD,--,-$10.00,-$10.00,--
+"February 20, 2026",Shipping,USPS shipping label,Label #300310870821,USD,--,-$10.72,-$10.72,--
+"February 20, 2026",Shipping,USPS shipping label,Label #299558733774,USD,--,-$27.65,-$27.65,--
+"February 20, 2026",Fee,Transaction fee: Shipping,Order #3979144674,USD,--,-$1.59,-$1.59,--
+"February 20, 2026",Fee,Transaction fee: Skateboard Shelf Mounts: Floating Skateb...,Order #3979144674,USD,--,-$0.78,-$0.78,--
+"February 20, 2026",Tax,Sales tax paid by buyer,Order #3979144674,USD,--,-$7.29,-$7.29,--
+"February 20, 2026",Fee,Processing fee,Order #3979144674,USD,--,-$1.56,-$1.56,--
+"February 20, 2026",Sale,Payment for Order #3979144674,nan,USD,$43.75,--,$43.75,--
+"February 20, 2026",Fee,Listing fee,Listing #4389560293,USD,--,-$0.20,-$0.20,--
+"February 19, 2026",Marketing,Fee for sale made through Offsite Ads,Order #3982281407,USD,--,-$19.83,-$19.83,--
+"February 19, 2026",Fee,Listing fee,Listing #4460131881,USD,--,-$0.20,-$0.20,--
+"February 19, 2026",Fee,Transaction fee: Ski Gondola Table Lamp Rustic Cabin Deco...,Order #3982281407,USD,--,-$8.59,-$8.59,--
+"February 19, 2026",Tax,Sales tax paid by buyer,Order #3982281407,USD,--,-$7.93,-$7.93,--
+"February 19, 2026",Fee,Processing fee,Order #3982281407,USD,--,-$4.45,-$4.45,--
+"February 19, 2026",Sale,Payment for Order #3982281407,nan,USD,$140.10,--,$140.10,--
+"February 19, 2026",Fee,Transaction fee: Bamboo-Style Polaroid Photo Display | Mi...,Order #3982133569,USD,--,-$2.92,-$2.92,--
+"February 19, 2026",Tax,Sales tax paid by buyer,Order #3982133569,USD,--,-$3.83,-$3.83,--
+"February 19, 2026",Sale,Payment for Order #3982133569,nan,USD,$48.82,--,$48.82,--
+"February 19, 2026",Fee,Processing fee,Order #3982133569,USD,--,-$1.71,-$1.71,--
+"February 19, 2026",Fee,Listing fee,Listing #4426880576,USD,--,-$0.20,-$0.20,--
+"February 19, 2026",Fee,Listing fee,Listing #4389054153,USD,--,-$0.20,-$0.20,--
+"February 19, 2026",Shipping,USPS shipping label,Label #300238412975,USD,--,-$10.64,-$10.64,--
+"February 19, 2026",Shipping,Asendia shipping label,Label #300238175355,USD,--,-$31.27,-$31.27,--
+"February 19, 2026",Shipping,Asendia shipping label,Label #300238146201,USD,--,-$27.92,-$27.92,--
+"February 19, 2026",Shipping,USPS shipping label,Label #300238126989,USD,--,-$6.83,-$6.83,--
+"February 19, 2026",Shipping,USPS shipping label,Label #299489491064,USD,--,-$6.51,-$6.51,--
+"February 19, 2026",Marketing,Etsy Ads,"Bill for click-throughs to your shop on Feb 18, 2026",USD,--,-$10.00,-$10.00,--
+"February 19, 2026",Shipping,USPS shipping label,Label #299488744848,USD,--,-$7.57,-$7.57,--
+"February 19, 2026",Shipping,USPS shipping label,Label #299488700518,USD,--,-$8.53,-$8.53,--
+"February 19, 2026",Shipping,USPS shipping label,Label #299488633380,USD,--,-$12.58,-$12.58,--
+"February 19, 2026",Fee,Transaction fee: Mid-Century Modern Tiered Sconce | Tiere...,Order #3981518805,USD,--,-$5.52,-$5.52,--
+"February 19, 2026",Tax,Sales tax paid by buyer,Order #3981518805,USD,--,-$8.29,-$8.29,--
+"February 19, 2026",Fee,Processing fee,Order #3981518805,USD,--,-$3.05,-$3.05,--
+"February 19, 2026",Sale,Payment for Order #3981518805,nan,USD,$93.27,--,$93.27,--
+"February 19, 2026",Fee,Listing fee,Listing #4426233970,USD,--,-$0.20,-$0.20,--
+"February 19, 2026",Fee,Listing fee,Listing #4426233970,USD,--,-$0.20,-$0.20,--
+"February 19, 2026",Fee,Transaction fee: Shipping,Order #3981449149,USD,--,-$0.55,-$0.55,--
+"February 19, 2026",Fee,Transaction fee: Rotating Photo Reel | Polaroid & Instax ...,Order #3981449149,USD,--,-$1.95,-$1.95,--
+"February 19, 2026",Tax,Sales tax paid by buyer,Order #3981449149,USD,--,-$2.55,-$2.55,--
+"February 19, 2026",Fee,Processing fee,Order #3981449149,USD,--,-$1.48,-$1.48,--
+"February 19, 2026",Sale,Payment for Order #3981449149,nan,USD,$41.00,--,$41.00,--
+"February 19, 2026",Fee,Listing fee,Listing #4387205694,USD,--,-$0.20,-$0.20,--
+"February 18, 2026",Fee,Transaction fee: Ski Gondola Table Lamp | Rustic Cabin De...,Order #3978209428,USD,--,-$4.22,-$4.22,--
+"February 18, 2026",Tax,Sales tax paid by buyer,Order #3978209428,USD,--,-$5.80,-$5.80,--
+"February 18, 2026",Sale,Payment for Order #3978209428,nan,USD,$70.79,--,$70.79,--
+"February 18, 2026",Fee,Processing fee,Order #3978209428,USD,--,-$2.37,-$2.37,--
+"February 18, 2026",Fee,Listing fee,Listing #4437653641,USD,--,-$0.20,-$0.20,--
+"February 18, 2026",Marketing,Etsy Ads,"Bill for click-throughs to your shop on Feb 17, 2026",USD,--,-$9.99,-$9.99,--
+"February 18, 2026",Fee,Transaction fee: Mid-Century Modern Tiered Sconce | Tiere...,Order #3977575112,USD,--,-$5.20,-$5.20,--
+"February 18, 2026",Tax,Sales tax paid by buyer,Order #3977575112,USD,--,-$3.60,-$3.60,--
+"February 18, 2026",Fee,Processing fee,Order #3977575112,USD,--,-$2.76,-$2.76,--
+"February 18, 2026",Sale,Payment for Order #3977575112,nan,USD,$83.58,--,$83.58,--
+"February 18, 2026",Fee,Listing fee,Listing #4426233970,USD,--,-$0.20,-$0.20,--
+"February 18, 2026",Fee,Listing fee,Listing #4426233970,USD,--,-$0.20,-$0.20,--
+"February 18, 2026",Shipping,USPS shipping label,Label #300168795061,USD,--,-$71.62,-$71.62,--
+"February 18, 2026",Shipping,Asendia shipping label,Label #300168655703,USD,--,-$47.60,-$47.60,--
+"February 17, 2026",Shipping,USPS shipping label,Label #299408657088,USD,--,-$12.37,-$12.37,--
+"February 17, 2026",Fee,Transaction fee: Ski Gondola Table Lamp | Rustic Cabin De...,Order #3977170262,USD,--,-$3.38,-$3.38,--
+"February 17, 2026",Fee,Processing fee,Order #3977170262,USD,--,-$1.81,-$1.81,--
+"February 17, 2026",Sale,Payment for Order #3977170262,nan,USD,$51.99,--,$51.99,--
+"February 17, 2026",Fee,Listing fee,Listing #4437653641,USD,--,-$0.20,-$0.20,--
+"February 17, 2026",Deposit,"$1,292.35 sent to your bank account",nan,USD,--,--,--,--
+"February 17, 2026",Marketing,Etsy Ads,"Bill for click-throughs to your shop on Feb 16, 2026",USD,--,-$10.00,-$10.00,--
+"February 17, 2026",Fee,Transaction fee: Ski Gondola Table Lamp | Rustic Cabin De...,Order #3979843709,USD,--,-$2.34,-$2.34,--
+"February 17, 2026",Sale,Payment for Order #3979843709,nan,USD,$35.99,--,$35.99,--
+"February 17, 2026",Fee,Processing fee,Order #3979843709,USD,--,-$1.33,-$1.33,--
+"February 17, 2026",Fee,Listing fee,Listing #4437653641,USD,--,-$0.20,-$0.20,--
+"February 16, 2026",Fee,Transaction fee: Shipping,Order #3979613815,USD,--,-$2.49,-$2.49,--
+"February 16, 2026",Fee,Transaction fee: Ski Gondola Table Lamp | Rustic Cabin De...,Order #3979613815,USD,--,-$3.38,-$3.38,--
+"February 16, 2026",Tax,Sales tax paid by buyer,Order #3979613815,USD,--,-$7.31,-$7.31,--
+"February 16, 2026",Fee,Processing fee,Order #3979613815,USD,--,-$3.18,-$3.18,--
+"February 16, 2026",Sale,Payment for Order #3979613815,nan,USD,$97.60,--,$97.60,--
+"February 16, 2026",Fee,Listing fee,Listing #4437653641,USD,--,-$0.20,-$0.20,--
+"February 16, 2026",Fee,Transaction fee: Shipping,Order #3979559795,USD,--,-$0.48,-$0.48,--
+"February 16, 2026",Fee,Transaction fee: Modern Minimalist Incense Holder | Custo...,Order #3979559795,USD,--,-$1.30,-$1.30,--
+"February 16, 2026",Fee,Processing fee,Order #3979559795,USD,--,-$1.13,-$1.13,--
+"February 16, 2026",Tax,Sales tax paid by buyer,Order #3979559795,USD,--,-$2.02,-$2.02,--
+"February 16, 2026",Sale,Payment for Order #3979559795,nan,USD,$29.47,--,$29.47,--
+"February 16, 2026",Fee,Listing fee,Listing #4392223549,USD,--,-$0.20,-$0.20,--
+"February 16, 2026",Fee,Transaction fee: Ski Gondola Table Lamp | Rustic Cabin De...,Order #3979492551,USD,--,-$3.38,-$3.38,--
+"February 16, 2026",Tax,Sales tax paid by buyer,Order #3979492551,USD,--,-$4.55,-$4.55,--
+"February 16, 2026",Fee,Processing fee,Order #3979492551,USD,--,-$1.95,-$1.95,--
+"February 16, 2026",Sale,Payment for Order #3979492551,nan,USD,$56.54,--,$56.54,--
+"February 16, 2026",Fee,Listing fee,Listing #4437653641,USD,--,-$0.20,-$0.20,--
+"February 16, 2026",Fee,Transaction fee: Deluxe Miniature Ski Lift Chair Ornament...,Order #3979441985,USD,--,-$4.16,-$4.16,--
+"February 16, 2026",Tax,Sales tax paid by buyer,Order #3979441985,USD,--,-$5.60,-$5.60,--
+"February 16, 2026",Fee,Processing fee,Order #3979441985,USD,--,-$2.34,-$2.34,--
+"February 16, 2026",Sale,Payment for Order #3979441985,nan,USD,$69.57,--,$69.57,--
+"February 16, 2026",Fee,Listing fee,Listing #4410735065,USD,--,-$0.20,-$0.20,--
+"February 16, 2026",Fee,Listing fee,Listing #4410735065,USD,--,-$0.60,-$0.60,--
+"February 16, 2026",Fee,Transaction fee: Mid-Century Modern Starburst Wall Clock ...,Order #3979259509,USD,--,-$2.60,-$2.60,--
+"February 16, 2026",Sale,Payment for Order #3979259509,nan,USD,$39.99,--,$39.99,--
+"February 16, 2026",Fee,Processing fee,Order #3979259509,USD,--,-$1.45,-$1.45,--
+"February 16, 2026",Fee,Listing fee,Listing #4446278361,USD,--,-$0.20,-$0.20,--
+"February 16, 2026",Marketing,Etsy Ads,"Bill for click-throughs to your shop on Feb 15, 2026",USD,--,-$10.00,-$10.00,--
+"February 16, 2026",Marketing,Fee for sale made through Offsite Ads,Order #3979083903,USD,--,-$13.20,-$13.20,--
+"February 16, 2026",Fee,Transaction fee: Ski Gondola Table Lamp | Alpine Mountain...,Order #3979083903,USD,--,-$2.34,-$2.34,--
+"February 16, 2026",Fee,Transaction fee: Ski Gondola Table Lamp | Alpine Mountain...,Order #3979083903,USD,--,-$3.38,-$3.38,--
+"February 16, 2026",Tax,Sales tax paid by buyer,Order #3979083903,USD,--,-$5.28,-$5.28,--
+"February 16, 2026",Sale,Payment for Order #3979083903,nan,USD,$93.26,--,$93.26,--
+"February 16, 2026",Fee,Processing fee,Order #3979083903,USD,--,-$3.05,-$3.05,--
+"February 16, 2026",Fee,Listing fee,Listing #4414036249,USD,--,-$0.20,-$0.20,--
+"February 16, 2026",Fee,Listing fee,Listing #4414036249,USD,--,-$0.20,-$0.20,--
+"February 16, 2026",Fee,Transaction fee: Ski Gondola Table Lamp | Rustic Cabin De...,Order #3979051091,USD,--,-$3.38,-$3.38,--
+"February 16, 2026",Tax,Sales tax paid by buyer,Order #3979051091,USD,--,-$4.16,-$4.16,--
+"February 16, 2026",Fee,Processing fee,Order #3979051091,USD,--,-$1.93,-$1.93,--
+"February 16, 2026",Sale,Payment for Order #3979051091,nan,USD,$56.15,--,$56.15,--
+"February 16, 2026",Fee,Listing fee,Listing #4437653641,USD,--,-$0.20,-$0.20,--
+"February 15, 2026",Marketing,Fee for sale made through Offsite Ads,Order #3975557776,USD,--,-$5.40,-$5.40,--
+"February 15, 2026",Fee,Transaction fee: Ski Gondola Table Lamp | Alpine Mountain...,Order #3975557776,USD,--,-$2.34,-$2.34,--
+"February 15, 2026",Fee,Processing fee,Order #3975557776,USD,--,-$1.33,-$1.33,--
+"February 15, 2026",Sale,Payment for Order #3975557776,nan,USD,$35.99,--,$35.99,--
+"February 15, 2026",Fee,Listing fee,Listing #4414036249,USD,--,-$0.20,-$0.20,--
+"February 15, 2026",Fee,Transaction fee: Shipping,Order #3978562575,USD,--,-$2.15,-$2.15,--
+"February 15, 2026",Fee,Transaction fee: Ski Gondola Table Lamp | Rustic Cabin De...,Order #3978562575,USD,--,-$3.38,-$3.38,--
+"February 15, 2026",Tax,Sales tax paid by buyer,Order #3978562575,USD,--,-$21.29,-$21.29,--
+"February 15, 2026",Fee,Processing fee,Order #3978562575,USD,--,-$3.44,-$3.44,--
+"February 15, 2026",Sale,Payment for Order #3978562575,nan,USD,$106.43,--,$106.43,--
+"February 15, 2026",Fee,Listing fee,Listing #4437653641,USD,--,-$0.20,-$0.20,--
+"February 15, 2026",Fee,Transaction fee: Shipping,Order #3978320693,USD,--,-$2.49,-$2.49,--
+"February 15, 2026",Fee,Transaction fee: Ski Gondola Table Lamp | Rustic Cabin De...,Order #3978320693,USD,--,-$2.34,-$2.34,--
+"February 15, 2026",Tax,Sales tax paid by buyer,Order #3978320693,USD,--,-$6.02,-$6.02,--
+"February 15, 2026",Fee,Processing fee,Order #3978320693,USD,--,-$2.66,-$2.66,--
+"February 15, 2026",Sale,Payment for Order #3978320693,nan,USD,$80.31,--,$80.31,--
+"February 15, 2026",Fee,Listing fee,Listing #4437653641,USD,--,-$0.20,-$0.20,--
+"February 15, 2026",Fee,Transaction fee: Modern Ribbed Wall Sconce Light – Beige ...,Order #3974949296,USD,--,-$4.78,-$4.78,--
+"February 15, 2026",Tax,Sales tax paid by buyer,Order #3974949296,USD,--,-$4.60,-$4.60,--
+"February 15, 2026",Fee,Processing fee,Order #3974949296,USD,--,-$2.60,-$2.60,--
+"February 15, 2026",Sale,Payment for Order #3974949296,nan,USD,$78.18,--,$78.18,--
+"February 15, 2026",Fee,Listing fee,Listing #4426590790,USD,--,-$0.20,-$0.20,--
+"February 15, 2026",Fee,Listing fee,Listing #4426590790,USD,--,-$0.20,-$0.20,--
+"February 15, 2026",Marketing,Etsy Ads,"Bill for click-throughs to your shop on Feb 14, 2026",USD,--,-$9.97,-$9.97,--
+"February 15, 2026",Marketing,Fee for sale made through Offsite Ads,Order #3974828286,USD,--,-$7.20,-$7.20,--
+"February 15, 2026",Fee,Transaction fee: Hot Air Balloon Nursery Light – Whimsica...,Order #3974828286,USD,--,-$3.12,-$3.12,--
+"February 15, 2026",Tax,Sales tax paid by buyer,Order #3974828286,USD,--,-$3.79,-$3.79,--
+"February 15, 2026",Sale,Payment for Order #3974828286,nan,USD,$51.78,--,$51.78,--
+"February 15, 2026",Fee,Processing fee,Order #3974828286,USD,--,-$1.80,-$1.80,--
+"February 15, 2026",Fee,Listing fee,Listing #4444100924,USD,--,-$0.20,-$0.20,--
+"February 14, 2026",Fee,Transaction fee: Shipping,Order #3978048397,USD,--,-$0.55,-$0.55,--
+"February 14, 2026",Fee,Transaction fee: Rotating Photo Reel | Polaroid & Instax ...,Order #3978048397,USD,--,-$1.56,-$1.56,--
+"February 14, 2026",Tax,Sales tax paid by buyer,Order #3978048397,USD,--,-$1.95,-$1.95,--
+"February 14, 2026",Fee,Processing fee,Order #3978048397,USD,--,-$1.28,-$1.28,--
+"February 14, 2026",Sale,Payment for Order #3978048397,nan,USD,$34.40,--,$34.40,--
+"February 14, 2026",Fee,Listing fee,Listing #4387205694,USD,--,-$0.20,-$0.20,--
+"February 14, 2026",Fee,Transaction fee: Mid-Century Modern Starburst Wall Clock ...,Order #3974585444,USD,--,-$2.60,-$2.60,--
+"February 14, 2026",Tax,Sales tax paid by buyer,Order #3974585444,USD,--,-$2.40,-$2.40,--
+"February 14, 2026",Fee,Processing fee,Order #3974585444,USD,--,-$1.52,-$1.52,--
+"February 14, 2026",Sale,Payment for Order #3974585444,nan,USD,$42.39,--,$42.39,--
+"February 14, 2026",Fee,Listing fee,Listing #4446278361,USD,--,-$0.20,-$0.20,--
+"February 14, 2026",Shipping,USPS shipping label,Label #299189983914,USD,--,-$10.64,-$10.64,--
+"February 14, 2026",Marketing,Etsy Ads,"Bill for click-throughs to your shop on Feb 13, 2026",USD,--,-$10.00,-$10.00,--
+"February 14, 2026",Fee,Listing fee,Listing #4385940447,USD,--,-$0.20,-$0.20,--
+"February 13, 2026",Fee,Transaction fee: Shipping,Order #3973693744,USD,--,-$2.21,-$2.21,--
+"February 13, 2026",Fee,Transaction fee: Blimp Pendant Light | Airship Hanging La...,Order #3973693744,USD,--,-$3.12,-$3.12,--
+"February 13, 2026",Tax,Sales tax paid by buyer,Order #3973693744,USD,--,-$16.39,-$16.39,--
+"February 13, 2026",Fee,Processing fee,Order #3973693744,USD,--,-$3.20,-$3.20,--
+"February 13, 2026",Sale,Payment for Order #3973693744,nan,USD,$98.36,--,$98.36,--
+"February 13, 2026",Fee,Listing fee,Listing #4444069229,USD,--,-$0.20,-$0.20,--
+"February 13, 2026",Shipping,USPS shipping label,Label #299121496686,USD,--,-$8.46,-$8.46,--
+"February 13, 2026",Shipping,USPS shipping label,Label #299876240813,USD,--,-$10.64,-$10.64,--
+"February 13, 2026",Shipping,USPS shipping label,Label #299876035917,USD,--,-$24.69,-$24.69,--
+"February 13, 2026",Shipping,USPS shipping label,Label #299875976203,USD,--,-$7.03,-$7.03,--
+"February 13, 2026",Fee,Transaction fee: Ski Gondola Table Lamp | Rustic Cabin De...,Order #3976844917,USD,--,-$3.38,-$3.38,--
+"February 13, 2026",Buyer Fee,Colorado Retail Delivery Fee (paid by buyer),Order #3976844917,USD,--,-$0.28,-$0.28,--
+"February 13, 2026",Tax,Sales tax paid by buyer,Order #3976844917,USD,--,-$4.65,-$4.65,--
+"February 13, 2026",Fee,Processing fee,Order #3976844917,USD,--,-$1.96,-$1.96,--
+"February 13, 2026",Sale,Payment for Order #3976844917,nan,USD,$56.92,--,$56.92,--
+"February 13, 2026",Fee,Listing fee,Listing #4437653641,USD,--,-$0.20,-$0.20,--
+"February 13, 2026",Shipping,USPS shipping label,Label #299076823732,USD,--,-$5.62,-$5.62,--
+"February 13, 2026",Shipping,USPS shipping label,Label #299076811144,USD,--,-$5.52,-$5.52,--
+"February 13, 2026",Shipping,USPS shipping label,Label #299076769210,USD,--,-$9.20,-$9.20,--
+"February 13, 2026",Shipping,USPS shipping label,Label #299831057787,USD,--,-$11.01,-$11.01,--
+"February 13, 2026",Shipping,USPS shipping label,Label #299830972025,USD,--,-$7.57,-$7.57,--
+"February 13, 2026",Shipping,USPS shipping label,Label #299820102595,USD,--,-$5.52,-$5.52,--
+"February 13, 2026",Shipping,USPS shipping label,Label #299065745426,USD,--,-$5.29,-$5.29,--
+"February 13, 2026",Shipping,USPS shipping label,Label #299065704820,USD,--,-$5.20,-$5.20,--
+"February 13, 2026",Marketing,Etsy Ads,"Bill for click-throughs to your shop on Feb 12, 2026",USD,--,-$9.99,-$9.99,--
+"February 12, 2026",Marketing,Fee for sale made through Offsite Ads,Order #3976289445,USD,--,-$7.80,-$7.80,--
+"February 12, 2026",Fee,Transaction fee: Ski Gondola Table Lamp | Rustic Cabin De...,Order #3976289445,USD,--,-$3.38,-$3.38,--
+"February 12, 2026",Fee,Processing fee,Order #3976289445,USD,--,-$1.81,-$1.81,--
+"February 12, 2026",Sale,Payment for Order #3976289445,nan,USD,$51.99,--,$51.99,--
+"February 12, 2026",Fee,Listing fee,Listing #4437653641,USD,--,-$0.20,-$0.20,--
+"February 12, 2026",Shipping,Adjustment for USPS shipping label,Adjustment #299022937419,USD,--,-$2.81,-$2.81,--
+"February 12, 2026",Marketing,Etsy Ads,"Bill for click-throughs to your shop on Feb 11, 2026",USD,--,-$10.00,-$10.00,--
+"February 12, 2026",Marketing,Fee for sale made through Offsite Ads,Order #3975808989,USD,--,-$6.60,-$6.60,--
+"February 12, 2026",Fee,Transaction fee: Blimp Pendant Light | Airship Hanging La...,Order #3975808989,USD,--,-$2.86,-$2.86,--
+"February 12, 2026",Tax,Sales tax paid by buyer,Order #3975808989,USD,--,-$2.33,-$2.33,--
+"February 12, 2026",Fee,Processing fee,Order #3975808989,USD,--,-$1.64,-$1.64,--
+"February 12, 2026",Sale,Payment for Order #3975808989,nan,USD,$46.32,--,$46.32,--
+"February 12, 2026",Fee,Listing fee,Listing #4444069229,USD,--,-$0.20,-$0.20,--
+"February 11, 2026",Fee,Transaction fee: Shipping,Order #3975663257,USD,--,-$0.57,-$0.57,--
+"February 11, 2026",Fee,Transaction fee: Retro Cinema Marquee Sign | Arrow Lightb...,Order #3975663257,USD,--,-$1.30,-$1.30,--
+"February 11, 2026",Tax,Sales tax paid by buyer,Order #3975663257,USD,--,-$2.00,-$2.00,--
+"February 11, 2026",Fee,Processing fee,Order #3975663257,USD,--,-$1.17,-$1.17,--
+"February 11, 2026",Sale,Payment for Order #3975663257,nan,USD,$30.71,--,$30.71,--
+"February 11, 2026",Fee,Listing fee,Listing #4426215313,USD,--,-$0.20,-$0.20,--
+"February 11, 2026",Fee,Transaction fee: Ski Gondola Table Lamp | Rustic Cabin De...,Order #3972029328,USD,--,-$2.34,-$2.34,--
+"February 11, 2026",Buyer Fee,Colorado Retail Delivery Fee (paid by buyer),Order #3972029328,USD,--,-$0.28,-$0.28,--
+"February 11, 2026",Tax,Sales tax paid by buyer,Order #3972029328,USD,--,-$2.93,-$2.93,--
+"February 11, 2026",Fee,Processing fee,Order #3972029328,USD,--,-$1.43,-$1.43,--
+"February 11, 2026",Sale,Payment for Order #3972029328,nan,USD,$39.20,--,$39.20,--
+"February 11, 2026",Fee,Listing fee,Listing #4437653641,USD,--,-$0.20,-$0.20,--
+"February 11, 2026",Shipping,USPS shipping label,Label #299701658085,USD,--,-$6.51,-$6.51,--
+"February 11, 2026",Shipping,USPS shipping label,Label #299701600847,USD,--,-$10.64,-$10.64,--
+"February 11, 2026",Fee,Transaction fee: Shipping,Order #3971977780,USD,--,-$1.80,-$1.80,--
+"February 11, 2026",Fee,Transaction fee: Ski Gondola Table Lamp | Alpine Mountain...,Order #3971977780,USD,--,-$3.38,-$3.38,--
+"February 11, 2026",Fee,Processing fee,Order #3971977780,USD,--,-$2.64,-$2.64,--
+"February 11, 2026",Sale,Payment for Order #3971977780,nan,USD,$79.64,--,$79.64,--
+"February 11, 2026",Fee,Listing fee,Listing #4414036249,USD,--,-$0.20,-$0.20,--
+"February 11, 2026",Shipping,Adjustment for USPS shipping label,Adjustment #298092913634,USD,--,-$2.81,-$2.81,--
+"February 11, 2026",Fee,Listing fee,Listing #4426233970,USD,--,-$0.20,-$0.20,--
+"February 11, 2026",Fee,Listing fee,Listing #4455454596,USD,--,-$0.20,-$0.20,--
+"February 11, 2026",Marketing,Etsy Ads,"Bill for click-throughs to your shop on Feb 10, 2026",USD,--,-$10.00,-$10.00,--
+"February 11, 2026",Fee,Transaction fee: Shipping,Order #3974930473,USD,--,-$1.80,-$1.80,--
+"February 11, 2026",Fee,Transaction fee: Mid-Century Modern Tiered Sconce | Tiere...,Order #3974930473,USD,--,-$2.60,-$2.60,--
+"February 11, 2026",Fee,Processing fee,Order #3974930473,USD,--,-$2.28,-$2.28,--
+"February 11, 2026",Sale,Payment for Order #3974930473,nan,USD,$67.64,--,$67.64,--
+"February 11, 2026",Fee,Transaction fee: Shipping,Order #3974590525,USD,--,-$5.27,-$5.27,--
+"February 11, 2026",Fee,"Transaction fee: Color Changing Desk Lamp, Wireless and R...",Order #3974590525,USD,--,-$2.34,-$2.34,--
+"February 11, 2026",Fee,"Transaction fee: Color Changing Desk Lamp, Wireless and R...",Order #3974590525,USD,--,-$2.34,-$2.34,--
+"February 11, 2026",Tax,Sales tax paid by buyer,Order #3974590525,USD,--,-$30.61,-$30.61,--
+"February 11, 2026",Sale,Payment for Order #3974590525,nan,USD,$183.64,--,$183.64,--
+"February 11, 2026",Fee,Processing fee,Order #3974590525,USD,--,-$5.76,-$5.76,--
+"February 10, 2026",Fee,Listing fee,Listing #4440303243,USD,--,-$0.20,-$0.20,--
+"February 10, 2026",Fee,Listing fee,Listing #4440303243,USD,--,-$0.20,-$0.20,--
+"February 10, 2026",Fee,Transaction fee: Shipping,Order #3974380721,USD,--,-$0.55,-$0.55,--
+"February 10, 2026",Fee,Transaction fee: Retro Cinema Marquee Sign | Arrow Lightb...,Order #3974380721,USD,--,-$1.30,-$1.30,--
+"February 10, 2026",Tax,Sales tax paid by buyer,Order #3974380721,USD,--,-$1.88,-$1.88,--
+"February 10, 2026",Fee,Processing fee,Order #3974380721,USD,--,-$1.16,-$1.16,--
+"February 10, 2026",Sale,Payment for Order #3974380721,nan,USD,$30.33,--,$30.33,--
+"February 10, 2026",Fee,Listing fee,Listing #4426215313,USD,--,-$0.20,-$0.20,--
+"February 10, 2026",Shipping,USPS shipping label,Label #299570408411,USD,--,-$8.81,-$8.81,--
+"February 10, 2026",Shipping,USPS shipping label,Label #299570176223,USD,--,-$6.83,-$6.83,--
+"February 10, 2026",Shipping,USPS shipping label,Label #298811496948,USD,--,-$12.58,-$12.58,--
+"February 10, 2026",Fee,Transaction fee: Shipping,Order #3970489204,USD,--,-$3.93,-$3.93,--
+"February 10, 2026",Fee,Transaction fee: Ski Gondola Table Lamp | Rustic Cabin De...,Order #3970489204,USD,--,-$3.38,-$3.38,--
+"February 10, 2026",Fee,Transaction fee: Ski Gondola Table Lamp | Rustic Cabin De...,Order #3970489204,USD,--,-$2.34,-$2.34,--
+"February 10, 2026",Sale,Payment for Order #3970489204,nan,USD,$148.50,--,$148.50,--
+"February 10, 2026",Fee,Processing fee,Order #3970489204,USD,--,-$4.71,-$4.71,--
+"February 10, 2026",Fee,Listing fee,Listing #4437653641,USD,--,-$0.20,-$0.20,--
+"February 10, 2026",Fee,Listing fee,Listing #4437653641,USD,--,-$0.20,-$0.20,--
+"February 10, 2026",Marketing,Etsy Ads,"Bill for click-throughs to your shop on Feb 9, 2026",USD,--,-$10.00,-$10.00,--
+"February 9, 2026",Shipping,USPS shipping label,Label #298778463844,USD,--,-$27.65,-$27.65,--
+"February 9, 2026",Fee,Transaction fee: Shipping,Order #3973793029,USD,--,-$2.03,-$2.03,--
+"February 9, 2026",Fee,Transaction fee: Ski Gondola Table Lamp | Alpine Mountain...,Order #3973793029,USD,--,-$3.12,-$3.12,--
+"February 9, 2026",Tax,Sales tax paid by buyer,Order #3973793029,USD,--,-$15.06,-$15.06,--
+"February 9, 2026",Fee,Processing fee,Order #3973793029,USD,--,-$3.08,-$3.08,--
+"February 9, 2026",Sale,Payment for Order #3973793029,nan,USD,$94.32,--,$94.32,--
+"February 9, 2026",Fee,Listing fee,Listing #4414036249,USD,--,-$0.20,-$0.20,--
+"February 9, 2026",Fee,Listing fee,Listing #4455212951,USD,--,-$0.20,-$0.20,--
+"February 9, 2026",Fee,Transaction fee: Mid-Century Modern Tiered Sconce | Tiere...,Order #3969948704,USD,--,-$2.34,-$2.34,--
+"February 9, 2026",Tax,Sales tax paid by buyer,Order #3969948704,USD,--,-$1.52,-$1.52,--
+"February 9, 2026",Fee,Processing fee,Order #3969948704,USD,--,-$1.38,-$1.38,--
+"February 9, 2026",Sale,Payment for Order #3969948704,nan,USD,$37.51,--,$37.51,--
+"February 9, 2026",Fee,Listing fee,Listing #4426233970,USD,--,-$0.20,-$0.20,--
+"February 9, 2026",Fee,Transaction fee: Mid-Century Modern Tiered Sconce | Tiere...,Order #3973543155,USD,--,-$4.68,-$4.68,--
+"February 9, 2026",Tax,Sales tax paid by buyer,Order #3973543155,USD,--,-$5.11,-$5.11,--
+"February 9, 2026",Fee,Processing fee,Order #3973543155,USD,--,-$2.56,-$2.56,--
+"February 9, 2026",Sale,Payment for Order #3973543155,nan,USD,$77.09,--,$77.09,--
+"February 9, 2026",Fee,Listing fee,Listing #4426233970,USD,--,-$0.20,-$0.20,--
+"February 9, 2026",Fee,Listing fee,Listing #4426233970,USD,--,-$0.20,-$0.20,--
+"February 9, 2026",Deposit,"$1,052.86 sent to your bank account",nan,USD,--,--,--,--
+"February 9, 2026",Shipping,USPS shipping label,Label #299474189749,USD,--,-$5.39,-$5.39,--
+"February 9, 2026",Shipping,USPS shipping label,Label #299473025541,USD,--,-$10.64,-$10.64,--
+"February 9, 2026",Shipping,USPS shipping label,Label #299472990749,USD,--,-$12.37,-$12.37,--
+"February 9, 2026",Shipping,USPS shipping label,Label #298701353700,USD,--,-$8.81,-$8.81,--
+"February 9, 2026",Shipping,USPS shipping label,Label #299464884061,USD,--,-$5.45,-$5.45,--
+"February 9, 2026",Shipping,USPS shipping label,Label #298700373938,USD,--,-$5.45,-$5.45,--
+"February 9, 2026",Marketing,Etsy Ads,"Bill for click-throughs to your shop on Feb 8, 2026",USD,--,-$10.00,-$10.00,--
+"February 8, 2026",Fee,Transaction fee: Shipping,Order #3972875349,USD,--,-$0.73,-$0.73,--
+"February 8, 2026",Fee,Transaction fee: Deluxe Miniature Ski Lift Chair Ornament...,Order #3972875349,USD,--,-$1.04,-$1.04,--
+"February 8, 2026",Tax,Sales tax paid by buyer,Order #3972875349,USD,--,-$1.27,-$1.27,--
+"February 8, 2026",Fee,Processing fee,Order #3972875349,USD,--,-$1.10,-$1.10,--
+"February 8, 2026",Sale,Payment for Order #3972875349,nan,USD,$28.42,--,$28.42,--
+"February 8, 2026",Fee,Listing fee,Listing #4410735065,USD,--,-$0.20,-$0.20,--
+"February 8, 2026",Fee,Transaction fee: Mid-Century Modern Tiered Sconce | Tiere...,Order #3968895858,USD,--,-$2.34,-$2.34,--
+"February 8, 2026",Fee,Processing fee,Order #3968895858,USD,--,-$1.33,-$1.33,--
+"February 8, 2026",Sale,Payment for Order #3968895858,nan,USD,$35.99,--,$35.99,--
+"February 8, 2026",Fee,Listing fee,Listing #4426233970,USD,--,-$0.20,-$0.20,--
+"February 8, 2026",Marketing,Etsy Ads,"Bill for click-throughs to your shop on Feb 7, 2026",USD,--,-$10.00,-$10.00,--
+"February 8, 2026",Shipping,USPS shipping label,Label #298630875648,USD,--,-$6.09,-$6.09,--
+"February 8, 2026",Fee,Transaction fee: Deluxe Miniature Ski Lift Chair Ornament...,Order #3968273646,USD,--,-$5.20,-$5.20,--
+"February 8, 2026",Tax,Sales tax paid by buyer,Order #3968273646,USD,--,-$6.40,-$6.40,--
+"February 8, 2026",Sale,Payment for Order #3968273646,nan,USD,$86.36,--,$86.36,--
+"February 8, 2026",Fee,Processing fee,Order #3968273646,USD,--,-$2.84,-$2.84,--
+"February 8, 2026",Fee,Listing fee,Listing #4410735065,USD,--,-$0.20,-$0.20,--
+"February 8, 2026",Fee,Listing fee,Listing #4410735065,USD,--,-$0.80,-$0.80,--
+"February 8, 2026",Fee,Listing fee,Listing #4437653641,USD,--,-$0.20,-$0.20,--
+"February 8, 2026",Fee,Transaction fee: Ski Gondola Table Lamp | Rustic Cabin De...,Order #3968195738,USD,--,-$2.34,-$2.34,--
+"February 8, 2026",Tax,Sales tax paid by buyer,Order #3968195738,USD,--,-$2.88,-$2.88,--
+"February 8, 2026",Fee,Processing fee,Order #3968195738,USD,--,-$1.42,-$1.42,--
+"February 8, 2026",Sale,Payment for Order #3968195738,nan,USD,$38.87,--,$38.87,--
+"February 7, 2026",Fee,Transaction fee: Ski Gondola Table Lamp | Rustic Mountain...,Order #3972007551,USD,--,-$3.38,-$3.38,--
+"February 7, 2026",Tax,Sales tax paid by buyer,Order #3972007551,USD,--,-$3.12,-$3.12,--
+"February 7, 2026",Fee,Processing fee,Order #3972007551,USD,--,-$1.90,-$1.90,--
+"February 7, 2026",Sale,Payment for Order #3972007551,nan,USD,$55.11,--,$55.11,--
+"February 7, 2026",Fee,Listing fee,Listing #4437653641,USD,--,-$0.20,-$0.20,--
+"February 7, 2026",Marketing,Fee for sale made through Offsite Ads,Order #3967950912,USD,--,-$8.40,-$8.40,--
+"February 7, 2026",Fee,Transaction fee: Dimmable Mid Century Table Lamp | LED Be...,Order #3967950912,USD,--,-$1.82,-$1.82,--
+"February 7, 2026",Fee,Transaction fee: Dimmable Mid Century Table Lamp | LED Be...,Order #3967950912,USD,--,-$1.82,-$1.82,--
+"February 7, 2026",Tax,Sales tax paid by buyer,Order #3967950912,USD,--,-$4.20,-$4.20,--
+"February 7, 2026",Fee,Processing fee,Order #3967950912,USD,--,-$2.06,-$2.06,--
+"February 7, 2026",Sale,Payment for Order #3967950912,nan,USD,$60.18,--,$60.18,--
+"February 7, 2026",Fee,Listing fee,Listing #4393433581,USD,--,-$0.20,-$0.20,--
+"February 7, 2026",Fee,Listing fee,Listing #4393433581,USD,--,-$0.20,-$0.20,--
+"February 7, 2026",Fee,Transaction fee: Ski Gondola Table Lamp | Rustic Mountain...,Order #3971443623,USD,--,-$3.12,-$3.12,--
+"February 7, 2026",Tax,Sales tax paid by buyer,Order #3971443623,USD,--,-$2.88,-$2.88,--
+"February 7, 2026",Fee,Processing fee,Order #3971443623,USD,--,-$1.78,-$1.78,--
+"February 7, 2026",Sale,Payment for Order #3971443623,nan,USD,$50.87,--,$50.87,--
+"February 7, 2026",Fee,Listing fee,Listing #4437653641,USD,--,-$0.20,-$0.20,--
+"February 7, 2026",Marketing,Etsy Ads,"Bill for click-throughs to your shop on Feb 6, 2026",USD,--,-$10.00,-$10.00,--
+"February 6, 2026",Shipping,USPS shipping label,Label #298530018682,USD,--,-$12.37,-$12.37,--
+"February 6, 2026",Fee,Transaction fee: Shipping,Order #3971128407,USD,--,-$0.48,-$0.48,--
+"February 6, 2026",Fee,Transaction fee: Rotating Photo Reel | Polaroid & Instax ...,Order #3971128407,USD,--,-$1.56,-$1.56,--
+"February 6, 2026",Tax,Sales tax paid by buyer,Order #3971128407,USD,--,-$2.52,-$2.52,--
+"February 6, 2026",Fee,Processing fee,Order #3971128407,USD,--,-$1.27,-$1.27,--
+"February 6, 2026",Sale,Payment for Order #3971128407,nan,USD,$33.97,--,$33.97,--
+"February 6, 2026",Fee,Listing fee,Listing #4387205694,USD,--,-$0.20,-$0.20,--
+"February 6, 2026",Fee,Transaction fee: Mid-Century Modern Tiered Sconce | Tiere...,Order #3967154056,USD,--,-$4.68,-$4.68,--
+"February 6, 2026",Sale,Payment for Order #3967154056,nan,USD,$71.98,--,$71.98,--
+"February 6, 2026",Fee,Processing fee,Order #3967154056,USD,--,-$2.41,-$2.41,--
+"February 6, 2026",Fee,Listing fee,Listing #4426233970,USD,--,-$0.20,-$0.20,--
+"February 6, 2026",Fee,Listing fee,Listing #4426233970,USD,--,-$0.20,-$0.20,--
+"February 6, 2026",Fee,Transaction fee: Deluxe Miniature Ski Lift Chair Ornament...,Order #3971118385,USD,--,-$2.08,-$2.08,--
+"February 6, 2026",Fee,Transaction fee: Deluxe Miniature Ski Lift Chair Ornament...,Order #3971118385,USD,--,-$2.08,-$2.08,--
+"February 6, 2026",Fee,Transaction fee: Deluxe Miniature Ski Lift Chair Ornament...,Order #3971118385,USD,--,-$2.08,-$2.08,--
+"February 6, 2026",Fee,Processing fee,Order #3971118385,USD,--,-$3.13,-$3.13,--
+"February 6, 2026",Sale,Payment for Order #3971118385,nan,USD,$95.95,--,$95.95,--
+"February 6, 2026",Fee,Listing fee,Listing #4410735065,USD,--,-$0.20,-$0.20,--
+"February 6, 2026",Fee,Listing fee,Listing #4410735065,USD,--,-$0.20,-$0.20,--
+"February 6, 2026",Fee,Listing fee,Listing #4410735065,USD,--,-$0.20,-$0.20,--
+"February 6, 2026",Fee,Listing fee,Listing #4410735065,USD,--,-$0.20,-$0.20,--
+"February 6, 2026",Fee,Listing fee,Listing #4410735065,USD,--,-$0.20,-$0.20,--
+"February 6, 2026",Fee,Listing fee,Listing #4410735065,USD,--,-$0.20,-$0.20,--
+"February 6, 2026",Fee,Transaction fee: Ski Gondola Table Lamp | Rustic Mountain...,Order #3970885409,USD,--,-$3.12,-$3.12,--
+"February 6, 2026",Buyer Fee,Colorado Retail Delivery Fee (paid by buyer),Order #3970885409,USD,--,-$0.28,-$0.28,--
+"February 6, 2026",Tax,Sales tax paid by buyer,Order #3970885409,USD,--,-$2.53,-$2.53,--
+"February 6, 2026",Sale,Payment for Order #3970885409,nan,USD,$50.80,--,$50.80,--
+"February 6, 2026",Fee,Processing fee,Order #3970885409,USD,--,-$1.77,-$1.77,--
+"February 6, 2026",Fee,Listing fee,Listing #4437653641,USD,--,-$0.20,-$0.20,--
+"February 6, 2026",Fee,Transaction fee: Shipping,Order #3970598583,USD,--,-$1.80,-$1.80,--
+"February 6, 2026",Fee,Transaction fee: Hot Air Balloon Nursery Light – Whimsica...,Order #3970598583,USD,--,-$2.60,-$2.60,--
+"February 6, 2026",Fee,Processing fee,Order #3970598583,USD,--,-$2.28,-$2.28,--
+"February 6, 2026",Sale,Payment for Order #3970598583,nan,USD,$67.64,--,$67.64,--
+"February 6, 2026",Fee,Listing fee,Listing #4444100924,USD,--,-$0.20,-$0.20,--
+"February 6, 2026",Shipping,USPS shipping label,Label #299241442069,USD,--,-$8.81,-$8.81,--
+"February 6, 2026",Shipping,USPS shipping label,Label #299241433413,USD,--,-$5.22,-$5.22,--
+"February 6, 2026",Shipping,Asendia shipping label,Label #299241424761,USD,--,-$33.98,-$33.98,--
+"February 6, 2026",Shipping,USPS shipping label,Label #299241324731,USD,--,-$8.81,-$8.81,--
+"February 6, 2026",Shipping,Adjustment for USPS shipping label,Adjustment #298551663139,USD,--,-$3.61,-$3.61,--
+"February 6, 2026",Shipping,USPS shipping label,Label #299230228355,USD,--,-$8.46,-$8.46,--
+"February 6, 2026",Shipping,USPS shipping label,Label #299230142499,USD,--,-$5.07,-$5.07,--
+"February 6, 2026",Shipping,USPS return shipping label,Label #298307352733,USD,--,-$8.81,-$8.81,--
+"February 6, 2026",Marketing,Etsy Ads,"Bill for click-throughs to your shop on Feb 5, 2026",USD,--,-$8.74,-$8.74,--
+"February 5, 2026",Fee,Transaction fee: Shipping,Order #3970189083,USD,--,-$0.87,-$0.87,--
+"February 5, 2026",Fee,Transaction fee: Ski Gondola Table Lamp | Alpine Mountain...,Order #3970189083,USD,--,-$2.08,-$2.08,--
+"February 5, 2026",Tax,Sales tax paid by buyer,Order #3970189083,USD,--,-$2.00,-$2.00,--
+"February 5, 2026",Fee,Processing fee,Order #3970189083,USD,--,-$1.67,-$1.67,--
+"February 5, 2026",Sale,Payment for Order #3970189083,nan,USD,$47.37,--,$47.37,--
+"February 5, 2026",Fee,Listing fee,Listing #4414036249,USD,--,-$0.20,-$0.20,--
+"February 5, 2026",Shipping,Adjustment for Globegistics shipping label,Adjustment #298379191037,USD,--,-$29.21,-$29.21,--
+"February 5, 2026",Fee,Transaction fee: Desk Valet & Headphone Stand | Personali...,Order #3965615100,USD,--,-$1.56,-$1.56,--
+"February 5, 2026",Fee,Transaction fee: Shipping,Order #3965615100,USD,--,-$0.73,-$0.73,--
+"February 5, 2026",Tax,Sales tax paid by buyer,Order #3965615100,USD,--,-$2.81,-$2.81,--
+"February 5, 2026",Fee,Processing fee,Order #3965615100,USD,--,-$1.39,-$1.39,--
+"February 5, 2026",Sale,Payment for Order #3965615100,nan,USD,$37.96,--,$37.96,--
+"February 5, 2026",Fee,Listing fee,Listing #4389039835,USD,--,-$0.20,-$0.20,--
+"February 5, 2026",Shipping,USPS shipping label,Label #299129303991,USD,--,-$5.52,-$5.52,--
+"February 5, 2026",Shipping,USPS shipping label,Label #299129261063,USD,--,-$5.45,-$5.45,--
+"February 5, 2026",Shipping,USPS shipping label,Label #298347900292,USD,--,-$11.92,-$11.92,--
+"February 5, 2026",Shipping,USPS shipping label,Label #299128993405,USD,--,-$9.20,-$9.20,--
+"February 5, 2026",Shipping,Adjustment for USPS shipping label,Adjustment #297527150960,USD,--,-$1.78,-$1.78,--
+"February 5, 2026",Marketing,Etsy Ads,"Bill for click-throughs to your shop on Feb 4, 2026",USD,--,-$7.50,-$7.50,--
+"February 4, 2026",Shipping,Adjustment for Globegistics shipping label,Adjustment #298548872367,USD,--,-$13.83,-$13.83,--
+"February 4, 2026",Marketing,Credit for Offsite Ads fee,Order #3965066744,USD,--,$5.09,$5.09,--
+"February 4, 2026",Fee,Credit for transaction fee on Skateboard Shelf Mounts: Floating Skateb...,Order #3965066744,USD,--,$0.78,$0.78,--
+"February 4, 2026",Fee,Credit for transaction fee on shipping,Order #3965066744,USD,--,$1.43,$1.43,--
+"February 4, 2026",Fee,Credit for listing fee,Listing #4389560293,USD,--,$0.20,$0.20,--
+"February 4, 2026",Fee,Credit for processing fee,Order #3965066744,USD,--,$1.47,$1.47,--
+"February 4, 2026",Tax,Refund to buyer for sales tax,Order #3965066744,USD,--,$6.79,$6.79,--
+"February 4, 2026",Refund,Refund for Order #3965066744,nan,USD,-$40.73,--,-$40.73,--
+"February 4, 2026",Marketing,Fee for sale made through Offsite Ads,Order #3965066744,USD,--,-$5.09,-$5.09,--
+"February 4, 2026",Fee,Transaction fee: Shipping,Order #3965066744,USD,--,-$1.43,-$1.43,--
+"February 4, 2026",Fee,Transaction fee: Skateboard Shelf Mounts: Floating Skateb...,Order #3965066744,USD,--,-$0.78,-$0.78,--
+"February 4, 2026",Tax,Sales tax paid by buyer,Order #3965066744,USD,--,-$6.79,-$6.79,--
+"February 4, 2026",Sale,Payment for Order #3965066744,nan,USD,$40.73,--,$40.73,--
+"February 4, 2026",Fee,Processing fee,Order #3965066744,USD,--,-$1.47,-$1.47,--
+"February 4, 2026",Fee,Listing fee,Listing #4389560293,USD,--,-$0.20,-$0.20,--
+"February 4, 2026",Fee,Transaction fee: Ski Gondola Table Lamp | Alpine Mountain...,Order #3964944950,USD,--,-$3.12,-$3.12,--
+"February 4, 2026",Tax,Sales tax paid by buyer,Order #3964944950,USD,--,-$3.18,-$3.18,--
+"February 4, 2026",Fee,Processing fee,Order #3964944950,USD,--,-$1.79,-$1.79,--
+"February 4, 2026",Sale,Payment for Order #3964944950,nan,USD,$51.17,--,$51.17,--
+"February 4, 2026",Fee,Listing fee,Listing #4414036249,USD,--,-$0.20,-$0.20,--
+"February 4, 2026",Fee,Transaction fee: Shipping,Order #3968904067,USD,--,-$0.82,-$0.82,--
+"February 4, 2026",Fee,Transaction fee: Ski Gondola Table Lamp | Alpine Mountain...,Order #3968904067,USD,--,-$2.08,-$2.08,--
+"February 4, 2026",Fee,Processing fee,Order #3968904067,USD,--,-$1.71,-$1.71,--
+"February 4, 2026",Sale,Payment for Order #3968904067,nan,USD,$48.53,--,$48.53,--
+"February 4, 2026",Tax,Sales tax paid by buyer,Order #3968904067,USD,--,-$3.96,-$3.96,--
+"February 4, 2026",Fee,Listing fee,Listing #4414036249,USD,--,-$0.20,-$0.20,--
+"February 4, 2026",Fee,Transaction fee: Shipping,Order #3964674022,USD,--,-$0.73,-$0.73,--
+"February 4, 2026",Fee,Transaction fee: Minimalist Photo Holder Desk Tray – Adju...,Order #3964674022,USD,--,-$1.82,-$1.82,--
+"February 4, 2026",Tax,Sales tax paid by buyer,Order #3964674022,USD,--,-$2.15,-$2.15,--
+"February 4, 2026",Fee,Processing fee,Order #3964674022,USD,--,-$1.49,-$1.49,--
+"February 4, 2026",Sale,Payment for Order #3964674022,nan,USD,$41.30,--,$41.30,--
+"February 4, 2026",Fee,Listing fee,Listing #4426858902,USD,--,-$0.20,-$0.20,--
+"February 4, 2026",Marketing,Fee for sale made through Offsite Ads,Order #3968684953,USD,--,-$4.27,-$4.27,--
+"February 4, 2026",Fee,Transaction fee: Shipping,Order #3968684953,USD,--,-$0.55,-$0.55,--
+"February 4, 2026",Fee,Transaction fee: Retro Cinema Marquee Sign | Arrow Lightb...,Order #3968684953,USD,--,-$1.30,-$1.30,--
+"February 4, 2026",Tax,Sales tax paid by buyer,Order #3968684953,USD,--,-$1.71,-$1.71,--
+"February 4, 2026",Fee,Processing fee,Order #3968684953,USD,--,-$1.15,-$1.15,--
+"February 4, 2026",Sale,Payment for Order #3968684953,nan,USD,$30.16,--,$30.16,--
+"February 4, 2026",Fee,Listing fee,Listing #4426215313,USD,--,-$0.20,-$0.20,--
+"February 4, 2026",Shipping,Adjustment for USPS shipping label,Adjustment #298046935071,USD,--,-$1.14,-$1.14,--
+"February 4, 2026",Marketing,Etsy Ads,"Bill for click-throughs to your shop on Feb 3, 2026",USD,--,-$7.50,-$7.50,--
+"February 4, 2026",Fee,Credit for transaction fee on Modern Ribbed Wall Sconce Light – Beige ...,Order #3939984830,USD,--,$5.85,$5.85,--
+"February 4, 2026",Fee,Credit for processing fee,Order #3939984830,USD,--,$2.95,$2.95,--
+"February 4, 2026",Refund,Refund for Order #3939984830,nan,USD,-$89.98,--,-$89.98,--
+"February 4, 2026",Shipping,USPS shipping label,Label #298236692938,USD,--,-$5.52,-$5.52,--
+"February 3, 2026",Shipping,USPS shipping label,Label #299022937419,USD,--,-$8.81,-$8.81,--
+"February 3, 2026",Fee,Transaction fee: Shipping,Order #3963400860,USD,--,-$1.80,-$1.80,--
+"February 3, 2026",Fee,Transaction fee: Hot Air Balloon Nursery Light – Whimsica...,Order #3963400860,USD,--,-$3.12,-$3.12,--
+"February 3, 2026",Fee,Processing fee,Order #3963400860,USD,--,-$2.52,-$2.52,--
+"February 3, 2026",Sale,Payment for Order #3963400860,nan,USD,$75.64,--,$75.64,--
+"February 3, 2026",Fee,Listing fee,Listing #4444100924,USD,--,-$0.20,-$0.20,--
+"February 3, 2026",Marketing,Etsy Ads,"Bill for click-throughs to your shop on Feb 2, 2026",USD,--,-$7.50,-$7.50,--
+"February 2, 2026",Marketing,Fee for sale made through Offsite Ads,Order #3962722676,USD,--,-$7.20,-$7.20,--
+"February 2, 2026",Fee,Transaction fee: Ski Gondola Table Lamp | Alpine Mountain...,Order #3962722676,USD,--,-$3.12,-$3.12,--
+"February 2, 2026",Buyer Fee,Colorado Retail Delivery Fee (paid by buyer),Order #3962722676,USD,--,-$0.28,-$0.28,--
+"February 2, 2026",Tax,Sales tax paid by buyer,Order #3962722676,USD,--,-$4.39,-$4.39,--
+"February 2, 2026",Fee,Processing fee,Order #3962722676,USD,--,-$1.83,-$1.83,--
+"February 2, 2026",Sale,Payment for Order #3962722676,nan,USD,$52.66,--,$52.66,--
+"February 2, 2026",Fee,Listing fee,Listing #4414036249,USD,--,-$0.20,-$0.20,--
+"February 2, 2026",Shipping,USPS shipping label,Label #298097285576,USD,--,-$11.87,-$11.87,--
+"February 2, 2026",Shipping,USPS shipping label,Label #298092913634,USD,--,-$8.81,-$8.81,--
+"February 2, 2026",Fee,Credit for transaction fee on Mid-Century Modern Tiered Sconce | Tiere...,Order #3944905295,USD,--,$5.85,$5.85,--
+"February 2, 2026",Fee,Credit for processing fee,Order #3944905295,USD,--,$2.95,$2.95,--
+"February 2, 2026",Refund,Refund for Order #3944905295,nan,USD,-$89.98,--,-$89.98,--
+"February 2, 2026",Fee,Transaction fee: Deluxe Miniature Ski Lift Chair Ornament...,Order #3966863239,USD,--,-$3.12,-$3.12,--
+"February 2, 2026",Tax,Sales tax paid by buyer,Order #3966863239,USD,--,-$3.96,-$3.96,--
+"February 2, 2026",Fee,Processing fee,Order #3966863239,USD,--,-$1.81,-$1.81,--
+"February 2, 2026",Sale,Payment for Order #3966863239,nan,USD,$51.94,--,$51.94,--
+"February 2, 2026",Fee,Listing fee,Listing #4410735065,USD,--,-$0.20,-$0.20,--
+"February 2, 2026",Fee,Listing fee,Listing #4410735065,USD,--,-$0.40,-$0.40,--
+"February 2, 2026",Deposit,$483.28 sent to your bank account,nan,USD,--,--,--,--
+"February 2, 2026",Shipping,USPS shipping label,Label #298846828471,USD,--,-$8.81,-$8.81,--
+"February 2, 2026",Shipping,USPS shipping label,Label #298846490267,USD,--,-$36.57,-$36.57,--
+"February 2, 2026",Shipping,Adjustment for USPS shipping label,Adjustment #297142374132,USD,--,-$1.60,-$1.60,--
+"February 2, 2026",Shipping,USPS return shipping label,Label #298032439237,USD,--,-$9.20,-$9.20,--
+"February 2, 2026",Marketing,Etsy Ads,"Bill for click-throughs to your shop on Feb 1, 2026",USD,--,-$7.50,-$7.50,--
+"February 1, 2026",Marketing,Fee for sale made through Offsite Ads,Order #3966028343,USD,--,-$7.20,-$7.20,--
+"February 1, 2026",Fee,Transaction fee: Ski Gondola Table Lamp | Rustic Mountain...,Order #3966028343,USD,--,-$3.12,-$3.12,--
+"February 1, 2026",Tax,Sales tax paid by buyer,Order #3966028343,USD,--,-$5.09,-$5.09,--
+"February 1, 2026",Fee,Processing fee,Order #3966028343,USD,--,-$1.84,-$1.84,--
+"February 1, 2026",Sale,Payment for Order #3966028343,nan,USD,$53.08,--,$53.08,--
+"February 1, 2026",Fee,Listing fee,Listing #4437653641,USD,--,-$0.20,-$0.20,--
+"February 1, 2026",Marketing,Fee for sale made through Offsite Ads,Order #3961549986,USD,--,-$7.20,-$7.20,--
+"February 1, 2026",Fee,Transaction fee: Ski Gondola Table Lamp | Rustic Mountain...,Order #3961549986,USD,--,-$3.12,-$3.12,--
+"February 1, 2026",Tax,Sales tax paid by buyer,Order #3961549986,USD,--,-$3.00,-$3.00,--
+"February 1, 2026",Fee,Processing fee,Order #3961549986,USD,--,-$1.78,-$1.78,--
+"February 1, 2026",Sale,Payment for Order #3961549986,nan,USD,$50.99,--,$50.99,--
+"February 1, 2026",Fee,Listing fee,Listing #4437653641,USD,--,-$0.20,-$0.20,--
+"February 1, 2026",Marketing,Etsy Ads,"Bill for click-throughs to your shop on Jan 31, 2026",USD,--,-$7.50,-$7.50,--
+"February 1, 2026",Fee,Transaction fee: Shipping,Order #3961136370,USD,--,-$0.45,-$0.45,--
+"February 1, 2026",Fee,Transaction fee: Case for Oura Ring Gen 3 Charger: Portab...,Order #3961136370,USD,--,-$1.30,-$1.30,--
+"February 1, 2026",Tax,Sales tax paid by buyer,Order #3961136370,USD,--,-$2.22,-$2.22,--
+"February 1, 2026",Fee,Processing fee,Order #3961136370,USD,--,-$1.12,-$1.12,--
+"February 1, 2026",Sale,Payment for Order #3961136370,nan,USD,$29.16,--,$29.16,--
+"February 1, 2026",Fee,Listing fee,Listing #4389851071,USD,--,-$0.20,-$0.20,--
+"February 1, 2026",Fee,Transaction fee: Shipping,Order #3961051210,USD,--,-$0.82,-$0.82,--
+"February 1, 2026",Fee,Transaction fee: Ski Gondola Table Lamp | Alpine Mountain...,Order #3961051210,USD,--,-$2.08,-$2.08,--
+"February 1, 2026",Tax,Sales tax paid by buyer,Order #3961051210,USD,--,-$3.12,-$3.12,--
+"February 1, 2026",Fee,Processing fee,Order #3961051210,USD,--,-$1.68,-$1.68,--
+"February 1, 2026",Sale,Payment for Order #3961051210,nan,USD,$47.69,--,$47.69,--
+"February 1, 2026",Fee,Listing fee,Listing #4414036249,USD,--,-$0.20,-$0.20,--
+"February 25, 2026",Fee,Transaction fee: Shipping,Order #3984068410,USD,--,-$0.82,-$0.82,--
+"February 25, 2026",Fee,Transaction fee: Deluxe Miniature Ski Lift Chair Ornament...,Order #3984068410,USD,--,-$0.65,-$0.65,--
+"February 25, 2026",Tax,Sales tax paid by buyer,Order #3984068410,USD,--,-$2.00,-$2.00,--
+"February 25, 2026",Fee,Processing fee,Order #3984068410,USD,--,-$0.99,-$0.99,--
+"February 25, 2026",Sale,Payment for Order #3984068410,"Funds will be available on Feb 25, 2026",USD,$24.57,--,$24.57,--
+"February 25, 2026",Fee,Listing fee,Listing #4410735065,USD,--,-$0.20,-$0.20,--
+"February 25, 2026",Fee,Transaction fee: Shipping,Order #3984061064,USD,--,-$0.48,-$0.48,--
+"February 25, 2026",Fee,Transaction fee: Mid-Century Modern Starburst Ornament | ...,Order #3984061064,USD,--,-$1.30,-$1.30,--
+"February 25, 2026",Tax,Sales tax paid by buyer,Order #3984061064,USD,--,-$2.02,-$2.02,--
+"February 25, 2026",Fee,Processing fee,Order #3984061064,USD,--,-$1.13,-$1.13,--
+"February 25, 2026",Sale,Payment for Order #3984061064,"Funds will be available on Feb 25, 2026",USD,$29.47,--,$29.47,--
+"February 25, 2026",Fee,Listing fee,Listing #4414028758,USD,--,-$0.20,-$0.20,--
+"February 24, 2026",Fee,Listing fee,Listing #4392208973,USD,--,-$0.20,-$0.20,--
+"February 24, 2026",Fee,Credit for processing fee,Order #3944555572,USD,--,$1.47,$1.47,--
+"February 24, 2026",Tax,Refund to buyer for sales tax,Order #3944555572,USD,--,$2.49,$2.49,--
+"February 24, 2026",Refund,Refund for Order #3944555572,nan,USD,-$40.73,--,-$40.73,--
+"February 24, 2026",Marketing,Etsy Ads,"Bill for click-throughs to your shop on Feb 23, 2026",USD,--,-$10.00,-$10.00,--
+"February 24, 2026",Shipping,Asendia shipping label,Label #299843567250,USD,--,-$38.30,-$38.30,--
+"February 24, 2026",Shipping,USPS shipping label,Label #300590000771,USD,--,-$8.02,-$8.02,--
+"February 24, 2026",Shipping,USPS shipping label,Label #299841723122,USD,--,-$7.03,-$7.03,--
+"February 24, 2026",Fee,Transaction fee: Ski Gondola Table Lamp | Alpine Mountain...,Order #3986169729,USD,--,-$2.92,-$2.92,--
+"February 24, 2026",Tax,Sales tax paid by buyer,Order #3986169729,USD,--,-$2.70,-$2.70,--
+"February 24, 2026",Fee,Processing fee,Order #3986169729,USD,--,-$1.68,-$1.68,--
+"February 24, 2026",Sale,Payment for Order #3986169729,nan,USD,$47.69,--,$47.69,--
+"February 24, 2026",Fee,Listing fee,Listing #4414036249,USD,--,-$0.20,-$0.20,--
+"February 24, 2026",Fee,Transaction fee: Mid-Century Modern Starburst Wall Clock ...,Order #3986087525,USD,--,-$3.25,-$3.25,--
+"February 24, 2026",Fee,Processing fee,Order #3986087525,USD,--,-$1.75,-$1.75,--
+"February 24, 2026",Sale,Payment for Order #3986087525,nan,USD,$49.99,--,$49.99,--
+"February 24, 2026",Fee,Listing fee,Listing #4446278361,USD,--,-$0.20,-$0.20,--
+"February 23, 2026",Deposit,$651.33 sent to your bank account,nan,USD,--,--,--,--
+"February 23, 2026",Shipping,USPS shipping label,Label #300514110855,USD,--,-$5.39,-$5.39,--
+"February 23, 2026",Shipping,USPS shipping label,Label #299765992160,USD,--,-$8.81,-$8.81,--
+"February 23, 2026",Shipping,USPS shipping label,Label #300510653587,USD,--,-$6.09,-$6.09,--
+"February 23, 2026",Shipping,USPS return shipping label,Label #299873776009,USD,--,-$8.81,-$8.81,--
+"February 23, 2026",Marketing,Etsy Ads,"Bill for click-throughs to your shop on Feb 22, 2026",USD,--,-$10.00,-$10.00,--
+"February 23, 2026",Fee,Transaction fee: Hot Air Balloon Nursery Light – Whimsica...,Order #3985196423,USD,--,-$3.90,-$3.90,--
+"February 23, 2026",Fee,Processing fee,Order #3985196423,USD,--,-$2.05,-$2.05,--
+"February 23, 2026",Sale,Payment for Order #3985196423,nan,USD,$59.99,--,$59.99,--
+"February 23, 2026",Fee,Listing fee,Listing #4444100924,USD,--,-$0.20,-$0.20,--
+"February 23, 2026",Fee,Transaction fee: Ski Gondola Table Lamp | Alpine Mountain...,Order #3985186235,USD,--,-$2.92,-$2.92,--
+"February 23, 2026",Tax,Sales tax paid by buyer,Order #3985186235,USD,--,-$3.26,-$3.26,--
+"February 23, 2026",Fee,Processing fee,Order #3985186235,USD,--,-$1.70,-$1.70,--
+"February 23, 2026",Sale,Payment for Order #3985186235,nan,USD,$48.25,--,$48.25,--
+"February 23, 2026",Fee,Listing fee,Listing #4414036249,USD,--,-$0.20,-$0.20,--
+"February 22, 2026",Fee,Transaction fee: Mid-Century Modern Starburst Wall Clock ...,Order #3984846427,USD,--,-$3.25,-$3.25,--
+"February 22, 2026",Tax,Sales tax paid by buyer,Order #3984846427,USD,--,-$3.17,-$3.17,--
+"February 22, 2026",Fee,Processing fee,Order #3984846427,USD,--,-$1.84,-$1.84,--
+"February 22, 2026",Sale,Payment for Order #3984846427,nan,USD,$53.16,--,$53.16,--
+"February 22, 2026",Fee,Listing fee,Listing #4446278361,USD,--,-$0.20,-$0.20,--
+"February 22, 2026",Marketing,Etsy Ads,"Bill for click-throughs to your shop on Feb 21, 2026",USD,--,-$10.00,-$10.00,--
+"February 21, 2026",Fee,"Transaction fee: Color Changing Desk Lamp, Wireless and R...",Order #3980988602,USD,--,-$2.92,-$2.92,--
+"February 21, 2026",Tax,Sales tax paid by buyer,Order #3980988602,USD,--,-$2.69,-$2.69,--
+"February 21, 2026",Fee,Processing fee,Order #3980988602,USD,--,-$1.68,-$1.68,--
+"February 21, 2026",Sale,Payment for Order #3980988602,nan,USD,$47.68,--,$47.68,--
+"February 21, 2026",Fee,Transaction fee: Shipping,Order #3983629705,USD,--,-$7.03,-$7.03,--
+"February 21, 2026",Fee,Transaction fee: Ski Gondola Table Lamp | Rustic Cabin De...,Order #3983629705,USD,--,-$8.45,-$8.45,--
+"February 21, 2026",Fee,Transaction fee: Ski Gondola Table Lamp | Rustic Cabin De...,Order #3983629705,USD,--,-$5.85,-$5.85,--
+"February 21, 2026",Sale,Payment for Order #3983629705,nan,USD,$328.16,--,$328.16,--
+"February 21, 2026",Fee,Processing fee,Order #3983629705,USD,--,-$10.09,-$10.09,--
+"February 21, 2026",Fee,Transaction fee: Ski Gondola Table Lamp | Alpine Mountain...,Order #3980382572,USD,--,-$3.59,-$3.59,--
+"February 21, 2026",Tax,Sales tax paid by buyer,Order #3980382572,USD,--,-$3.45,-$3.45,--
+"February 21, 2026",Sale,Payment for Order #3980382572,nan,USD,$58.69,--,$58.69,--
+"February 21, 2026",Fee,Processing fee,Order #3980382572,USD,--,-$2.01,-$2.01,--
+"February 21, 2026",Fee,Transaction fee: Shipping,Order #3980378010,USD,--,-$6.88,-$6.88,--
+"February 21, 2026",Fee,Transaction fee: Ski Gondola Table Lamp | Alpine Mountain...,Order #3980378010,USD,--,-$7.46,-$7.46,--
+"February 21, 2026",Tax,Sales tax paid by buyer,Order #3980378010,USD,--,-$17.86,-$17.86,--
+"February 21, 2026",Sale,Payment for Order #3980378010,nan,USD,$238.39,--,$238.39,--
+"February 21, 2026",Fee,Processing fee,Order #3980378010,USD,--,-$7.40,-$7.40,--
+"February 21, 2026",Fee,Listing fee,Listing #4414036249,USD,--,-$0.40,-$0.40,--
+"February 21, 2026",Shipping,USPS shipping label,Label #300405604209,USD,--,-$9.24,-$9.24,--
+"February 21, 2026",Shipping,USPS shipping label,Label #299652339824,USD,--,-$6.15,-$6.15,--

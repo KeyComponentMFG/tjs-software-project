@@ -608,8 +608,15 @@ def sync_bank_transactions(bank_txns: list[dict]) -> bool:
     if client is None:
         return False
     try:
-        # Clear existing
-        client.table("bank_transactions").delete().gt("id", 0).execute()
+        # Clear existing (paginated — Supabase limits deletes to ~1000 per call)
+        while True:
+            batch = client.table("bank_transactions").select("id").limit(1000).execute()
+            if not batch.data:
+                break
+            ids = [r["id"] for r in batch.data]
+            for i in range(0, len(ids), 500):
+                chunk = ids[i:i+500]
+                client.table("bank_transactions").delete().in_("id", chunk).execute()
         # Insert in batches
         rows = []
         for t in bank_txns:
@@ -664,6 +671,11 @@ def sync_etsy_transactions(data_df) -> bool:
             })
         for i in range(0, len(rows), 500):
             client.table("etsy_transactions").insert(rows[i:i+500]).execute()
+        # Row-count guard: verify Supabase has expected number of rows
+        count_resp = client.table("etsy_transactions").select("id", count="exact").execute()
+        sb_count = count_resp.count if count_resp.count is not None else len(count_resp.data)
+        if sb_count != len(rows):
+            print(f"WARNING: Supabase has {sb_count} rows but expected {len(rows)}")
         print(f"Synced {len(rows)} Etsy transactions to Supabase")
         return True
     except Exception as e:
@@ -684,13 +696,13 @@ def append_etsy_transactions(data_df) -> bool:
         _offset = 0
         while True:
             batch = (client.table("etsy_transactions")
-                     .select("date,type,title,amount,net")
+                     .select("date,type,title,info,amount,net")
                      .order("id")
                      .range(_offset, _offset + 999)
                      .execute())
             for r in batch.data:
                 existing_keys.add((r.get("date", ""), r.get("type", ""), r.get("title", ""),
-                                   r.get("amount", ""), r.get("net", "")))
+                                   r.get("info", ""), r.get("amount", ""), r.get("net", "")))
             if len(batch.data) < 1000:
                 break
             _offset += 1000
@@ -699,7 +711,7 @@ def append_etsy_transactions(data_df) -> bool:
         rows = []
         for _, r in data_df.iterrows():
             key = (str(r.get("Date", "")), str(r.get("Type", "")), str(r.get("Title", "")),
-                   str(r.get("Amount", "")), str(r.get("Net", "")))
+                   str(r.get("Info", "")), str(r.get("Amount", "")), str(r.get("Net", "")))
             if key not in existing_keys:
                 rows.append({
                     "date": str(r.get("Date", "")),
@@ -732,12 +744,21 @@ def append_bank_transactions(bank_txns: list[dict]) -> bool:
         print("append_bank: no Supabase client")
         return False
     try:
-        # Fetch existing to avoid duplicates
-        existing = client.table("bank_transactions").select("date,description,amount,type").execute()
+        # Fetch existing to avoid duplicates (paginated)
         existing_keys = set()
-        for r in existing.data:
-            existing_keys.add((r.get("date", ""), str(r.get("amount", 0)), r.get("type", ""),
-                               r.get("description", "")))
+        _offset = 0
+        while True:
+            batch = (client.table("bank_transactions")
+                     .select("date,description,amount,type")
+                     .order("id")
+                     .range(_offset, _offset + 999)
+                     .execute())
+            for r in batch.data:
+                existing_keys.add((r.get("date", ""), str(r.get("amount", 0)), r.get("type", ""),
+                                   r.get("description", "")))
+            if len(batch.data) < 1000:
+                break
+            _offset += 1000
 
         rows = []
         for t in bank_txns:

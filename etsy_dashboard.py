@@ -157,7 +157,8 @@ _sb = _load_data()
 CONFIG = _sb["CONFIG"]
 INVOICES = _sb["INVOICES"]
 
-# Always re-parse Etsy data from local CSVs so new uploads are picked up immediately
+# Re-parse Etsy data from local CSVs so new uploads are picked up immediately.
+# But prefer Supabase if it has MORE rows (local git files may be stale on Railway).
 import glob as _glob_mod
 _etsy_dir = os.path.join(BASE_DIR, "data", "etsy_statements")
 _etsy_frames = []
@@ -167,24 +168,33 @@ if os.path.isdir(_etsy_dir):
             _etsy_frames.append(pd.read_csv(_ef))
         except Exception:
             pass
+
+def _pm(val):
+    if pd.isna(val) or val == "--" or val == "":
+        return 0.0
+    val = str(val).replace("$", "").replace(",", "").replace('"', "")
+    try:
+        return float(val)
+    except Exception:
+        return 0.0
+
 if _etsy_frames:
-    DATA = pd.concat(_etsy_frames, ignore_index=True)
-    # Add computed columns (same as supabase_loader._add_computed_columns)
-    def _pm(val):
-        if pd.isna(val) or val == "--" or val == "":
-            return 0.0
-        val = str(val).replace("$", "").replace(",", "").replace('"', "")
-        try:
-            return float(val)
-        except Exception:
-            return 0.0
-    DATA["Amount_Clean"] = DATA["Amount"].apply(_pm)
-    DATA["Net_Clean"] = DATA["Net"].apply(_pm)
-    DATA["Fees_Clean"] = DATA["Fees & Taxes"].apply(_pm)
-    DATA["Date_Parsed"] = pd.to_datetime(DATA["Date"], format="%B %d, %Y", errors="coerce")
-    DATA["Month"] = DATA["Date_Parsed"].dt.to_period("M").astype(str)
-    DATA["Week"] = DATA["Date_Parsed"].dt.to_period("W").apply(lambda p: p.start_time)
-    print(f"Loaded {len(DATA)} Etsy transactions from local CSVs")
+    _local_data = pd.concat(_etsy_frames, ignore_index=True)
+    _sb_data = _sb["DATA"]
+    # Use whichever source has more rows (Supabase may be newer than git-committed CSVs)
+    if len(_sb_data) > len(_local_data):
+        DATA = _sb_data
+        print(f"Using Supabase Etsy data ({len(_sb_data)} rows > {len(_local_data)} local CSV rows)")
+    else:
+        DATA = _local_data
+        # Add computed columns (same as supabase_loader._add_computed_columns)
+        DATA["Amount_Clean"] = DATA["Amount"].apply(_pm)
+        DATA["Net_Clean"] = DATA["Net"].apply(_pm)
+        DATA["Fees_Clean"] = DATA["Fees & Taxes"].apply(_pm)
+        DATA["Date_Parsed"] = pd.to_datetime(DATA["Date"], format="%B %d, %Y", errors="coerce")
+        DATA["Month"] = DATA["Date_Parsed"].dt.to_period("M").astype(str)
+        DATA["Week"] = DATA["Date_Parsed"].dt.to_period("W").apply(lambda p: p.start_time)
+        print(f"Loaded {len(DATA)} Etsy transactions from local CSVs")
 else:
     DATA = _sb["DATA"]
     print("Using Etsy data from Supabase (no local CSVs found)")
@@ -241,11 +251,22 @@ if os.path.isdir(_init_bank_dir):
                                      if f"{_t['date'].split('/')[2]}-{_t['date'].split('/')[0]}" in _new_months])
             _init_covered.update(_new_months)
     _init_bank_txns = _init_apply_overrides(_init_bank_txns)
-BANK_TXNS = _init_bank_txns if _init_bank_txns else _sb["BANK_TXNS"]
+# Prefer Supabase bank data if it has more transactions (local git files may be stale on Railway)
+_sb_bank = _sb["BANK_TXNS"]
+if _init_bank_txns and len(_init_bank_txns) >= len(_sb_bank):
+    BANK_TXNS = _init_bank_txns
+    print(f"Using local bank data ({len(_init_bank_txns)} txns)")
+elif _sb_bank:
+    BANK_TXNS = _sb_bank
+    print(f"Using Supabase bank data ({len(_sb_bank)} txns > {len(_init_bank_txns)} local)")
+else:
+    BANK_TXNS = _init_bank_txns
+    print(f"Using local bank data ({len(_init_bank_txns)} txns, Supabase empty)")
 
 # ── Extract config values ───────────────────────────────────────────────────
-# Use auto-calculated Etsy balance from CSV data (not stale config value)
-etsy_balance = _etsy_balance_auto
+# Etsy balance = auto-calc + pre-CSV starting balance (earnings before Oct 2025)
+_etsy_starting_balance = float(CONFIG.get("etsy_starting_balance", 0))
+etsy_balance = max(0, round(_etsy_balance_auto + _etsy_starting_balance, 2))
 etsy_pre_capone_deposits = CONFIG.get("etsy_pre_capone_deposits", 0)
 pre_capone_detail = [tuple(row) for row in CONFIG.get("pre_capone_detail", [])]
 draw_reasons = CONFIG.get("draw_reasons", {})
@@ -304,7 +325,7 @@ total_shipping_cost = abs(ship_df["Net_Clean"].sum())
 total_marketing = abs(mkt_df["Net_Clean"].sum())
 total_taxes = abs(tax_df["Net_Clean"].sum())
 
-etsy_net = gross_sales - total_fees - total_shipping_cost - total_marketing - total_refunds
+etsy_net = gross_sales - total_fees - total_shipping_cost - total_marketing - total_refunds - total_taxes
 order_count = len(sales_df)
 avg_order = gross_sales / order_count if order_count else 0
 etsy_net_margin = (etsy_net / gross_sales * 100) if gross_sales else 0
@@ -624,6 +645,12 @@ etsy_total_deposited = etsy_pre_capone_deposits + bank_total_deposits
 etsy_balance_calculated = etsy_net_earned - etsy_total_deposited
 etsy_csv_gap = round(etsy_balance_calculated - etsy_balance, 2)
 
+# Startup self-check: verify itemized formula matches direct sum
+_check_net = round(DATA["Net_Clean"].sum(), 2)
+_check_earned = round(etsy_net_earned, 2)
+if abs(_check_net - _check_earned) > 0.01:
+    print(f"WARNING: etsy_net_earned ({_check_earned}) != DATA Net_Clean sum ({_check_net})")
+
 # ── Bank-Reconciled Profit (the REAL numbers) ──
 # This is the single source of truth for profit, used across all tabs
 _biz_expense_cats = ["Shipping", "Craft Supplies", "Etsy Fees", "Subscriptions", "AliExpress Supplies", "Business Credit Card"]
@@ -763,14 +790,15 @@ def _reload_etsy_data():
     etsy_net = etsy_net_earned
     etsy_net_margin = (etsy_net / gross_sales * 100) if gross_sales else 0
 
-    # Auto-calculate Etsy balance from deposit titles
+    # Etsy balance = auto-calc + pre-CSV starting balance
     import re as _re
     _dep_total = 0.0
     for _, _dr in deposit_df.iterrows():
         _m = _re.search(r'([\d,]+\.\d+)', str(_dr.get("Title", "")))
         if _m:
             _dep_total += float(_m.group(1).replace(",", ""))
-    etsy_balance = max(0, round(DATA["Net_Clean"].sum() - _dep_total, 2))
+    _starting_bal = float(CONFIG.get("etsy_starting_balance", 0))
+    etsy_balance = max(0, round(DATA["Net_Clean"].sum() - _dep_total + _starting_bal, 2))
 
     etsy_total_deposited = etsy_pre_capone_deposits + bank_total_deposits
     etsy_balance_calculated = etsy_net_earned - etsy_total_deposited
@@ -7095,9 +7123,9 @@ def api_reload():
         refund_df = DATA[DATA["Type"] == "Refund"]
         tax_df = DATA[DATA["Type"] == "Tax"]
         deposit_df = DATA[DATA["Type"] == "Deposit"]
-        buyer_fee_df = fee_df[fee_df["Title"].str.contains("Regulatory operating fee|Sales tax paid", case=False, na=False)]
+        buyer_fee_df = DATA[DATA["Type"] == "Buyer Fee"]
 
-        gross_sales = sales_df["Amount_Clean"].sum()
+        gross_sales = sales_df["Net_Clean"].sum()
         total_refunds = abs(refund_df["Net_Clean"].sum())
         net_sales = gross_sales - total_refunds
         total_fees = abs(fee_df["Net_Clean"].sum())
@@ -7105,25 +7133,16 @@ def api_reload():
         total_shipping_cost = abs(ship_df["Net_Clean"].sum())
         total_marketing = abs(mkt_df["Net_Clean"].sum())
         total_taxes = abs(tax_df["Net_Clean"].sum())
-        total_buyer_fees = abs(buyer_fee_df["Net_Clean"].sum())
-        etsy_net = DATA["Net_Clean"].sum()
-        order_count = sales_df["Title"].str.extract(r"(Order #\d+)", expand=False).nunique()
+        total_buyer_fees = abs(buyer_fee_df["Net_Clean"].sum()) if len(buyer_fee_df) else 0.0
+        etsy_net_earned = (gross_sales - total_fees - total_shipping_cost
+                           - total_marketing - total_refunds - total_taxes - total_buyer_fees)
+        etsy_net = etsy_net_earned
+        order_count = len(sales_df)
         avg_order = gross_sales / order_count if order_count else 0
         etsy_net_margin = (etsy_net / gross_sales * 100) if gross_sales else 0
 
-        # Etsy balance auto-calculation
-        _dep_total = 0.0
-        for _, _dr in deposit_df.iterrows():
-            _m = _re_mod.search(r'([\d,]+\.\d+)', str(_dr.get("Title", "")))
-            if _m:
-                _dep_total += float(_m.group(1).replace(",", ""))
-        etsy_total_deposited = _dep_total
-        etsy_net_earned = etsy_net
-        etsy_balance_calculated = round(etsy_net - _dep_total, 2)
-        etsy_balance = max(0, etsy_balance_calculated)
-
         # Monthly aggregations
-        monthly_sales = sales_df.groupby("Month")["Amount_Clean"].sum()
+        monthly_sales = sales_df.groupby("Month")["Net_Clean"].sum()
         monthly_fees = fee_df.groupby("Month")["Net_Clean"].sum().abs()
         monthly_shipping = ship_df.groupby("Month")["Net_Clean"].sum().abs()
         monthly_marketing = mkt_df.groupby("Month")["Net_Clean"].sum().abs()
@@ -7132,10 +7151,14 @@ def api_reload():
         months_sorted = sorted(monthly_sales.index.tolist())
 
         # Daily aggregations
-        daily_sales = sales_df.groupby(sales_df["Date_Parsed"].dt.date)["Amount_Clean"].sum()
-        daily_orders = sales_df.groupby(sales_df["Date_Parsed"].dt.date)["Title"].apply(
-            lambda x: x.str.extract(r"(Order #\d+)", expand=False).nunique())
-        days_active = len(daily_sales)
+        daily_sales = sales_df.groupby(sales_df["Date_Parsed"].dt.date)["Net_Clean"].sum()
+        daily_orders = sales_df.groupby(sales_df["Date_Parsed"].dt.date).size()
+        if len(DATA) > 0:
+            _d0 = DATA["Date_Parsed"].min()
+            _d1 = DATA["Date_Parsed"].max()
+            days_active = (_d1 - _d0).days + 1 if pd.notna(_d0) and pd.notna(_d1) else 1
+        else:
+            days_active = 1
 
         # 3. Rebuild bank derived metrics (mirrors _reload_bank_data logic)
         bank_deposits = [t for t in BANK_TXNS if t["type"] == "deposit"]
@@ -7143,6 +7166,18 @@ def api_reload():
         bank_total_deposits = sum(t["amount"] for t in bank_deposits)
         bank_total_debits = sum(t["amount"] for t in bank_debits)
         bank_net_cash = bank_total_deposits - bank_total_debits
+
+        # Etsy balance = auto-calc + pre-CSV starting balance
+        _dep_total = 0.0
+        for _, _dr in deposit_df.iterrows():
+            _m = _re_mod.search(r'([\d,]+\.\d+)', str(_dr.get("Title", "")))
+            if _m:
+                _dep_total += float(_m.group(1).replace(",", ""))
+        _starting_bal = float(CONFIG.get("etsy_starting_balance", 0))
+        etsy_balance = max(0, round(DATA["Net_Clean"].sum() - _dep_total + _starting_bal, 2))
+        etsy_total_deposited = etsy_pre_capone_deposits + bank_total_deposits
+        etsy_balance_calculated = etsy_net_earned - etsy_total_deposited
+        etsy_csv_gap = round(etsy_balance_calculated - etsy_balance, 2)
 
         bank_by_cat = {}
         for t in bank_debits:
@@ -7213,6 +7248,11 @@ def api_reload():
         _recompute_tax_years()
         _recompute_valuation()
         _rebuild_all_charts()
+
+        # Parity check: compare api_reload values vs expected
+        _check = round(DATA["Net_Clean"].sum(), 2)
+        if abs(round(etsy_net_earned, 2) - _check) > 0.01:
+            print(f"api_reload PARITY WARNING: etsy_net_earned mismatch")
 
         return flask.jsonify({
             "status": "ok",

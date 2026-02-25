@@ -1,161 +1,147 @@
-"""
-_audit.py - Comprehensive accuracy audit: source files vs Supabase data.
-"""
-
-import os, re, csv, sys
+"""Quick audit: compare correct vs Railway reload computations."""
 import pandas as pd
-from decimal import Decimal, ROUND_HALF_UP
-from dotenv import load_dotenv
+import glob, os, re, sys
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-load_dotenv(os.path.join(BASE_DIR, ".env"))
+os.chdir(BASE_DIR)
 sys.path.insert(0, BASE_DIR)
-from supabase_loader import load_data
 
+# Load CSVs
+frames = []
+for f in sorted(glob.glob('data/etsy_statements/etsy_statement*.csv')):
+    frames.append(pd.read_csv(f))
+DATA = pd.concat(frames, ignore_index=True)
 
-def parse_money(val):
-    if pd.isna(val) or val == '--' or val == '' or val is None:
-        return Decimal('0.00')
-    val = str(val).replace('$', '').replace(',', '').replace('"', '').strip()
-    try:
-        return Decimal(val).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
-    except Exception:
-        return Decimal('0.00')
+def pm(val):
+    if pd.isna(val) or val == '--' or val == '':
+        return 0.0
+    val = str(val).replace('$', '').replace(',', '').replace('"', '')
+    try: return float(val)
+    except: return 0.0
 
+DATA['Amount_Clean'] = DATA['Amount'].apply(pm)
+DATA['Net_Clean'] = DATA['Net'].apply(pm)
 
-def parse_deposit_from_title(title):
-    if not isinstance(title, str):
-        return Decimal('0.00')
-    m = re.search(r"\$([\d,]+\.\d{2})", title)
-    if m:
-        return Decimal(m.group(1).replace(',', ''))
-    return Decimal('0.00')
+sales_df = DATA[DATA['Type'] == 'Sale']
+fee_df = DATA[DATA['Type'] == 'Fee']
 
+print('=== BUG 1: gross_sales column ===')
+net_gs = sales_df['Net_Clean'].sum()
+amt_gs = sales_df['Amount_Clean'].sum()
+print(f'  Net_Clean (correct):    ${net_gs:,.2f}')
+print(f'  Amount_Clean (Railway): ${amt_gs:,.2f}')
+print(f'  DIFFERENCE:             ${amt_gs - net_gs:,.2f}')
 
-def d(val):
-    if val is None:
-        return Decimal('0.00')
-    return Decimal(str(val)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+print()
+print('=== BUG 2: order_count ===')
+print(f'  len(sales_df) (correct):  {len(sales_df)}')
+order_nums = sales_df['Title'].str.extract(r'(Order #\d+)', expand=False).nunique()
+print(f'  nunique orders (Railway): {order_nums}')
 
+print()
+print('=== BUG 3: buyer_fee_df ===')
+buyer_fee_correct = DATA[DATA['Type'] == 'Buyer Fee']
+buyer_fee_railway = fee_df[fee_df['Title'].str.contains('Regulatory operating fee|Sales tax paid', case=False, na=False)]
+bfc_sum = abs(buyer_fee_correct['Net_Clean'].sum())
+bfr_sum = abs(buyer_fee_railway['Net_Clean'].sum())
+print(f'  Correct (Type=Buyer Fee): {len(buyer_fee_correct)} rows, ${bfc_sum:,.2f}')
+print(f'  Railway (filtered fees):  {len(buyer_fee_railway)} rows, ${bfr_sum:,.2f}')
 
-def fmt(amount):
-    sign = '-' if amount < 0 else ''
-    return f"{sign}${abs(amount):,.2f}"
+print()
+print('=== BUG 4: etsy_net_earned ===')
+total_fees = abs(fee_df['Net_Clean'].sum())
+total_shipping = abs(DATA[DATA['Type']=='Shipping']['Net_Clean'].sum())
+total_marketing = abs(DATA[DATA['Type']=='Marketing']['Net_Clean'].sum())
+total_refunds = abs(DATA[DATA['Type']=='Refund']['Net_Clean'].sum())
+total_taxes = abs(DATA[DATA['Type']=='Tax']['Net_Clean'].sum())
+total_bf_correct = abs(buyer_fee_correct['Net_Clean'].sum())
 
+earned_correct = net_gs - total_fees - total_shipping - total_marketing - total_refunds - total_taxes - total_bf_correct
+earned_railway = DATA['Net_Clean'].sum()
+print(f'  Correct (itemized):   ${earned_correct:,.2f}')
+print(f'  Railway (Net sum):    ${earned_railway:,.2f}')
+print(f'  DIFFERENCE:           ${earned_railway - earned_correct:,.2f}')
 
-def load_etsy_csvs():
-    statements_dir = os.path.join(BASE_DIR, "data", "etsy_statements")
-    frames = []
-    files_found = []
-    for fn in sorted(os.listdir(statements_dir)):
-        if fn.startswith("etsy_statement") and fn.endswith(".csv"):
-            df = pd.read_csv(os.path.join(statements_dir, fn))
-            df["_source_file"] = fn
-            frames.append(df)
-            files_found.append(f"{fn} ({len(df)} rows)")
-    combined = pd.concat(frames, ignore_index=True)
-    return combined, files_found
+print()
+print('=== ETSY GAP COMPARISON ===')
+dep_total = 0.0
+for _, dr in DATA[DATA['Type']=='Deposit'].iterrows():
+    m = re.search(r'([\d,]+\.\d+)', str(dr.get('Title','')))
+    if m: dep_total += float(m.group(1).replace(',',''))
 
+etsy_pre_capone = 941.99
 
-def compute_etsy_totals(df):
-    totals = {}
-    counts = {}
-    for _, row in df.iterrows():
-        t = row.get("Type", row.get("type", "Unknown"))
-        net = parse_money(row.get("Net", row.get("net", 0)))
-        if t == "Deposit":
-            title = row.get("Title", row.get("title", ""))
-            deposit_amt = parse_deposit_from_title(title)
-            net = -deposit_amt
-        totals[t] = totals.get(t, Decimal('0.00')) + net
-        counts[t] = counts.get(t, 0) + 1
-    return totals, counts
+from _parse_bank_statements import parse_bank_pdf, parse_bank_csv, apply_overrides
+bank_txns = []
+covered = set()
+for fn in sorted(os.listdir('data/bank_statements')):
+    if fn.lower().endswith('.pdf'):
+        try:
+            txns, cov = parse_bank_pdf(os.path.join('data/bank_statements', fn))
+            bank_txns.extend(txns)
+            covered.update(cov)
+        except: pass
+csv_txns, csv_cov = [], set()
+for fn in sorted(os.listdir('data/bank_statements')):
+    if fn.lower().endswith('.csv'):
+        try:
+            txns, cov = parse_bank_csv(os.path.join('data/bank_statements', fn))
+            csv_txns.extend(txns)
+            csv_cov.update(cov)
+        except: pass
+if csv_txns:
+    seen = {}
+    for t in csv_txns:
+        key = (t['date'], t['amount'], t['type'], t.get('raw_desc', t['desc']))
+        seen[key] = t
+    new_months = csv_cov - covered
+    if new_months:
+        bank_txns.extend([t for t in seen.values()
+                          if "{}-{}".format(t['date'].split('/')[2], t['date'].split('/')[0]) in new_months])
+        covered.update(new_months)
+    bank_txns = apply_overrides(bank_txns)
+bank_total_deposits = sum(t['amount'] for t in bank_txns if t['type'] == 'deposit')
 
+etsy_total_dep = etsy_pre_capone + bank_total_deposits
 
-def load_bank_csv():
-    csv_path = os.path.join(BASE_DIR, "data", "bank_statements",
-                            "2026-02-16_transaction_download.csv")
-    transactions = []
-    with open(csv_path, "r", encoding="utf-8-sig") as fh:
-        lines = fh.readlines()
-    for line in lines[1:]:
-        line = line.strip()
-        if not line:
-            continue
-        date_match = re.search(r',\s*"(\d{2}/\d{2}/\d{4})"\s*$', line)
-        if not date_match:
-            continue
-        remainder = line[:date_match.start()]
-        parsed = list(csv.reader([remainder]))[0]
-        if len(parsed) < 4:
-            continue
-        credit = parsed[1].strip()
-        debit = parsed[2].strip()
-        desc = ",".join(parsed[3:]).strip().strip('"').strip()
-        if credit:
-            transactions.append({"amount": Decimal(credit.replace(",", "")),
-                                 "type": "deposit", "desc": desc})
-        elif debit:
-            transactions.append({"amount": Decimal(debit.replace(",", "")),
-                                 "type": "debit", "desc": desc})
-    return transactions
+# Correct path
+etsy_balance_correct = max(0, round(DATA['Net_Clean'].sum() - dep_total, 2))
+etsy_bal_calc = earned_correct - etsy_total_dep
+etsy_gap_correct = round(etsy_bal_calc - etsy_balance_correct, 2)
 
+# Railway reload path
+etsy_balance_railway = max(0, round(earned_railway - dep_total, 2))
+etsy_bal_calc_r = earned_railway - etsy_total_dep
+etsy_gap_railway = round(etsy_bal_calc_r - etsy_balance_railway, 2)
 
-def main():
-    W = 72
-    print("=" * W)
-    print("  COMPREHENSIVE ACCURACY AUDIT: Source Files vs Supabase")
-    print("=" * W)
+print(f'  csv_deposit_total:       ${dep_total:,.2f}')
+print(f'  bank_total_deposits:     ${bank_total_deposits:,.2f}')
+print(f'  etsy_pre_capone:         ${etsy_pre_capone:,.2f}')
+print(f'  etsy_total_deposited:    ${etsy_total_dep:,.2f}')
+print()
+print(f'  CORRECT PATH:')
+print(f'    etsy_net_earned:       ${earned_correct:,.2f}')
+print(f'    etsy_balance:          ${etsy_balance_correct:,.2f}')
+print(f'    etsy_balance_calc:     ${etsy_bal_calc:,.2f}')
+print(f'    etsy_csv_gap:          ${etsy_gap_correct:,.2f}')
+print()
+print(f'  RAILWAY RELOAD PATH:')
+print(f'    etsy_net_earned:       ${earned_railway:,.2f}')
+print(f'    etsy_balance:          ${etsy_balance_railway:,.2f}')
+print(f'    etsy_balance_calc:     ${etsy_bal_calc_r:,.2f}')
+print(f'    etsy_csv_gap:          ${etsy_gap_railway:,.2f}')
 
-    print("\nLoading Supabase data via supabase_loader.load_data()...")
-    sb = load_data()
-    sb_etsy = sb["DATA"]
-    sb_bank = sb["BANK_TXNS"]
-    sb_config = sb["CONFIG"]
-    print(f"  Supabase etsy_transactions: {len(sb_etsy)} rows")
-    print(f"  Supabase bank_transactions: {len(sb_bank)} rows")
-
-    print("\n" + "=" * W)
-    print("  SECTION 1: ETSY TRANSACTIONS - CSV vs Supabase")
-    print("=" * W)
-
-    csv_etsy, csv_files = load_etsy_csvs()
-    print("\n  CSV source files loaded:")
-    for fn in csv_files:
-        print(f"    {fn}")
-    print(f"  Total CSV rows: {len(csv_etsy)}")
-
-    csv_totals, csv_counts = compute_etsy_totals(csv_etsy)
-    sb_totals, sb_counts = compute_etsy_totals(sb_etsy)
-    all_types = sorted(set(list(csv_totals.keys()) + list(sb_totals.keys())))
-
-    hdr = f"  {'Type':<12} {'CSV Cnt':>8} {'SB Cnt':>8} {'CSV Net':>14} {'SB Net':>14} {'Diff':>14} {'Status'}" 
-    print("\n" + hdr)
-    s = "-"
-    print(f"  {s*12} {s*8} {s*8} {s*14} {s*14} {s*14} {s*8}")
-
-    etsy_diffs = False
-    for t in all_types:
-        csv_net = csv_totals.get(t, Decimal('0.00'))
-        sb_net = sb_totals.get(t, Decimal('0.00'))
-        csv_cnt = csv_counts.get(t, 0)
-        sb_cnt = sb_counts.get(t, 0)
-        diff = csv_net - sb_net
-        status = "OK" if diff == 0 and csv_cnt == sb_cnt else "MISMATCH"
-        if status == "MISMATCH":
-            etsy_diffs = True
-        print(f"  {t:<12} {csv_cnt:>8} {sb_cnt:>8} {fmt(csv_net):>14} {fmt(sb_net):>14} {fmt(diff):>14} {status}")
-
-    csv_grand = sum(csv_totals.values(), Decimal('0.00'))
-    sb_grand = sum(sb_totals.values(), Decimal('0.00'))
-    grand_diff = csv_grand - sb_grand
-    tc = sum(csv_counts.values())
-    ts = sum(sb_counts.values())
-    gstat = "OK" if grand_diff == 0 else "MISMATCH"
-    print(f"  {'GRAND TOTAL':<12} {tc:>8} {ts:>8} {fmt(csv_grand):>14} {fmt(sb_grand):>14} {fmt(grand_diff):>14} {gstat}")
-
-    if not etsy_diffs and grand_diff == 0:
-        print("\n  RESULT: Etsy data PERFECTLY MATCHED between CSV and Supabase.")
-    else:
-        print("\n  RESULT: DISCREPANCIES FOUND in Etsy data!")
-
+# What dashboard ACTUALLY shows
+print()
+print('=== WHAT DASHBOARD SHOWS ===')
+print(f'  REVENUE KPI (gross_sales):')
+print(f'    Correct (Net_Clean):    ${net_gs:,.2f}')
+print(f'    Railway (Amount_Clean): ${amt_gs:,.2f}')
+print(f'  ORDER COUNT:')
+print(f'    Correct (len):          {len(sales_df)}')
+print(f'    Railway (nunique):      {order_nums}')
+print(f'  AVG ORDER:')
+if len(sales_df) > 0:
+    print(f'    Correct:                ${net_gs/len(sales_df):,.2f}')
+if order_nums > 0:
+    print(f'    Railway:                ${amt_gs/order_nums:,.2f}')
