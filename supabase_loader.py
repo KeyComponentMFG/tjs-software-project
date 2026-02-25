@@ -638,8 +638,16 @@ def sync_etsy_transactions(data_df) -> bool:
     if client is None:
         return False
     try:
-        # Clear existing
-        client.table("etsy_transactions").delete().gt("id", 0).execute()
+        # Clear existing (paginated — Supabase limits deletes to ~1000 per call)
+        while True:
+            batch = client.table("etsy_transactions").select("id").limit(1000).execute()
+            if not batch.data:
+                break
+            ids = [r["id"] for r in batch.data]
+            for i in range(0, len(ids), 500):
+                chunk = ids[i:i+500]
+                client.table("etsy_transactions").delete().in_("id", chunk).execute()
+            print(f"  Deleted {len(ids)} rows from Supabase...")
         # Insert in batches
         rows = []
         for _, r in data_df.iterrows():
@@ -671,12 +679,22 @@ def append_etsy_transactions(data_df) -> bool:
         print("append_etsy: no Supabase client")
         return False
     try:
-        # Fetch existing dates to avoid duplicates
-        existing = client.table("etsy_transactions").select("date,type,title,amount,net").execute()
+        # Fetch ALL existing rows to avoid duplicates (paginated)
         existing_keys = set()
-        for r in existing.data:
-            existing_keys.add((r.get("date", ""), r.get("type", ""), r.get("title", ""),
-                               r.get("amount", ""), r.get("net", "")))
+        _offset = 0
+        while True:
+            batch = (client.table("etsy_transactions")
+                     .select("date,type,title,amount,net")
+                     .order("id")
+                     .range(_offset, _offset + 999)
+                     .execute())
+            for r in batch.data:
+                existing_keys.add((r.get("date", ""), r.get("type", ""), r.get("title", ""),
+                                   r.get("amount", ""), r.get("net", "")))
+            if len(batch.data) < 1000:
+                break
+            _offset += 1000
+        print(f"append_etsy: found {len(existing_keys)} existing keys")
 
         rows = []
         for _, r in data_df.iterrows():
