@@ -244,8 +244,9 @@ if os.path.isdir(_init_bank_dir):
 BANK_TXNS = _init_bank_txns if _init_bank_txns else _sb["BANK_TXNS"]
 
 # ── Extract config values ───────────────────────────────────────────────────
-# Use auto-calculated Etsy balance from CSV data (not stale config value)
-etsy_balance = _etsy_balance_auto
+# Etsy balance from config (actual Etsy account balance — CSVs don't cover full history)
+_cfg_etsy_balance = CONFIG.get("etsy_balance", 0)
+etsy_balance = float(_cfg_etsy_balance) if isinstance(_cfg_etsy_balance, str) else float(_cfg_etsy_balance or 0)
 etsy_pre_capone_deposits = CONFIG.get("etsy_pre_capone_deposits", 0)
 pre_capone_detail = [tuple(row) for row in CONFIG.get("pre_capone_detail", [])]
 draw_reasons = CONFIG.get("draw_reasons", {})
@@ -763,14 +764,9 @@ def _reload_etsy_data():
     etsy_net = etsy_net_earned
     etsy_net_margin = (etsy_net / gross_sales * 100) if gross_sales else 0
 
-    # Auto-calculate Etsy balance from deposit titles
-    import re as _re
-    _dep_total = 0.0
-    for _, _dr in deposit_df.iterrows():
-        _m = _re.search(r'([\d,]+\.\d+)', str(_dr.get("Title", "")))
-        if _m:
-            _dep_total += float(_m.group(1).replace(",", ""))
-    etsy_balance = max(0, round(DATA["Net_Clean"].sum() - _dep_total, 2))
+    # Etsy balance from config (actual Etsy account balance)
+    _cfg_bal = CONFIG.get("etsy_balance", 0)
+    etsy_balance = float(_cfg_bal) if isinstance(_cfg_bal, str) else float(_cfg_bal or 0)
 
     etsy_total_deposited = etsy_pre_capone_deposits + bank_total_deposits
     etsy_balance_calculated = etsy_net_earned - etsy_total_deposited
@@ -7116,12 +7112,9 @@ def api_reload():
         etsy_net_margin = (etsy_net / gross_sales * 100) if gross_sales else 0
 
         # Etsy balance auto-calculation
-        _dep_total = 0.0
-        for _, _dr in deposit_df.iterrows():
-            _m = _re_mod.search(r'([\d,]+\.\d+)', str(_dr.get("Title", "")))
-            if _m:
-                _dep_total += float(_m.group(1).replace(",", ""))
-        etsy_balance = max(0, round(DATA["Net_Clean"].sum() - _dep_total, 2))
+        # Etsy balance from config (actual Etsy account balance)
+        _cfg_bal = CONFIG.get("etsy_balance", 0)
+        etsy_balance = float(_cfg_bal) if isinstance(_cfg_bal, str) else float(_cfg_bal or 0)
         etsy_total_deposited = etsy_pre_capone_deposits + bank_total_deposits
         etsy_balance_calculated = etsy_net_earned - etsy_total_deposited
         etsy_csv_gap = round(etsy_balance_calculated - etsy_balance, 2)
