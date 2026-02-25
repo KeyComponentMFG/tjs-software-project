@@ -7117,10 +7117,11 @@ def api_reload():
             _m = _re_mod.search(r'([\d,]+\.\d+)', str(_dr.get("Title", "")))
             if _m:
                 _dep_total += float(_m.group(1).replace(",", ""))
-        etsy_total_deposited = _dep_total
         etsy_net_earned = etsy_net
-        etsy_balance_calculated = round(etsy_net - _dep_total, 2)
-        etsy_balance = max(0, etsy_balance_calculated)
+        etsy_balance = max(0, round(etsy_net - _dep_total, 2))
+        etsy_total_deposited = etsy_pre_capone_deposits + bank_total_deposits
+        etsy_balance_calculated = etsy_net_earned - etsy_total_deposited
+        etsy_csv_gap = round(etsy_balance_calculated - etsy_balance, 2)
 
         # Monthly aggregations
         monthly_sales = sales_df.groupby("Month")["Amount_Clean"].sum()
