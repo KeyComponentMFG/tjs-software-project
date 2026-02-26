@@ -7861,6 +7861,177 @@ def api_reload():
         return flask.jsonify({"status": "error", "message": str(e)}), 500
 
 
+@server.route("/api/charts/monthly-performance")
+def api_charts_monthly_performance():
+    """Monthly performance data for charts: sales, fees, shipping, marketing, refunds, net profit."""
+    data = []
+    for m in months_sorted:
+        data.append({
+            "month": m,
+            "sales": round(monthly_sales.get(m, 0), 2),
+            "fees": round(monthly_fees.get(m, 0), 2),
+            "shipping": round(monthly_shipping.get(m, 0), 2),
+            "marketing": round(monthly_marketing.get(m, 0), 2),
+            "refunds": round(monthly_refunds.get(m, 0), 2),
+            "net": round(monthly_net_revenue.get(m, 0), 2),
+            "orders": int(monthly_order_counts.get(m, 0)),
+            "aov": round(monthly_aov.get(m, 0), 2),
+        })
+    return _add_cors_headers(flask.jsonify({"monthly": data}))
+
+
+@server.route("/api/charts/daily-sales")
+def api_charts_daily_sales():
+    """Daily sales data for charts with rolling averages."""
+    if len(daily_df) == 0:
+        return _add_cors_headers(flask.jsonify({"daily": []}))
+
+    df = daily_df.copy()
+    df["rolling_7d"] = df["revenue"].rolling(7, min_periods=1).mean()
+    df["rolling_30d"] = df["revenue"].rolling(30, min_periods=1).mean()
+
+    data = []
+    for _, row in df.iterrows():
+        data.append({
+            "date": row["date"].strftime("%Y-%m-%d") if hasattr(row["date"], "strftime") else str(row["date"]),
+            "revenue": round(row["revenue"], 2),
+            "orders": int(row["orders"]),
+            "rolling_7d": round(row["rolling_7d"], 2),
+            "rolling_30d": round(row["rolling_30d"], 2),
+        })
+    return _add_cors_headers(flask.jsonify({"daily": data[-90:]}))  # Last 90 days
+
+
+@server.route("/api/charts/expense-breakdown")
+def api_charts_expense_breakdown():
+    """Expense breakdown for pie/donut charts."""
+    expenses = [
+        {"name": "Fees", "value": round(total_fees, 2), "color": "#ef4444"},
+        {"name": "Shipping", "value": round(total_shipping_cost, 2), "color": "#3b82f6"},
+        {"name": "Marketing", "value": round(total_marketing, 2), "color": "#8b5cf6"},
+        {"name": "Refunds", "value": round(total_refunds, 2), "color": "#f59e0b"},
+    ]
+    # Add COGS/inventory if available
+    if true_inventory_cost > 0:
+        expenses.append({"name": "COGS/Supplies", "value": round(true_inventory_cost, 2), "color": "#10b981"})
+
+    total = sum(e["value"] for e in expenses)
+    for e in expenses:
+        e["percent"] = round((e["value"] / total * 100) if total > 0 else 0, 1)
+
+    return _add_cors_headers(flask.jsonify({
+        "expenses": expenses,
+        "total": round(total, 2),
+        "gross_sales": round(gross_sales, 2),
+    }))
+
+
+@server.route("/api/charts/cash-flow")
+def api_charts_cash_flow():
+    """Monthly cash flow: deposits, debits, net."""
+    if not bank_monthly:
+        return _add_cors_headers(flask.jsonify({"monthly": []}))
+
+    data = []
+    for m in sorted(bank_monthly.keys()):
+        month_data = bank_monthly[m]
+        deposits = month_data.get("deposits", 0)
+        debits = month_data.get("debits", 0)
+        data.append({
+            "month": m,
+            "deposits": round(deposits, 2),
+            "debits": round(debits, 2),
+            "net": round(deposits - debits, 2),
+        })
+    return _add_cors_headers(flask.jsonify({"monthly": data}))
+
+
+@server.route("/api/charts/products")
+def api_charts_products():
+    """Top products by revenue for charts."""
+    if len(product_revenue_est) == 0:
+        return _add_cors_headers(flask.jsonify({"products": []}))
+
+    products = []
+    for name, revenue in product_revenue_est.head(12).items():
+        products.append({
+            "name": name[:40],  # Truncate long names
+            "revenue": round(revenue, 2),
+        })
+    return _add_cors_headers(flask.jsonify({"products": products}))
+
+
+@server.route("/api/charts/health-breakdown")
+def api_charts_health_breakdown():
+    """Health score breakdown for gauge charts."""
+    sub_scores = {
+        "Profit Margin": min(100, int(profit_margin * 3)) if profit_margin > 0 else 0,
+        "Revenue Trend": 100 if len(monthly_sales) >= 2 and list(monthly_sales.values())[-1] > list(monthly_sales.values())[-2] else 70,
+        "Order Velocity": min(100, int((order_count / max(days_active, 1)) * 20)),
+        "Fee Efficiency": max(0, 100 - int((total_fees / gross_sales * 100) if gross_sales > 0 else 0)),
+        "Shipping Economics": 100 if shipping_profit >= 0 else max(0, 100 + int(shipping_margin)),
+        "Cash Position": min(100, int((bank_cash_on_hand / (bank_all_expenses / 30 if bank_all_expenses > 0 else 1)) * 10)),
+    }
+
+    overall = int(sum(sub_scores.values()) / len(sub_scores))
+    grade = "A+" if overall >= 95 else "A" if overall >= 85 else "B" if overall >= 70 else "C" if overall >= 55 else "D"
+
+    return _add_cors_headers(flask.jsonify({
+        "overall": overall,
+        "grade": grade,
+        "sub_scores": sub_scores,
+    }))
+
+
+@server.route("/api/charts/projections")
+def api_charts_projections():
+    """Revenue/profit projections for growth charts."""
+    if len(monthly_sales) < 2:
+        return _add_cors_headers(flask.jsonify({"projections": []}))
+
+    import numpy as np
+
+    # Build historical data
+    historical = []
+    for m in months_sorted:
+        historical.append({
+            "month": m,
+            "revenue": round(monthly_sales.get(m, 0), 2),
+            "profit": round(monthly_net_revenue.get(m, 0), 2),
+            "type": "actual",
+        })
+
+    # Simple linear projection for next 3 months
+    revenues = [monthly_sales.get(m, 0) for m in months_sorted]
+    profits = [monthly_net_revenue.get(m, 0) for m in months_sorted]
+
+    if len(revenues) >= 2:
+        x = np.arange(len(revenues))
+        rev_slope = np.polyfit(x, revenues, 1)[0]
+        prof_slope = np.polyfit(x, profits, 1)[0]
+
+        projections = []
+        last_month = pd.to_datetime(months_sorted[-1] + "-01")
+        for i in range(1, 4):
+            next_month = (last_month + pd.DateOffset(months=i)).strftime("%Y-%m")
+            proj_rev = max(0, revenues[-1] + rev_slope * i)
+            proj_prof = profits[-1] + prof_slope * i
+            projections.append({
+                "month": next_month,
+                "revenue": round(proj_rev, 2),
+                "profit": round(proj_prof, 2),
+                "type": "projection",
+            })
+
+        return _add_cors_headers(flask.jsonify({
+            "historical": historical,
+            "projections": projections,
+            "growth_rate": round((revenues[-1] / revenues[0] - 1) * 100, 1) if revenues[0] > 0 else 0,
+        }))
+
+    return _add_cors_headers(flask.jsonify({"historical": historical, "projections": []}))
+
+
 # Shared tab styling
 tab_style = {
     "backgroundColor": CARD2, "color": GRAY, "border": "none",
