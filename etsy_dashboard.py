@@ -314,6 +314,7 @@ refund_df = DATA[DATA["Type"] == "Refund"]
 tax_df = DATA[DATA["Type"] == "Tax"]
 deposit_df = DATA[DATA["Type"] == "Deposit"]
 buyer_fee_df = DATA[DATA["Type"] == "Buyer Fee"]
+payment_df = DATA[DATA["Type"] == "Payment"]
 
 # Top-level numbers
 gross_sales = sales_df["Net_Clean"].sum()
@@ -324,8 +325,9 @@ total_fees = abs(fee_df["Net_Clean"].sum())
 total_shipping_cost = abs(ship_df["Net_Clean"].sum())
 total_marketing = abs(mkt_df["Net_Clean"].sum())
 total_taxes = abs(tax_df["Net_Clean"].sum())
+total_payments = payment_df["Net_Clean"].sum()  # Refund charges (positive = credit back)
 
-etsy_net = gross_sales - total_fees - total_shipping_cost - total_marketing - total_refunds - total_taxes
+etsy_net = gross_sales - total_fees - total_shipping_cost - total_marketing - total_refunds - total_taxes + total_payments
 order_count = len(sales_df)
 avg_order = gross_sales / order_count if order_count else 0
 etsy_net_margin = (etsy_net / gross_sales * 100) if gross_sales else 0
@@ -637,8 +639,9 @@ bank_pending = bank_by_cat.get("Pending", 0)
 
 # ── Etsy-side accounting (full penny trace) ──
 total_buyer_fees = abs(buyer_fee_df["Net_Clean"].sum()) if len(buyer_fee_df) else 0.0
-etsy_net_earned = gross_sales - total_fees - total_shipping_cost - total_marketing - total_refunds - total_taxes - total_buyer_fees
-etsy_net = etsy_net_earned  # override earlier calc that missed tax + buyer fees
+etsy_net_earned = (gross_sales - total_fees - total_shipping_cost - total_marketing
+                   - total_refunds - total_taxes - total_buyer_fees + total_payments)
+etsy_net = etsy_net_earned
 etsy_net_margin = (etsy_net / gross_sales * 100) if gross_sales else 0
 # etsy_pre_capone_deposits and etsy_balance loaded from config.json above
 etsy_total_deposited = etsy_pre_capone_deposits + bank_total_deposits
@@ -771,6 +774,7 @@ def _reload_etsy_data():
     tax_df = DATA[DATA["Type"] == "Tax"]
     deposit_df = DATA[DATA["Type"] == "Deposit"]
     buyer_fee_df = DATA[DATA["Type"] == "Buyer Fee"]
+    payment_df = DATA[DATA["Type"] == "Payment"]
 
     # Top-level numbers
     gross_sales = sales_df["Net_Clean"].sum()
@@ -780,13 +784,14 @@ def _reload_etsy_data():
     total_shipping_cost = abs(ship_df["Net_Clean"].sum())
     total_marketing = abs(mkt_df["Net_Clean"].sum())
     total_taxes = abs(tax_df["Net_Clean"].sum())
+    total_payments = payment_df["Net_Clean"].sum()
     order_count = len(sales_df)
     avg_order = gross_sales / order_count if order_count else 0
 
     # Full accounting
     total_buyer_fees = abs(buyer_fee_df["Net_Clean"].sum()) if len(buyer_fee_df) else 0.0
     etsy_net_earned = (gross_sales - total_fees - total_shipping_cost
-                       - total_marketing - total_refunds - total_taxes - total_buyer_fees)
+                       - total_marketing - total_refunds - total_taxes - total_buyer_fees + total_payments)
     etsy_net = etsy_net_earned
     etsy_net_margin = (etsy_net / gross_sales * 100) if gross_sales else 0
 
@@ -7124,6 +7129,7 @@ def api_reload():
         tax_df = DATA[DATA["Type"] == "Tax"]
         deposit_df = DATA[DATA["Type"] == "Deposit"]
         buyer_fee_df = DATA[DATA["Type"] == "Buyer Fee"]
+        payment_df = DATA[DATA["Type"] == "Payment"]
 
         gross_sales = sales_df["Net_Clean"].sum()
         total_refunds = abs(refund_df["Net_Clean"].sum())
@@ -7134,8 +7140,9 @@ def api_reload():
         total_marketing = abs(mkt_df["Net_Clean"].sum())
         total_taxes = abs(tax_df["Net_Clean"].sum())
         total_buyer_fees = abs(buyer_fee_df["Net_Clean"].sum()) if len(buyer_fee_df) else 0.0
+        total_payments = payment_df["Net_Clean"].sum() if len(payment_df) else 0.0
         etsy_net_earned = (gross_sales - total_fees - total_shipping_cost
-                           - total_marketing - total_refunds - total_taxes - total_buyer_fees)
+                           - total_marketing - total_refunds - total_taxes - total_buyer_fees + total_payments)
         etsy_net = etsy_net_earned
         order_count = len(sales_df)
         avg_order = gross_sales / order_count if order_count else 0
