@@ -754,7 +754,7 @@ def append_bank_transactions(bank_txns: list[dict]) -> bool:
                      .range(_offset, _offset + 999)
                      .execute())
             for r in batch.data:
-                existing_keys.add((r.get("date", ""), str(r.get("amount", 0)), r.get("type", ""),
+                existing_keys.add((r.get("date", ""), f"{float(r.get('amount', 0)):.2f}", r.get("type", ""),
                                    r.get("description", "")))
             if len(batch.data) < 1000:
                 break
@@ -762,7 +762,7 @@ def append_bank_transactions(bank_txns: list[dict]) -> bool:
 
         rows = []
         for t in bank_txns:
-            key = (t.get("date", ""), str(t.get("amount", 0)), t.get("type", ""), t.get("desc", ""))
+            key = (t.get("date", ""), f"{float(t.get('amount', 0)):.2f}", t.get("type", ""), t.get("desc", ""))
             if key not in existing_keys:
                 rows.append({
                     "date": t["date"],

@@ -251,6 +251,17 @@ if os.path.isdir(_init_bank_dir):
                                      if f"{_t['date'].split('/')[2]}-{_t['date'].split('/')[0]}" in _new_months])
             _init_covered.update(_new_months)
     _init_bank_txns = _init_apply_overrides(_init_bank_txns)
+    # Append manual transactions from config (permanent ones always, others only for uncovered months)
+    for _mt in CONFIG.get("manual_transactions", []):
+        _mt_parts = _mt["date"].split("/")
+        _mt_month = f"{_mt_parts[2]}-{_mt_parts[0]}"
+        if _mt_month in _init_covered and not _mt.get("permanent", False):
+            continue
+        _init_bank_txns.append({
+            "date": _mt["date"], "desc": _mt["desc"], "amount": _mt["amount"],
+            "type": _mt["type"], "category": _mt["category"],
+            "source_file": "config.json (manual)", "raw_desc": _mt["desc"],
+        })
 # Prefer Supabase bank data if it has more transactions (local git files may be stale on Railway)
 _sb_bank = _sb["BANK_TXNS"]
 if _init_bank_txns and len(_init_bank_txns) >= len(_sb_bank):
@@ -279,6 +290,10 @@ bb_cc_purchases = _bb_cc.get("purchases", [])
 bb_cc_payments = [{"date": t["date"], "desc": t["desc"], "amount": t["amount"]}
                   for t in BANK_TXNS if t["category"] == "Business Credit Card"
                   and "BEST BUY" in t.get("desc", "").upper()]
+# Fallback: use config-defined payments if bank hasn't captured them yet
+_bb_config_payments = _bb_cc.get("payments", [])
+if not bb_cc_payments and _bb_config_payments:
+    bb_cc_payments = _bb_config_payments
 bb_cc_total_charged = sum(p["amount"] for p in bb_cc_purchases)
 bb_cc_total_paid = sum(p["amount"] for p in bb_cc_payments)
 bb_cc_balance = bb_cc_total_charged - bb_cc_total_paid
@@ -303,6 +318,37 @@ def parse_money(val):
         return float(val)
     except Exception:
         return 0.0
+
+def _normalize_product_name(name):
+    """Normalize Etsy product names that get truncated differently in CSVs.
+    Strips trailing '...' and everything after the first ' | ' separator
+    so that the same listing always groups under one name."""
+    if not isinstance(name, str):
+        return name
+    name = name.rstrip(".")  # strip trailing "..."
+    # Cut at first pipe separator (subtitle / variant info)
+    if " | " in name:
+        name = name.split(" | ")[0]
+    return name.strip()
+
+
+def _merge_product_prefixes(series):
+    """Second pass: merge truncated product names that are prefixes of known
+    shorter canonical names (e.g. 'Ski Gondola Table Lamp Rustic Cabin Deco'
+    merges into 'Ski Gondola Table Lamp' if that canonical name exists)."""
+    canonical = sorted(series.unique(), key=len)  # shortest first
+    mapping = {}
+    for name in canonical:
+        matched = False
+        for shorter in canonical:
+            if shorter != name and len(shorter) >= 10 and name.startswith(shorter):
+                mapping[name] = shorter
+                matched = True
+                break
+        if not matched:
+            mapping[name] = name
+    return series.map(mapping)
+
 
 # ── Pre-compute metrics ─────────────────────────────────────────────────────
 
@@ -723,9 +769,9 @@ def _reload_etsy_data():
     Returns dict with summary stats for the UI status message.
     """
     global DATA, sales_df, fee_df, ship_df, mkt_df, refund_df, tax_df
-    global deposit_df, buyer_fee_df
+    global deposit_df, buyer_fee_df, payment_df
     global gross_sales, total_refunds, net_sales, total_fees, total_fees_gross
-    global total_shipping_cost, total_marketing, total_taxes
+    global total_shipping_cost, total_marketing, total_taxes, total_payments
     global etsy_net, order_count, avg_order, etsy_net_margin
     global total_buyer_fees, etsy_net_earned, etsy_total_deposited
     global etsy_balance_calculated, etsy_csv_gap, real_profit, real_profit_margin
@@ -733,6 +779,7 @@ def _reload_etsy_data():
     global monthly_sales, monthly_fees, monthly_shipping, monthly_marketing
     global monthly_refunds, monthly_taxes, monthly_raw_fees, monthly_raw_shipping
     global monthly_raw_marketing, monthly_raw_refunds, monthly_net_revenue
+    global monthly_raw_taxes, monthly_raw_buyer_fees, monthly_raw_payments
     global daily_sales, daily_orders, daily_df, weekly_aov
     global monthly_order_counts, monthly_aov, monthly_profit_per_order
     global months_sorted, days_active
@@ -882,17 +929,22 @@ def _reload_etsy_data():
     free_ship_count = len(orders_free_shipping)
     avg_outbound_label = usps_outbound / usps_outbound_count if usps_outbound_count else 0
 
-    # Product performance
+    # Product performance — use actual sale amounts joined via order number
     prod_fees = fee_df[
         fee_df["Title"].str.startswith("Transaction fee:", na=False)
         & ~fee_df["Title"].str.contains("Shipping", na=False)
     ].copy()
-    prod_fees["Product"] = prod_fees["Title"].str.replace("Transaction fee: ", "", regex=False)
+    prod_fees["Product"] = prod_fees["Title"].str.replace("Transaction fee: ", "", regex=False).apply(_normalize_product_name)
     product_fee_totals = prod_fees.groupby("Product")["Net_Clean"].sum().abs().sort_values(ascending=False)
-    if len(product_fee_totals) > 0:
-        product_revenue_est = (product_fee_totals / 0.065).round(2)
+    _order_to_product = prod_fees.dropna(subset=["Info"]).drop_duplicates(subset=["Info"]).set_index("Info")["Product"]
+    _sales_with_product = sales_df.copy()
+    _sales_with_product["Product"] = _sales_with_product["Title"].str.extract(r"(Order #\d+)", expand=False).map(_order_to_product)
+    _sales_with_product = _sales_with_product.dropna(subset=["Product"])
+    _sales_with_product["Product"] = _merge_product_prefixes(_sales_with_product["Product"])
+    if len(_sales_with_product) > 0:
+        product_revenue_est = _sales_with_product.groupby("Product")["Net_Clean"].sum().sort_values(ascending=False).round(2)
     else:
-        product_revenue_est = pd.Series(dtype=float)
+        product_revenue_est = (product_fee_totals / 0.065).round(2) if len(product_fee_totals) > 0 else pd.Series(dtype=float)
 
     # Monthly breakdown
     months_sorted = sorted(DATA["Month"].dropna().unique())
@@ -911,6 +963,9 @@ def _reload_etsy_data():
     monthly_raw_shipping = DATA[DATA["Type"] == "Shipping"].groupby("Month")["Net_Clean"].sum()
     monthly_raw_marketing = DATA[DATA["Type"] == "Marketing"].groupby("Month")["Net_Clean"].sum()
     monthly_raw_refunds = DATA[DATA["Type"] == "Refund"].groupby("Month")["Net_Clean"].sum()
+    monthly_raw_taxes = DATA[DATA["Type"] == "Tax"].groupby("Month")["Net_Clean"].sum()
+    monthly_raw_buyer_fees = DATA[DATA["Type"] == "Buyer Fee"].groupby("Month")["Net_Clean"].sum()
+    monthly_raw_payments = DATA[DATA["Type"] == "Payment"].groupby("Month")["Net_Clean"].sum()
 
     monthly_net_revenue = {}
     for m in months_sorted:
@@ -920,6 +975,9 @@ def _reload_etsy_data():
             + monthly_raw_shipping.get(m, 0)
             + monthly_raw_marketing.get(m, 0)
             + monthly_raw_refunds.get(m, 0)
+            + monthly_raw_taxes.get(m, 0)
+            + monthly_raw_buyer_fees.get(m, 0)
+            + monthly_raw_payments.get(m, 0)
         )
 
     # Daily aggregations
@@ -966,7 +1024,7 @@ def _reload_etsy_data():
             monthly_profit_per_order[m] = 0
 
     if len(DATA) > 0 and DATA["Date_Parsed"].notna().any():
-        days_active = max((DATA["Date_Parsed"].max() - DATA["Date_Parsed"].min()).days, 1)
+        days_active = max((DATA["Date_Parsed"].max() - DATA["Date_Parsed"].min()).days + 1, 1)
     else:
         days_active = 1
 
@@ -1050,6 +1108,18 @@ def _reload_bank_data():
 
     # Apply overrides (splits, recategorizations)
     all_txns = _apply_overrides(all_txns)
+
+    # Append manual transactions from config (permanent ones always, others only for uncovered months)
+    for _mt in CONFIG.get("manual_transactions", []):
+        _mt_parts = _mt["date"].split("/")
+        _mt_month = f"{_mt_parts[2]}-{_mt_parts[0]}"
+        if _mt_month in all_covered_months and not _mt.get("permanent", False):
+            continue
+        all_txns.append({
+            "date": _mt["date"], "desc": _mt["desc"], "amount": _mt["amount"],
+            "type": _mt["type"], "category": _mt["category"],
+            "source_file": "config.json (manual)", "raw_desc": _mt["desc"],
+        })
 
     # Save updated JSON locally
     out_path = os.path.join(BASE_DIR, "data", "generated", "bank_transactions.json")
@@ -1899,17 +1969,24 @@ est_refund_label_cost = 0.0
 return_label_matches = []
 _recompute_shipping_details()
 
-# Product performance
+# Product performance — use actual sale amounts joined via order number
 prod_fees = fee_df[
     fee_df["Title"].str.startswith("Transaction fee:", na=False)
     & ~fee_df["Title"].str.contains("Shipping", na=False)
 ].copy()
-prod_fees["Product"] = prod_fees["Title"].str.replace("Transaction fee: ", "", regex=False)
+prod_fees["Product"] = prod_fees["Title"].str.replace("Transaction fee: ", "", regex=False).apply(_normalize_product_name)
 product_fee_totals = prod_fees.groupby("Product")["Net_Clean"].sum().abs().sort_values(ascending=False)
-if len(product_fee_totals) > 0:
-    product_revenue_est = (product_fee_totals / 0.065).round(2)
+# Map order IDs to product names via fee rows
+_order_to_product = prod_fees.dropna(subset=["Info"]).drop_duplicates(subset=["Info"]).set_index("Info")["Product"]
+# Join sale rows to product names
+_sales_with_product = sales_df.copy()
+_sales_with_product["Product"] = _sales_with_product["Title"].str.extract(r"(Order #\d+)", expand=False).map(_order_to_product)
+_sales_with_product = _sales_with_product.dropna(subset=["Product"])
+_sales_with_product["Product"] = _merge_product_prefixes(_sales_with_product["Product"])
+if len(_sales_with_product) > 0:
+    product_revenue_est = _sales_with_product.groupby("Product")["Net_Clean"].sum().sort_values(ascending=False).round(2)
 else:
-    product_revenue_est = pd.Series(dtype=float)
+    product_revenue_est = (product_fee_totals / 0.065).round(2) if len(product_fee_totals) > 0 else pd.Series(dtype=float)
 
 # Monthly breakdown
 months_sorted = sorted(DATA["Month"].dropna().unique())
@@ -1930,6 +2007,9 @@ monthly_raw_fees = DATA[DATA["Type"] == "Fee"].groupby("Month")["Net_Clean"].sum
 monthly_raw_shipping = DATA[DATA["Type"] == "Shipping"].groupby("Month")["Net_Clean"].sum()
 monthly_raw_marketing = DATA[DATA["Type"] == "Marketing"].groupby("Month")["Net_Clean"].sum()
 monthly_raw_refunds = DATA[DATA["Type"] == "Refund"].groupby("Month")["Net_Clean"].sum()
+monthly_raw_taxes = DATA[DATA["Type"] == "Tax"].groupby("Month")["Net_Clean"].sum()
+monthly_raw_buyer_fees = DATA[DATA["Type"] == "Buyer Fee"].groupby("Month")["Net_Clean"].sum()
+monthly_raw_payments = DATA[DATA["Type"] == "Payment"].groupby("Month")["Net_Clean"].sum()
 
 monthly_net_revenue = {}
 for m in months_sorted:
@@ -1939,6 +2019,9 @@ for m in months_sorted:
         + monthly_raw_shipping.get(m, 0)
         + monthly_raw_marketing.get(m, 0)
         + monthly_raw_refunds.get(m, 0)
+        + monthly_raw_taxes.get(m, 0)
+        + monthly_raw_buyer_fees.get(m, 0)
+        + monthly_raw_payments.get(m, 0)
     )
 
 # Daily aggregations
@@ -1988,7 +2071,7 @@ for m in months_sorted:
         monthly_profit_per_order[m] = 0
 
 if len(DATA) > 0 and DATA["Date_Parsed"].notna().any():
-    days_active = max((DATA["Date_Parsed"].max() - DATA["Date_Parsed"].min()).days, 1)
+    days_active = max((DATA["Date_Parsed"].max() - DATA["Date_Parsed"].min()).days + 1, 1)
 else:
     days_active = 1
 
@@ -3279,6 +3362,7 @@ def _recompute_tax_years():
         _rf = refund_df[refund_df["Date_Parsed"].dt.year == _yr]
         _tx = tax_df[tax_df["Date_Parsed"].dt.year == _yr]
         _bf = buyer_fee_df[buyer_fee_df["Date_Parsed"].dt.year == _yr]
+        _pay = payment_df[payment_df["Date_Parsed"].dt.year == _yr]
 
         yr_gross = _s["Net_Clean"].sum()
         yr_refunds = abs(_rf["Net_Clean"].sum())
@@ -3287,6 +3371,7 @@ def _recompute_tax_years():
         yr_marketing = abs(_mk["Net_Clean"].sum())
         yr_taxes = abs(_tx["Net_Clean"].sum())
         yr_buyer_fees = abs(_bf["Net_Clean"].sum()) if len(_bf) else 0.0
+        yr_payments = _pay["Net_Clean"].sum() if len(_pay) else 0.0
 
         # Fee credits for this year
         _fc = fee_df[fee_df["Date_Parsed"].dt.year == _yr]
@@ -3305,7 +3390,7 @@ def _recompute_tax_years():
         yr_fees_gross = yr_listing + yr_tx_prod + yr_tx_ship + yr_proc
         yr_net_fees = yr_fees_gross - yr_total_credits
 
-        yr_etsy_net = yr_gross - yr_fees - yr_shipping - yr_marketing - yr_refunds - yr_taxes - yr_buyer_fees
+        yr_etsy_net = yr_gross - yr_fees - yr_shipping - yr_marketing - yr_refunds - yr_taxes - yr_buyer_fees + yr_payments
 
         # --- Bank transaction splits ---
         _bank_debits_yr = [t for t in bank_debits if _bank_txn_year(t) == _yr]
@@ -3355,6 +3440,7 @@ def _recompute_tax_years():
             "marketing": yr_marketing,
             "taxes_collected": yr_taxes,
             "buyer_fees": yr_buyer_fees,
+            "payments": yr_payments,
             "etsy_net": yr_etsy_net,
             "cogs": yr_cogs,
             "inventory_cost": yr_inventory_cost,
@@ -3993,14 +4079,12 @@ def _rebuild_all_charts():
     # 12) Product performance heatmap (top products by month)
     _top_n_products = 8
     _top_prod_names = product_revenue_est.head(_top_n_products).index.tolist()
-    # Build product-month revenue matrix from transaction fees
+    # Build product-month revenue matrix from actual sales
     _prod_monthly = {}
     for prod_name in _top_prod_names:
-        _pmask = prod_fees["Product"] == prod_name
-        _prod_month_fees = prod_fees[_pmask].groupby(
-            prod_fees[_pmask]["Date_Parsed"].dt.to_period("M").astype(str)
-        )["Net_Clean"].sum().abs()
-        _prod_monthly[prod_name[:25]] = {m: (_prod_month_fees.get(m, 0) / 0.065) for m in months_sorted}
+        _pmask = _sales_with_product["Product"] == prod_name
+        _prod_month_sales = _sales_with_product[_pmask].groupby("Month")["Net_Clean"].sum()
+        _prod_monthly[prod_name[:25]] = {m: _prod_month_sales.get(m, 0) for m in months_sorted}
 
     if _prod_monthly:
         _heat_products = list(_prod_monthly.keys())
@@ -7267,7 +7351,7 @@ def api_reload():
     global sales_df, fee_df, ship_df, mkt_df, refund_df, tax_df
     global deposit_df, buyer_fee_df
     global gross_sales, total_refunds, net_sales, total_fees, total_fees_gross
-    global total_shipping_cost, total_marketing, total_taxes
+    global total_shipping_cost, total_marketing, total_taxes, total_payments
     global etsy_net, order_count, avg_order, etsy_net_margin
     global total_buyer_fees, etsy_net_earned, etsy_total_deposited
     global etsy_balance_calculated, etsy_csv_gap, etsy_balance
@@ -7285,6 +7369,7 @@ def api_reload():
     global monthly_sales, monthly_fees, monthly_shipping, monthly_marketing
     global monthly_refunds, monthly_taxes, monthly_raw_fees, monthly_raw_shipping
     global monthly_raw_marketing, monthly_raw_refunds, monthly_net_revenue
+    global monthly_raw_taxes, monthly_raw_buyer_fees, monthly_raw_payments
     global daily_sales, daily_orders, daily_df, weekly_aov
     global monthly_order_counts, monthly_aov, monthly_profit_per_order
     global months_sorted, days_active
@@ -7323,7 +7408,6 @@ def api_reload():
         total_refunds = abs(refund_df["Net_Clean"].sum())
         net_sales = gross_sales - total_refunds
         total_fees = abs(fee_df["Net_Clean"].sum())
-        total_fees_gross = abs(fee_df["Net_Clean"].sum())
         total_shipping_cost = abs(ship_df["Net_Clean"].sum())
         total_marketing = abs(mkt_df["Net_Clean"].sum())
         total_taxes = abs(tax_df["Net_Clean"].sum())
@@ -7344,6 +7428,28 @@ def api_reload():
         monthly_refunds = refund_df.groupby("Month")["Net_Clean"].sum().abs()
         monthly_taxes = tax_df.groupby("Month")["Net_Clean"].sum().abs()
         months_sorted = sorted(monthly_sales.index.tolist())
+
+        # Monthly raw metrics (with sign, for monthly_net_revenue)
+        monthly_raw_fees = fee_df.groupby("Month")["Net_Clean"].sum()
+        monthly_raw_shipping = ship_df.groupby("Month")["Net_Clean"].sum()
+        monthly_raw_marketing = mkt_df.groupby("Month")["Net_Clean"].sum()
+        monthly_raw_refunds = refund_df.groupby("Month")["Net_Clean"].sum()
+        monthly_raw_taxes = tax_df.groupby("Month")["Net_Clean"].sum()
+        monthly_raw_buyer_fees = buyer_fee_df.groupby("Month")["Net_Clean"].sum()
+        monthly_raw_payments = payment_df.groupby("Month")["Net_Clean"].sum()
+
+        monthly_net_revenue = {}
+        for m in months_sorted:
+            monthly_net_revenue[m] = (
+                monthly_sales.get(m, 0)
+                + monthly_raw_fees.get(m, 0)
+                + monthly_raw_shipping.get(m, 0)
+                + monthly_raw_marketing.get(m, 0)
+                + monthly_raw_refunds.get(m, 0)
+                + monthly_raw_taxes.get(m, 0)
+                + monthly_raw_buyer_fees.get(m, 0)
+                + monthly_raw_payments.get(m, 0)
+            )
 
         # Daily aggregations
         daily_sales = sales_df.groupby(sales_df["Date_Parsed"].dt.date)["Net_Clean"].sum()
@@ -7437,7 +7543,91 @@ def api_reload():
         profit = real_profit
         profit_margin = (profit / gross_sales * 100) if gross_sales else 0
 
-        # 5. Rebuild charts and analytics
+        # 5. Recompute fee/shipping/product breakdown (needed by charts)
+        listing_fees = abs(fee_df[fee_df["Title"].str.contains("Listing fee", na=False)]["Net_Clean"].sum())
+        transaction_fees_product = abs(
+            fee_df[
+                fee_df["Title"].str.startswith("Transaction fee:", na=False)
+                & ~fee_df["Title"].str.contains("Shipping", na=False)
+            ]["Net_Clean"].sum()
+        )
+        transaction_fees_shipping = abs(
+            fee_df[fee_df["Title"].str.contains("Transaction fee: Shipping", na=False)]["Net_Clean"].sum()
+        )
+        processing_fees = abs(fee_df[fee_df["Title"].str.contains("Processing fee", na=False)]["Net_Clean"].sum())
+        credit_transaction = fee_df[fee_df["Title"].str.startswith("Credit for transaction fee", na=False)]["Net_Clean"].sum()
+        credit_listing = fee_df[fee_df["Title"].str.startswith("Credit for listing fee", na=False)]["Net_Clean"].sum()
+        credit_processing = fee_df[fee_df["Title"].str.startswith("Credit for processing fee", na=False)]["Net_Clean"].sum()
+        share_save = fee_df[fee_df["Title"].str.contains("Share & Save", na=False)]["Net_Clean"].sum()
+        total_credits = credit_transaction + credit_listing + credit_processing + share_save
+        total_fees_gross = listing_fees + transaction_fees_product + transaction_fees_shipping + processing_fees
+        etsy_ads = abs(mkt_df[mkt_df["Title"].str.contains("Etsy Ads", na=False)]["Net_Clean"].sum())
+        offsite_ads_fees = abs(
+            mkt_df[
+                mkt_df["Title"].str.contains("Offsite Ads", na=False)
+                & ~mkt_df["Title"].str.contains("Credit", na=False)
+            ]["Net_Clean"].sum()
+        )
+        offsite_ads_credits = mkt_df[mkt_df["Title"].str.contains("Credit for Offsite", na=False)]["Net_Clean"].sum()
+        usps_outbound = abs(ship_df[ship_df["Title"] == "USPS shipping label"]["Net_Clean"].sum())
+        usps_outbound_count = len(ship_df[ship_df["Title"] == "USPS shipping label"])
+        usps_return = abs(ship_df[ship_df["Title"] == "USPS return shipping label"]["Net_Clean"].sum())
+        usps_return_count = len(ship_df[ship_df["Title"] == "USPS return shipping label"])
+        asendia_labels = abs(ship_df[ship_df["Title"].str.contains("Asendia", na=False)]["Net_Clean"].sum())
+        asendia_count = len(ship_df[ship_df["Title"].str.contains("Asendia", na=False)])
+        ship_adjustments = abs(ship_df[ship_df["Title"].str.contains("Adjustment", na=False)]["Net_Clean"].sum())
+        ship_adjust_count = len(ship_df[ship_df["Title"].str.contains("Adjustment", na=False)])
+        ship_credits = ship_df[ship_df["Title"].str.contains("Credit for", na=False)]["Net_Clean"].sum()
+        ship_credit_count = len(ship_df[ship_df["Title"].str.contains("Credit for", na=False)])
+        ship_insurance = abs(ship_df[ship_df["Title"].str.contains("insurance", case=False, na=False)]["Net_Clean"].sum())
+        ship_insurance_count = len(ship_df[ship_df["Title"].str.contains("insurance", case=False, na=False)])
+        ship_fee_gross = abs(
+            fee_df[fee_df["Title"].str.contains("Transaction fee: Shipping", na=False)]["Net_Clean"].sum()
+        )
+        ship_fee_credits_amt = abs(
+            fee_df[fee_df["Title"].str.contains("Credit for transaction fee on shipping", na=False)]["Net_Clean"].sum()
+        )
+        net_ship_tx_fees = ship_fee_gross - ship_fee_credits_amt
+        buyer_paid_shipping = net_ship_tx_fees / 0.065 if net_ship_tx_fees else 0
+        shipping_profit = buyer_paid_shipping - total_shipping_cost
+        shipping_margin = (shipping_profit / buyer_paid_shipping * 100) if buyer_paid_shipping else 0
+        ship_fee_rows = fee_df[fee_df["Title"].str.contains("Transaction fee: Shipping", na=False)].copy()
+        orders_with_paid_shipping = set(ship_fee_rows["Info"].dropna())
+        all_order_ids = set(sales_df["Title"].str.extract(r"(Order #\d+)", expand=False).dropna())
+        orders_free_shipping = all_order_ids - orders_with_paid_shipping
+        paid_ship_count = len(orders_with_paid_shipping & all_order_ids)
+        free_ship_count = len(orders_free_shipping)
+        avg_outbound_label = usps_outbound / usps_outbound_count if usps_outbound_count else 0
+        prod_fees = fee_df[
+            fee_df["Title"].str.startswith("Transaction fee:", na=False)
+            & ~fee_df["Title"].str.contains("Shipping", na=False)
+        ].copy()
+        prod_fees["Product"] = prod_fees["Title"].str.replace("Transaction fee: ", "", regex=False).apply(_normalize_product_name)
+        product_fee_totals = prod_fees.groupby("Product")["Net_Clean"].sum().abs().sort_values(ascending=False)
+        _order_to_product = prod_fees.dropna(subset=["Info"]).drop_duplicates(subset=["Info"]).set_index("Info")["Product"]
+        _sales_with_product = sales_df.copy()
+        _sales_with_product["Product"] = _sales_with_product["Title"].str.extract(r"(Order #\d+)", expand=False).map(_order_to_product)
+        _sales_with_product = _sales_with_product.dropna(subset=["Product"])
+        _sales_with_product["Product"] = _merge_product_prefixes(_sales_with_product["Product"])
+        if len(_sales_with_product) > 0:
+            product_revenue_est = _sales_with_product.groupby("Product")["Net_Clean"].sum().sort_values(ascending=False).round(2)
+        else:
+            product_revenue_est = (product_fee_totals / 0.065).round(2) if len(product_fee_totals) > 0 else pd.Series(dtype=float)
+
+        # Monthly order counts and AOV
+        monthly_order_counts = sales_df.groupby("Month")["Net_Clean"].count()
+        monthly_aov = {}
+        monthly_profit_per_order = {}
+        for m in months_sorted:
+            oc = monthly_order_counts.get(m, 0)
+            if oc > 0:
+                monthly_aov[m] = monthly_sales.get(m, 0) / oc
+                monthly_profit_per_order[m] = monthly_net_revenue.get(m, 0) / oc
+            else:
+                monthly_aov[m] = 0
+                monthly_profit_per_order[m] = 0
+
+        # 6. Rebuild charts and analytics
         _recompute_shipping_details()
         _recompute_analytics()
         _recompute_tax_years()
@@ -8115,7 +8305,8 @@ def build_tab5_tax_forms():
     _combined_annual_income = sum(
         (TAX_YEARS[yr]["gross_sales"] - TAX_YEARS[yr]["refunds"] - TAX_YEARS[yr]["cogs"]
          - TAX_YEARS[yr]["net_fees"] - TAX_YEARS[yr]["shipping"] - TAX_YEARS[yr]["marketing"]
-         - TAX_YEARS[yr]["bank_biz_expense"] - TAX_YEARS[yr]["taxes_collected"] - TAX_YEARS[yr]["buyer_fees"])
+         - TAX_YEARS[yr]["bank_biz_expense"] - TAX_YEARS[yr]["taxes_collected"] - TAX_YEARS[yr]["buyer_fees"]
+         + TAX_YEARS[yr].get("payments", 0))
         for yr in (2025, 2026))
     _combined_partner_share = _combined_annual_income / 2
     _combined_se_net = _combined_partner_share * 0.9235

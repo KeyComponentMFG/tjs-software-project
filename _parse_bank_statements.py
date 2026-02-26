@@ -7,23 +7,24 @@ BANK_DIR = os.path.join(BASE_DIR, "data", "bank_statements")
 CONFIG_PATH = os.path.join(BASE_DIR, "data", "config.json")
 OUT_PATH = os.path.join(BASE_DIR, "data", "generated", "bank_transactions.json")
 
-# ── Load config ──────────────────────────────────────────────────────────────
+# ── Load config (reloaded on each call so changes are picked up) ─────────────
 
-with open(CONFIG_PATH) as f:
-    CONFIG = json.load(f)
-
-CATEGORY_OVERRIDES = CONFIG.get("category_overrides", {})
-TRANSACTION_OVERRIDES = CONFIG.get("transaction_overrides", [])
-MANUAL_TRANSACTIONS = CONFIG.get("manual_transactions", [])
+def _load_config():
+    """Load config from disk each time so hot-reloads pick up changes."""
+    with open(CONFIG_PATH) as f:
+        cfg = json.load(f)
+    return cfg
 
 # ── Auto-categorization rules ────────────────────────────────────────────────
 
-def auto_categorize(desc, txn_type):
+def auto_categorize(desc, txn_type, category_overrides=None):
     """Categorize a transaction based on its description."""
+    if category_overrides is None:
+        category_overrides = _load_config().get("category_overrides", {})
     d = desc.upper()
 
     # Check config overrides first (exact desc-prefix match)
-    for pattern, category in CATEGORY_OVERRIDES.items():
+    for pattern, category in category_overrides.items():
         if pattern.upper() in d:
             return category
 
@@ -103,6 +104,8 @@ def get_year_for_month(month_num, start_year, end_year):
 def parse_bank_pdf(filepath):
     """Parse a single Capital One bank statement PDF into transactions.
     Returns (transactions_list, covered_months_set)."""
+    cfg = _load_config()
+    cat_overrides = cfg.get("category_overrides", {})
     doc = fitz.open(filepath)
     fname = os.path.basename(filepath)
 
@@ -216,10 +219,17 @@ def parse_bank_pdf(filepath):
         raw_desc = re.sub(r"\s+", " ", raw_desc).strip()
 
         # Determine if deposit or debit based on description keywords
+        # NOTE: Capital One PDF statements don't clearly separate deposit/debit columns
+        # in extracted text, so we infer type from description. Add new deposit patterns
+        # here if non-Etsy deposits (wire transfers, checks, etc.) are ever received.
         desc_upper = raw_desc.upper()
-        if "ACH DEPOSIT" in desc_upper or (
-            "ETSY" in desc_upper and "PAYOUT" in desc_upper and "ETSY COM" not in desc_upper
-        ):
+        if ("ACH DEPOSIT" in desc_upper
+            or "MOBILE DEPOSIT" in desc_upper
+            or "WIRE TRANSFER" in desc_upper
+            or "CHECK DEPOSIT" in desc_upper
+            or (
+                "ETSY" in desc_upper and "PAYOUT" in desc_upper and "ETSY COM" not in desc_upper
+            )):
             txn_type = "deposit"
         else:
             txn_type = "debit"
@@ -227,7 +237,7 @@ def parse_bank_pdf(filepath):
         # Build a short description matching the hardcoded style
         short_desc = _build_short_desc(raw_desc)
 
-        category = auto_categorize(short_desc, txn_type)
+        category = auto_categorize(short_desc, txn_type, cat_overrides)
 
         transactions.append({
             "date": full_date,
@@ -345,6 +355,8 @@ def parse_bank_csv(filepath):
     Note: Capital One CSVs have double-quoted descriptions with embedded commas
     (e.g. ETSY, INC.) that confuse Python's csv module, so we parse manually.
     Returns (transactions_list, covered_months_set)."""
+    cfg = _load_config()
+    cat_overrides = cfg.get("category_overrides", {})
     fname = os.path.basename(filepath)
     transactions = []
     covered_months = set()
@@ -398,7 +410,7 @@ def parse_bank_csv(filepath):
         covered_months.add(f"{parts[2]}-{parts[0]}")
 
         short_desc = _build_short_desc(raw_desc)
-        category = auto_categorize(short_desc, txn_type)
+        category = auto_categorize(short_desc, txn_type, cat_overrides)
 
         transactions.append({
             "date": date_str,
@@ -417,10 +429,12 @@ def parse_bank_csv(filepath):
 
 def apply_overrides(transactions):
     """Apply transaction_overrides from config (splits, recategorizations)."""
+    cfg = _load_config()
+    transaction_overrides = cfg.get("transaction_overrides", [])
     result = []
     for t in transactions:
         matched = False
-        for override in TRANSACTION_OVERRIDES:
+        for override in transaction_overrides:
             match = override["match"]
             # Check if this transaction matches
             desc_match = match.get("desc_contains", "")
@@ -435,6 +449,10 @@ def apply_overrides(transactions):
 
             action = override["action"]
             if action == "split":
+                # Validate split amounts sum to original
+                split_total = sum(s["amount"] for s in override["splits"])
+                if abs(split_total - t["amount"]) > 0.01:
+                    print(f"  WARNING: Split total ${split_total:.2f} != original ${t['amount']:.2f} for {t['desc']}")
                 # Replace single transaction with multiple splits
                 for split in override["splits"]:
                     result.append({
@@ -531,13 +549,16 @@ def main():
     all_transactions = apply_overrides(all_transactions)
 
     # Append manual transactions from config — skip any whose month is already
-    # covered by a parsed statement (prevents double-counting)
+    # covered by a parsed statement (prevents double-counting), UNLESS the
+    # transaction is marked "permanent" (e.g., Discover card splits that won't
+    # appear in the Capital One statement even when that month is covered).
+    manual_transactions = _load_config().get("manual_transactions", [])
     manual_added = 0
     manual_skipped = 0
-    for mt in MANUAL_TRANSACTIONS:
+    for mt in manual_transactions:
         parts = mt["date"].split("/")
         mt_month = f"{parts[2]}-{parts[0]}"  # YYYY-MM
-        if mt_month in all_covered_months:
+        if mt_month in all_covered_months and not mt.get("permanent", False):
             manual_skipped += 1
             continue
         all_transactions.append({
@@ -552,7 +573,7 @@ def main():
         manual_added += 1
 
     if manual_added:
-        print(f"  Added {manual_added} manual transactions (months not yet covered)")
+        print(f"  Added {manual_added} manual transactions ({manual_added} permanent or months not yet covered)")
     if manual_skipped:
         print(f"  Skipped {manual_skipped} manual transactions (months already covered)")
 

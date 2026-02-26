@@ -47,15 +47,15 @@
   "manual_transactions": [
     {"date": "02/02/2026", "desc": "ETSY COM US (Etsy fees)", "amount": 13.98, "type": "debit", "category": "Etsy Fees"},
     {"date": "02/02/2026", "desc": "ETSY COM US (Etsy fees)", "amount": 10.00, "type": "debit", "category": "Etsy Fees"},
-    {"date": "02/02/2026", "desc": "AMAZON MKTPL (split from Discover)", "amount": 16.44, "type": "debit", "category": "Amazon Inventory"},
-    {"date": "02/02/2026", "desc": "AMAZON MKTPL (split from Discover)", "amount": 29.21, "type": "debit", "category": "Amazon Inventory"},
-    {"date": "02/02/2026", "desc": "AMAZON MKTPL (split from Discover)", "amount": 31.46, "type": "debit", "category": "Amazon Inventory"},
-    {"date": "02/02/2026", "desc": "AMAZON MKTPL (split from Discover)", "amount": 36.84, "type": "debit", "category": "Amazon Inventory"},
+    {"date": "02/02/2026", "desc": "AMAZON MKTPL (split from Discover)", "amount": 16.44, "type": "debit", "category": "Amazon Inventory", "permanent": true},
+    {"date": "02/02/2026", "desc": "AMAZON MKTPL (split from Discover)", "amount": 29.21, "type": "debit", "category": "Amazon Inventory", "permanent": true},
+    {"date": "02/02/2026", "desc": "AMAZON MKTPL (split from Discover)", "amount": 31.46, "type": "debit", "category": "Amazon Inventory", "permanent": true},
+    {"date": "02/02/2026", "desc": "AMAZON MKTPL (split from Discover)", "amount": 36.84, "type": "debit", "category": "Amazon Inventory", "permanent": true},
     {"date": "02/02/2026", "desc": "VENMO TJ MCNULTY", "amount": 350.00, "type": "debit", "category": "Owner Draw - Tulsa"},
     {"date": "02/03/2026", "desc": "ETSY PAYOUT", "amount": 483.28, "type": "deposit", "category": "Etsy Payout"},
-    {"date": "02/06/2026", "desc": "AMAZON MKTPL (pending, split from Discover)", "amount": 17.25, "type": "debit", "category": "Amazon Inventory"},
-    {"date": "02/06/2026", "desc": "AMAZON MKTPL (pending, split from Discover)", "amount": 23.79, "type": "debit", "category": "Amazon Inventory"},
-    {"date": "02/06/2026", "desc": "AMAZON MKTPL (pending, split from Discover)", "amount": 23.86, "type": "debit", "category": "Amazon Inventory"}
+    {"date": "02/06/2026", "desc": "AMAZON MKTPL (pending, split from Discover)", "amount": 17.25, "type": "debit", "category": "Amazon Inventory", "permanent": true},
+    {"date": "02/06/2026", "desc": "AMAZON MKTPL (pending, split from Discover)", "amount": 23.79, "type": "debit", "category": "Amazon Inventory", "permanent": true},
+    {"date": "02/06/2026", "desc": "AMAZON MKTPL (pending, split from Discover)", "amount": 23.86, "type": "debit", "category": "Amazon Inventory", "permanent": true}
   ],
   "best_buy_cc": {
     "credit_limit": 2000.00,
