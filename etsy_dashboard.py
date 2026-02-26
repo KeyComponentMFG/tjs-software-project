@@ -7462,35 +7462,161 @@ def api_inventory_summary():
 
 @server.route("/api/valuation")
 def api_valuation():
-    """Return business valuation estimates."""
-    # Simple valuation based on revenue multiples
-    annual_revenue = gross_sales * (12 / max(len(months_sorted), 1)) if months_sorted else gross_sales
-    annual_profit = real_profit * (12 / max(len(months_sorted), 1)) if months_sorted else real_profit
+    """Return business valuation estimates using Etsy-appropriate multiples.
 
-    # SDE (Seller's Discretionary Earnings) = profit + owner salary/draws
-    sde = annual_profit + (bank_owner_draw_total * (12 / max(len(months_sorted), 1)) if months_sorted else bank_owner_draw_total)
+    Methodology:
+    - Primary: SDE (Seller's Discretionary Earnings) multiple
+    - Secondary: Monthly trailing profit multiple (Flippa/Empire Flippers style)
+    - Reference only: Revenue multiple (less relevant for small Etsy shops)
 
-    return flask.jsonify({
+    Age-based weighting:
+    - Under 6 months: Conservative multiples, high risk discount
+    - 6-12 months: Moderate multiples, medium risk discount
+    - 12+ months: Standard multiples, track record weighted
+    """
+    months_operating = len(months_sorted) if months_sorted else 0
+
+    # Calculate annualized metrics
+    # Use trailing data when possible, projections decrease in weight as track record grows
+    if months_operating >= 12:
+        # 12+ months: Use actual trailing 12 months
+        annual_revenue = gross_sales
+        annual_profit = real_profit
+        track_record_weight = 0.9  # 90% track record, 10% projection
+    elif months_operating >= 6:
+        # 6-12 months: Blend trailing with conservative projection
+        annualize_factor = 12 / max(months_operating, 1)
+        annual_revenue = gross_sales * annualize_factor
+        annual_profit = real_profit * annualize_factor
+        track_record_weight = 0.6  # 60% track record, 40% projection
+    else:
+        # Under 6 months: Mostly speculative, use conservative projection
+        annualize_factor = 12 / max(months_operating, 1)
+        annual_revenue = gross_sales * annualize_factor
+        annual_profit = real_profit * annualize_factor
+        track_record_weight = 0.3  # 30% track record, 70% projection
+
+    # SDE = profit + owner draws (annualized)
+    annual_draws = bank_owner_draw_total * (12 / max(months_operating, 1)) if months_operating > 0 else 0
+    sde = annual_profit + annual_draws
+
+    # Monthly SDE for Flippa-style valuation
+    monthly_sde = sde / 12 if sde > 0 else 0
+
+    # ─── RISK FACTORS ────────────────────────────────────────────────────────────
+    # Each factor reduces the multiple
+    risk_factors = []
+    risk_discount = 1.0  # Start at 100%
+
+    # Age risk: Young businesses are riskier
+    if months_operating < 6:
+        risk_factors.append({"factor": "Business age < 6 months", "discount": 0.20})
+        risk_discount -= 0.20
+    elif months_operating < 12:
+        risk_factors.append({"factor": "Business age < 12 months", "discount": 0.10})
+        risk_discount -= 0.10
+
+    # Platform dependency: 100% Etsy is risky
+    risk_factors.append({"factor": "Single platform (Etsy)", "discount": 0.10})
+    risk_discount -= 0.10
+
+    # Operational complexity: 3D printing requires owner involvement
+    risk_factors.append({"factor": "Owner-dependent operations", "discount": 0.05})
+    risk_discount -= 0.05
+
+    risk_discount = max(risk_discount, 0.5)  # Floor at 50%
+
+    # ─── ETSY-APPROPRIATE MULTIPLES ──────────────────────────────────────────────
+    # Revenue multiples for small Etsy: 0.5x - 1.5x (not 1.5x - 3.5x)
+    # SDE multiples for Etsy: 2x - 3x (not 2x - 4x)
+    # Monthly profit: 24x - 36x (Flippa standard)
+
+    # Adjust multiples based on track record
+    if months_operating >= 12:
+        sde_mult_low, sde_mult_mid, sde_mult_high = 2.5, 3.0, 3.5
+        rev_mult_low, rev_mult_mid, rev_mult_high = 0.8, 1.0, 1.5
+        monthly_mult_low, monthly_mult_mid, monthly_mult_high = 30, 36, 42
+    elif months_operating >= 6:
+        sde_mult_low, sde_mult_mid, sde_mult_high = 2.0, 2.5, 3.0
+        rev_mult_low, rev_mult_mid, rev_mult_high = 0.5, 0.8, 1.2
+        monthly_mult_low, monthly_mult_mid, monthly_mult_high = 24, 30, 36
+    else:
+        sde_mult_low, sde_mult_mid, sde_mult_high = 1.5, 2.0, 2.5
+        rev_mult_low, rev_mult_mid, rev_mult_high = 0.3, 0.5, 0.8
+        monthly_mult_low, monthly_mult_mid, monthly_mult_high = 18, 24, 30
+
+    # Apply risk discount to multiples
+    sde_mult_low *= risk_discount
+    sde_mult_mid *= risk_discount
+    sde_mult_high *= risk_discount
+
+    # ─── CALCULATE VALUATIONS ────────────────────────────────────────────────────
+    # Primary: SDE Multiple (what buyers actually use)
+    sde_val_low = sde * sde_mult_low
+    sde_val_mid = sde * sde_mult_mid
+    sde_val_high = sde * sde_mult_high
+
+    # Secondary: Monthly Profit Multiple (Flippa/Empire Flippers style)
+    monthly_val_low = monthly_sde * monthly_mult_low
+    monthly_val_mid = monthly_sde * monthly_mult_mid
+    monthly_val_high = monthly_sde * monthly_mult_high
+
+    # Reference: Revenue Multiple (less weight for Etsy)
+    rev_val_low = annual_revenue * rev_mult_low
+    rev_val_mid = annual_revenue * rev_mult_mid
+    rev_val_high = annual_revenue * rev_mult_high
+
+    # ─── BLENDED ESTIMATE ────────────────────────────────────────────────────────
+    # Weight SDE heavily (70%), monthly profit (25%), revenue (5%)
+    # As track record grows, this becomes more reliable
+    blended_low = (sde_val_low * 0.70) + (monthly_val_low * 0.25) + (rev_val_low * 0.05)
+    blended_mid = (sde_val_mid * 0.70) + (monthly_val_mid * 0.25) + (rev_val_mid * 0.05)
+    blended_high = (sde_val_high * 0.70) + (monthly_val_high * 0.25) + (rev_val_high * 0.05)
+
+    return _add_cors_headers(flask.jsonify({
         "metrics": {
             "annual_revenue_projected": round(annual_revenue, 2),
             "annual_profit_projected": round(annual_profit, 2),
             "sde": round(sde, 2),
+            "monthly_sde": round(monthly_sde, 2),
             "profit_margin": round(real_profit_margin, 1),
-            "months_operating": len(months_sorted) if months_sorted else 0,
+            "months_operating": months_operating,
+            "track_record_weight": round(track_record_weight * 100),
+        },
+        "risk_assessment": {
+            "total_discount": round((1 - risk_discount) * 100),
+            "risk_multiplier": round(risk_discount, 2),
+            "factors": risk_factors,
         },
         "valuations": {
-            "revenue_multiple": {
-                "low": round(annual_revenue * 1.5, 2),
-                "mid": round(annual_revenue * 2.5, 2),
-                "high": round(annual_revenue * 3.5, 2),
-                "method": "1.5x - 3.5x annual revenue",
-            },
             "sde_multiple": {
-                "low": round(sde * 2.0, 2),
-                "mid": round(sde * 3.0, 2),
-                "high": round(sde * 4.0, 2),
-                "method": "2x - 4x SDE",
+                "low": round(sde_val_low, 2),
+                "mid": round(sde_val_mid, 2),
+                "high": round(sde_val_high, 2),
+                "method": f"{sde_mult_low:.1f}x - {sde_mult_high:.1f}x SDE (Etsy-adjusted)",
+                "multipliers": {"low": round(sde_mult_low, 2), "mid": round(sde_mult_mid, 2), "high": round(sde_mult_high, 2)},
             },
+            "monthly_profit": {
+                "low": round(monthly_val_low, 2),
+                "mid": round(monthly_val_mid, 2),
+                "high": round(monthly_val_high, 2),
+                "method": f"{monthly_mult_low}x - {monthly_mult_high}x monthly SDE",
+                "multipliers": {"low": monthly_mult_low, "mid": monthly_mult_mid, "high": monthly_mult_high},
+            },
+            "revenue_multiple": {
+                "low": round(rev_val_low, 2),
+                "mid": round(rev_val_mid, 2),
+                "high": round(rev_val_high, 2),
+                "method": f"{rev_mult_low:.1f}x - {rev_mult_high:.1f}x revenue (reference only)",
+                "multipliers": {"low": round(rev_mult_low, 2), "mid": round(rev_mult_mid, 2), "high": round(rev_mult_high, 2)},
+            },
+        },
+        "estimated_value": {
+            "low": round(blended_low, 2),
+            "mid": round(blended_mid, 2),
+            "high": round(blended_high, 2),
+            "method": "Weighted: 70% SDE + 25% Monthly Profit + 5% Revenue",
+            "confidence": "Higher" if months_operating >= 12 else "Medium" if months_operating >= 6 else "Speculative",
         },
         "assets": {
             "cash_on_hand": round(bank_cash_on_hand, 2),
@@ -7500,7 +7626,22 @@ def api_valuation():
         "liabilities": {
             "credit_card": round(bb_cc_balance, 2),
         },
-    })
+        "guidance": {
+            "current_stage": "Early Stage" if months_operating < 6 else "Growth Stage" if months_operating < 12 else "Established",
+            "to_increase_multiple": [
+                "Build 12+ months track record",
+                "Diversify beyond Etsy (website, Amazon)",
+                "Document SOPs for production",
+                "Show consistent month-over-month growth",
+                "Reduce owner dependency",
+            ] if months_operating < 12 else [
+                "Maintain growth trajectory",
+                "Diversify sales channels",
+                "Build email list / owned audience",
+                "Create systems for handoff",
+            ],
+        },
+    }))
 
 
 @server.route("/api/shipping")
