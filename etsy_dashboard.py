@@ -7490,11 +7490,11 @@ def api_valuation():
         },
         "assets": {
             "cash_on_hand": round(bank_cash_on_hand, 2),
-            "etsy_balance": round(etsy_balance, 2) if 'etsy_balance' in dir() else 0,
-            "inventory_value": 0,  # Would need COGS data
+            "etsy_balance": round(etsy_balance, 2),
+            "inventory_value": round(true_inventory_cost, 2),
         },
         "liabilities": {
-            "credit_card": round(bb_cc_balance, 2) if 'bb_cc_balance' in dir() else 0,
+            "credit_card": round(bb_cc_balance, 2),
         },
     })
 
@@ -7502,27 +7502,27 @@ def api_valuation():
 @server.route("/api/shipping")
 def api_shipping():
     """Return detailed shipping analysis."""
-    return flask.jsonify({
+    return _add_cors_headers(flask.jsonify({
         "summary": {
-            "buyer_paid": round(buyer_paid_shipping, 2) if 'buyer_paid_shipping' in dir() else 0,
+            "buyer_paid": round(buyer_paid_shipping, 2),
             "label_costs": round(total_shipping_cost, 2),
-            "profit_loss": round(shipping_profit, 2) if 'shipping_profit' in dir() else 0,
-            "margin": round(shipping_margin, 1) if 'shipping_margin' in dir() else 0,
+            "profit_loss": round(shipping_profit, 2),
+            "margin": round(shipping_margin, 1),
         },
         "labels": {
-            "usps_outbound": round(usps_outbound, 2) if 'usps_outbound' in dir() else 0,
-            "usps_outbound_count": usps_outbound_count if 'usps_outbound_count' in dir() else 0,
-            "usps_returns": round(usps_return, 2) if 'usps_return' in dir() else 0,
-            "usps_return_count": usps_return_count if 'usps_return_count' in dir() else 0,
-            "asendia": round(asendia_labels, 2) if 'asendia_labels' in dir() else 0,
-            "asendia_count": asendia_count if 'asendia_count' in dir() else 0,
+            "usps_outbound": round(usps_outbound, 2),
+            "usps_outbound_count": usps_outbound_count,
+            "usps_returns": round(usps_return, 2),
+            "usps_return_count": usps_return_count,
+            "asendia": round(asendia_labels, 2),
+            "asendia_count": asendia_count,
         },
         "orders": {
-            "paid_shipping_count": paid_ship_count if 'paid_ship_count' in dir() else 0,
-            "free_shipping_count": free_ship_count if 'free_ship_count' in dir() else 0,
-            "avg_label_cost": round(avg_outbound_label, 2) if 'avg_outbound_label' in dir() else 0,
+            "paid_shipping_count": paid_ship_count,
+            "free_shipping_count": free_ship_count,
+            "avg_label_cost": round(avg_outbound_label, 2),
         },
-    })
+    }))
 
 
 @server.route("/api/fees")
