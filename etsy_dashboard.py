@@ -7344,6 +7344,214 @@ def api_tax():
     })
 
 
+@server.route("/api/bank/ledger")
+def api_bank_ledger():
+    """Return bank transaction ledger with running balance."""
+    ledger = []
+    if 'bank_txns_sorted' in dir() and bank_txns_sorted is not None:
+        for txn in bank_txns_sorted[-100:]:  # Last 100 transactions
+            ledger.append({
+                "date": txn.get("date", ""),
+                "description": txn.get("description", ""),
+                "amount": round(txn.get("amount", 0), 2),
+                "category": txn.get("category", "Uncategorized"),
+                "running_balance": round(txn.get("running_balance", 0), 2),
+            })
+    return flask.jsonify({
+        "transactions": ledger,
+        "total_deposits": round(bank_total_deposits, 2),
+        "total_debits": round(bank_total_debits, 2),
+        "current_balance": round(bank_cash_on_hand, 2),
+    })
+
+
+@server.route("/api/bank/summary")
+def api_bank_summary():
+    """Return bank summary with expense categories."""
+    return flask.jsonify({
+        "balance": round(bank_cash_on_hand, 2),
+        "total_deposits": round(bank_total_deposits, 2),
+        "total_debits": round(bank_total_debits, 2),
+        "by_category": {k: round(v, 2) for k, v in bank_by_cat.items()} if bank_by_cat else {},
+        "owner_draws": {
+            "total": round(bank_owner_draw_total, 2),
+            "tulsa": round(tulsa_draw_total, 2),
+            "texas": round(texas_draw_total, 2),
+            "difference": round(draw_diff, 2) if 'draw_diff' in dir() else 0,
+            "owed_to": draw_owed_to if 'draw_owed_to' in dir() else None,
+        },
+        "monthly": {m: round(v, 2) for m, v in bank_monthly.items()} if 'bank_monthly' in dir() and bank_monthly else {},
+    })
+
+
+@server.route("/api/pnl")
+def api_pnl():
+    """Return detailed Profit & Loss statement."""
+    return flask.jsonify({
+        "revenue": {
+            "gross_sales": round(gross_sales, 2),
+            "refunds": round(total_refunds, 2),
+            "net_sales": round(net_sales, 2),
+        },
+        "etsy_fees": {
+            "listing_fees": round(listing_fees, 2) if 'listing_fees' in dir() else 0,
+            "transaction_fees": round(transaction_fees_product + transaction_fees_shipping, 2) if 'transaction_fees_product' in dir() else 0,
+            "processing_fees": round(processing_fees, 2) if 'processing_fees' in dir() else 0,
+            "total_fees": round(total_fees, 2),
+        },
+        "shipping": {
+            "buyer_paid": round(buyer_paid_shipping, 2) if 'buyer_paid_shipping' in dir() else 0,
+            "label_costs": round(total_shipping_cost, 2),
+            "profit_loss": round(shipping_profit, 2) if 'shipping_profit' in dir() else 0,
+        },
+        "marketing": {
+            "etsy_ads": round(etsy_ads, 2) if 'etsy_ads' in dir() else 0,
+            "offsite_ads": round(offsite_ads_fees, 2) if 'offsite_ads_fees' in dir() else 0,
+            "total": round(total_marketing, 2),
+        },
+        "after_etsy_fees": round(etsy_net, 2),
+        "bank_expenses": {k: round(v, 2) for k, v in bank_by_cat.items()} if bank_by_cat else {},
+        "owner_draws": round(bank_owner_draw_total, 2),
+        "net_profit": round(real_profit, 2),
+        "profit_margin": round(real_profit_margin, 1),
+        "cash_on_hand": round(bank_cash_on_hand, 2),
+    })
+
+
+@server.route("/api/inventory/summary")
+def api_inventory_summary():
+    """Return inventory/COGS summary."""
+    summary = {
+        "total_items": 0,
+        "total_cost": 0,
+        "by_category": {},
+        "by_location": {},
+        "low_stock": [],
+        "out_of_stock": [],
+    }
+
+    if 'STOCK_SUMMARY' in dir() and STOCK_SUMMARY is not None and len(STOCK_SUMMARY) > 0:
+        summary["total_items"] = len(STOCK_SUMMARY)
+        summary["total_cost"] = round(STOCK_SUMMARY["total_cost"].sum(), 2) if "total_cost" in STOCK_SUMMARY.columns else 0
+
+        # By category
+        if "category" in STOCK_SUMMARY.columns:
+            cat_totals = STOCK_SUMMARY.groupby("category")["total_cost"].sum()
+            summary["by_category"] = {k: round(v, 2) for k, v in cat_totals.items()}
+
+        # By location
+        if "location" in STOCK_SUMMARY.columns:
+            loc_totals = STOCK_SUMMARY.groupby("location")["total_cost"].sum()
+            summary["by_location"] = {k: round(v, 2) for k, v in loc_totals.items()}
+
+        # Low stock (1-2 remaining)
+        if "in_stock" in STOCK_SUMMARY.columns:
+            low = STOCK_SUMMARY[(STOCK_SUMMARY["in_stock"] > 0) & (STOCK_SUMMARY["in_stock"] <= 2)]
+            summary["low_stock"] = low["display_name"].tolist()[:20] if "display_name" in low.columns else []
+
+            # Out of stock
+            oos = STOCK_SUMMARY[STOCK_SUMMARY["in_stock"] <= 0]
+            summary["out_of_stock"] = oos["display_name"].tolist()[:20] if "display_name" in oos.columns else []
+
+    return flask.jsonify(summary)
+
+
+@server.route("/api/valuation")
+def api_valuation():
+    """Return business valuation estimates."""
+    # Simple valuation based on revenue multiples
+    annual_revenue = gross_sales * (12 / max(len(months_sorted), 1)) if months_sorted else gross_sales
+    annual_profit = real_profit * (12 / max(len(months_sorted), 1)) if months_sorted else real_profit
+
+    # SDE (Seller's Discretionary Earnings) = profit + owner salary/draws
+    sde = annual_profit + (bank_owner_draw_total * (12 / max(len(months_sorted), 1)) if months_sorted else bank_owner_draw_total)
+
+    return flask.jsonify({
+        "metrics": {
+            "annual_revenue_projected": round(annual_revenue, 2),
+            "annual_profit_projected": round(annual_profit, 2),
+            "sde": round(sde, 2),
+            "profit_margin": round(real_profit_margin, 1),
+            "months_operating": len(months_sorted) if months_sorted else 0,
+        },
+        "valuations": {
+            "revenue_multiple": {
+                "low": round(annual_revenue * 1.5, 2),
+                "mid": round(annual_revenue * 2.5, 2),
+                "high": round(annual_revenue * 3.5, 2),
+                "method": "1.5x - 3.5x annual revenue",
+            },
+            "sde_multiple": {
+                "low": round(sde * 2.0, 2),
+                "mid": round(sde * 3.0, 2),
+                "high": round(sde * 4.0, 2),
+                "method": "2x - 4x SDE",
+            },
+        },
+        "assets": {
+            "cash_on_hand": round(bank_cash_on_hand, 2),
+            "etsy_balance": round(etsy_balance, 2) if 'etsy_balance' in dir() else 0,
+            "inventory_value": 0,  # Would need COGS data
+        },
+        "liabilities": {
+            "credit_card": round(bb_cc_balance, 2) if 'bb_cc_balance' in dir() else 0,
+        },
+    })
+
+
+@server.route("/api/shipping")
+def api_shipping():
+    """Return detailed shipping analysis."""
+    return flask.jsonify({
+        "summary": {
+            "buyer_paid": round(buyer_paid_shipping, 2) if 'buyer_paid_shipping' in dir() else 0,
+            "label_costs": round(total_shipping_cost, 2),
+            "profit_loss": round(shipping_profit, 2) if 'shipping_profit' in dir() else 0,
+            "margin": round(shipping_margin, 1) if 'shipping_margin' in dir() else 0,
+        },
+        "labels": {
+            "usps_outbound": round(usps_outbound, 2) if 'usps_outbound' in dir() else 0,
+            "usps_outbound_count": usps_outbound_count if 'usps_outbound_count' in dir() else 0,
+            "usps_returns": round(usps_return, 2) if 'usps_return' in dir() else 0,
+            "usps_return_count": usps_return_count if 'usps_return_count' in dir() else 0,
+            "asendia": round(asendia_labels, 2) if 'asendia_labels' in dir() else 0,
+            "asendia_count": asendia_count if 'asendia_count' in dir() else 0,
+        },
+        "orders": {
+            "paid_shipping_count": paid_ship_count if 'paid_ship_count' in dir() else 0,
+            "free_shipping_count": free_ship_count if 'free_ship_count' in dir() else 0,
+            "avg_label_cost": round(avg_outbound_label, 2) if 'avg_outbound_label' in dir() else 0,
+        },
+    })
+
+
+@server.route("/api/fees")
+def api_fees():
+    """Return detailed fee breakdown."""
+    return flask.jsonify({
+        "total": round(total_fees, 2),
+        "breakdown": {
+            "listing_fees": round(listing_fees, 2) if 'listing_fees' in dir() else 0,
+            "transaction_fees_product": round(transaction_fees_product, 2) if 'transaction_fees_product' in dir() else 0,
+            "transaction_fees_shipping": round(transaction_fees_shipping, 2) if 'transaction_fees_shipping' in dir() else 0,
+            "processing_fees": round(processing_fees, 2) if 'processing_fees' in dir() else 0,
+        },
+        "credits": {
+            "listing_credits": round(credit_listing, 2) if 'credit_listing' in dir() else 0,
+            "transaction_credits": round(credit_transaction, 2) if 'credit_transaction' in dir() else 0,
+            "processing_credits": round(credit_processing, 2) if 'credit_processing' in dir() else 0,
+            "share_save": round(abs(share_save), 2) if 'share_save' in dir() else 0,
+            "total_credits": round(total_credits, 2) if 'total_credits' in dir() else 0,
+        },
+        "marketing": {
+            "etsy_ads": round(etsy_ads, 2) if 'etsy_ads' in dir() else 0,
+            "offsite_ads_fees": round(offsite_ads_fees, 2) if 'offsite_ads_fees' in dir() else 0,
+            "offsite_ads_credits": round(offsite_ads_credits, 2) if 'offsite_ads_credits' in dir() else 0,
+        },
+        "as_percent_of_sales": round((total_fees / gross_sales * 100) if gross_sales > 0 else 0, 1),
+    })
+
+
 @server.route("/api/reload")
 def api_reload():
     """Force-reload all data from Supabase. Use after migrating data to refresh Railway."""
