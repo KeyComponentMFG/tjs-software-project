@@ -7764,6 +7764,31 @@ def api_credit_card_config():
         return _add_cors_headers(flask.jsonify({"success": False, "error": str(e)})), 500
 
 
+@server.route("/api/chat", methods=["POST", "OPTIONS"])
+def api_chat():
+    """Chat endpoint for the React app. Accepts a question and optional history."""
+    if flask.request.method == "OPTIONS":
+        return _add_cors_headers(flask.make_response())
+
+    try:
+        data = flask.request.get_json() or {}
+        message = data.get("message", "").strip()
+        history = data.get("history", [])
+
+        if not message:
+            return _add_cors_headers(flask.jsonify({"error": "No message provided"})), 400
+
+        # Use the existing chatbot_answer function
+        response = chatbot_answer(message, history)
+
+        return _add_cors_headers(flask.jsonify({
+            "response": response,
+            "question": message,
+        }))
+    except Exception as e:
+        return _add_cors_headers(flask.jsonify({"error": str(e)})), 500
+
+
 @server.route("/api/reload")
 def api_reload():
     """Force-reload all data from Supabase. Use after migrating data to refresh Railway."""
