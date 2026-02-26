@@ -7528,28 +7528,28 @@ def api_shipping():
 @server.route("/api/fees")
 def api_fees():
     """Return detailed fee breakdown."""
-    return flask.jsonify({
+    return _add_cors_headers(flask.jsonify({
         "total": round(total_fees, 2),
         "breakdown": {
-            "listing_fees": round(listing_fees, 2) if 'listing_fees' in dir() else 0,
-            "transaction_fees_product": round(transaction_fees_product, 2) if 'transaction_fees_product' in dir() else 0,
-            "transaction_fees_shipping": round(transaction_fees_shipping, 2) if 'transaction_fees_shipping' in dir() else 0,
-            "processing_fees": round(processing_fees, 2) if 'processing_fees' in dir() else 0,
+            "listing_fees": round(listing_fees, 2),
+            "transaction_fees_product": round(transaction_fees_product, 2),
+            "transaction_fees_shipping": round(transaction_fees_shipping, 2),
+            "processing_fees": round(processing_fees, 2),
         },
         "credits": {
-            "listing_credits": round(credit_listing, 2) if 'credit_listing' in dir() else 0,
-            "transaction_credits": round(credit_transaction, 2) if 'credit_transaction' in dir() else 0,
-            "processing_credits": round(credit_processing, 2) if 'credit_processing' in dir() else 0,
-            "share_save": round(abs(share_save), 2) if 'share_save' in dir() else 0,
-            "total_credits": round(total_credits, 2) if 'total_credits' in dir() else 0,
+            "listing_credits": round(credit_listing, 2),
+            "transaction_credits": round(credit_transaction, 2),
+            "processing_credits": round(credit_processing, 2),
+            "share_save": round(abs(share_save), 2),
+            "total_credits": round(total_credits, 2),
         },
         "marketing": {
-            "etsy_ads": round(etsy_ads, 2) if 'etsy_ads' in dir() else 0,
-            "offsite_ads_fees": round(offsite_ads_fees, 2) if 'offsite_ads_fees' in dir() else 0,
-            "offsite_ads_credits": round(offsite_ads_credits, 2) if 'offsite_ads_credits' in dir() else 0,
+            "etsy_ads": round(etsy_ads, 2),
+            "offsite_ads_fees": round(offsite_ads_fees, 2),
+            "offsite_ads_credits": round(offsite_ads_credits, 2),
         },
         "as_percent_of_sales": round((total_fees / gross_sales * 100) if gross_sales > 0 else 0, 1),
-    })
+    }))
 
 
 @server.route("/api/reload")
