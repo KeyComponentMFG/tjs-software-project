@@ -7304,7 +7304,7 @@ def api_financials():
                     "sales": round(monthly_sales.get(m, 0), 2),
                     "fees": round(monthly_fees.get(m, 0), 2),
                     "shipping": round(monthly_shipping.get(m, 0), 2),
-                    "orders": monthly_order_counts.get(m, 0),
+                    "orders": int(monthly_order_counts.get(m, 0)),
                 }
                 for m in months_sorted[-12:]
             } if months_sorted else {},
