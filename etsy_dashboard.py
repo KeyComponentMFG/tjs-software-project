@@ -7262,52 +7262,55 @@ def api_overview():
 @server.route("/api/financials")
 def api_financials():
     """Return detailed financial breakdown."""
-    return flask.jsonify({
-        "revenue": {
-            "gross_sales": round(gross_sales, 2),
-            "refunds": round(total_refunds, 2),
-            "net_sales": round(net_sales, 2),
-        },
-        "fees": {
-            "total": round(total_fees, 2),
-            "listing": round(listing_fees, 2),
-            "transaction": round(transaction_fees_product + transaction_fees_shipping, 2),
-            "processing": round(processing_fees, 2),
-            "marketing": round(total_marketing, 2),
-            "shipping_labels": round(total_shipping_cost, 2),
-        },
-        "profit": {
-            "etsy_net": round(etsy_net, 2),
-            "after_expenses": round(real_profit, 2),
-            "margin_percent": round(real_profit_margin, 1),
-        },
-        "bank": {
-            "total_deposits": round(bank_total_deposits, 2),
-            "total_debits": round(bank_total_debits, 2),
-            "cash_on_hand": round(bank_cash_on_hand, 2),
-            "categories": {k: round(v, 2) for k, v in bank_by_cat.items()},
-        },
-        "owner_draws": {
-            "total": round(bank_owner_draw_total, 2),
-            "tulsa": round(tulsa_draw_total, 2),
-            "texas": round(texas_draw_total, 2),
-        },
-        "shipping": {
-            "buyer_paid": round(buyer_paid_shipping, 2),
-            "label_costs": round(total_shipping_cost, 2),
-            "profit": round(shipping_profit, 2),
-            "margin": round(shipping_margin, 1),
-        },
-        "monthly": {
-            m: {
-                "sales": round(monthly_sales.get(m, 0), 2),
-                "fees": round(monthly_fees.get(m, 0), 2),
-                "shipping": round(monthly_shipping.get(m, 0), 2),
-                "orders": monthly_order_counts.get(m, 0),
-            }
-            for m in months_sorted[-12:]
-        } if months_sorted else {},
-    })
+    try:
+        return _add_cors_headers(flask.jsonify({
+            "revenue": {
+                "gross_sales": round(gross_sales, 2),
+                "refunds": round(total_refunds, 2),
+                "net_sales": round(net_sales, 2),
+            },
+            "fees": {
+                "total": round(total_fees, 2),
+                "listing": round(listing_fees, 2),
+                "transaction": round(transaction_fees_product + transaction_fees_shipping, 2),
+                "processing": round(processing_fees, 2),
+                "marketing": round(total_marketing, 2),
+                "shipping_labels": round(total_shipping_cost, 2),
+            },
+            "profit": {
+                "etsy_net": round(etsy_net, 2),
+                "after_expenses": round(real_profit, 2),
+                "margin_percent": round(real_profit_margin, 1),
+            },
+            "bank": {
+                "total_deposits": round(bank_total_deposits, 2),
+                "total_debits": round(bank_total_debits, 2),
+                "cash_on_hand": round(bank_cash_on_hand, 2),
+                "categories": {k: round(v, 2) for k, v in bank_by_cat.items()},
+            },
+            "owner_draws": {
+                "total": round(bank_owner_draw_total, 2),
+                "tulsa": round(tulsa_draw_total, 2),
+                "texas": round(texas_draw_total, 2),
+            },
+            "shipping": {
+                "buyer_paid": round(buyer_paid_shipping, 2),
+                "label_costs": round(total_shipping_cost, 2),
+                "profit": round(shipping_profit, 2),
+                "margin": round(shipping_margin, 1),
+            },
+            "monthly": {
+                m: {
+                    "sales": round(monthly_sales.get(m, 0), 2),
+                    "fees": round(monthly_fees.get(m, 0), 2),
+                    "shipping": round(monthly_shipping.get(m, 0), 2),
+                    "orders": monthly_order_counts.get(m, 0),
+                }
+                for m in months_sorted[-12:]
+            } if months_sorted else {},
+        }))
+    except Exception as e:
+        return _add_cors_headers(flask.jsonify({"error": str(e)})), 500
 
 
 @server.route("/api/tax")
@@ -7326,7 +7329,7 @@ def api_tax():
     total_tax = se_tax + income_tax
     quarterly = total_tax / 4
 
-    return flask.jsonify({
+    return _add_cors_headers(flask.jsonify({
         "net_income": round(net_income, 2),
         "self_employment_tax": round(se_tax, 2),
         "estimated_income_tax": round(income_tax, 2),
@@ -7337,19 +7340,19 @@ def api_tax():
             "partner_2": round(net_income / 2, 2),
         },
         "deductions": {
-            "total_expenses": round(bank_biz_expense_total, 2) if 'bank_biz_expense_total' in dir() else 0,
+            "total_expenses": round(bank_biz_expense_total, 2),
             "shipping": round(total_shipping_cost, 2),
             "fees": round(total_fees, 2),
             "marketing": round(total_marketing, 2),
         }
-    })
+    }))
 
 
 @server.route("/api/bank/ledger")
 def api_bank_ledger():
     """Return bank transaction ledger with running balance."""
     ledger = []
-    if 'bank_txns_sorted' in dir() and bank_txns_sorted is not None:
+    if bank_txns_sorted is not None:
         for txn in bank_txns_sorted[-100:]:  # Last 100 transactions
             ledger.append({
                 "date": txn.get("date", ""),
@@ -7358,18 +7361,18 @@ def api_bank_ledger():
                 "category": txn.get("category", "Uncategorized"),
                 "running_balance": round(txn.get("running_balance", 0), 2),
             })
-    return flask.jsonify({
+    return _add_cors_headers(flask.jsonify({
         "transactions": ledger,
         "total_deposits": round(bank_total_deposits, 2),
         "total_debits": round(bank_total_debits, 2),
         "current_balance": round(bank_cash_on_hand, 2),
-    })
+    }))
 
 
 @server.route("/api/bank/summary")
 def api_bank_summary():
     """Return bank summary with expense categories."""
-    return flask.jsonify({
+    return _add_cors_headers(flask.jsonify({
         "balance": round(bank_cash_on_hand, 2),
         "total_deposits": round(bank_total_deposits, 2),
         "total_debits": round(bank_total_debits, 2),
@@ -7378,36 +7381,36 @@ def api_bank_summary():
             "total": round(bank_owner_draw_total, 2),
             "tulsa": round(tulsa_draw_total, 2),
             "texas": round(texas_draw_total, 2),
-            "difference": round(draw_diff, 2) if 'draw_diff' in dir() else 0,
-            "owed_to": draw_owed_to if 'draw_owed_to' in dir() else None,
+            "difference": round(draw_diff, 2),
+            "owed_to": draw_owed_to,
         },
-        "monthly": {m: round(v, 2) for m, v in bank_monthly.items()} if 'bank_monthly' in dir() and bank_monthly else {},
-    })
+        "monthly": {m: round(v, 2) for m, v in bank_monthly.items()} if bank_monthly else {},
+    }))
 
 
 @server.route("/api/pnl")
 def api_pnl():
     """Return detailed Profit & Loss statement."""
-    return flask.jsonify({
+    return _add_cors_headers(flask.jsonify({
         "revenue": {
             "gross_sales": round(gross_sales, 2),
             "refunds": round(total_refunds, 2),
             "net_sales": round(net_sales, 2),
         },
         "etsy_fees": {
-            "listing_fees": round(listing_fees, 2) if 'listing_fees' in dir() else 0,
-            "transaction_fees": round(transaction_fees_product + transaction_fees_shipping, 2) if 'transaction_fees_product' in dir() else 0,
-            "processing_fees": round(processing_fees, 2) if 'processing_fees' in dir() else 0,
+            "listing_fees": round(listing_fees, 2),
+            "transaction_fees": round(transaction_fees_product + transaction_fees_shipping, 2),
+            "processing_fees": round(processing_fees, 2),
             "total_fees": round(total_fees, 2),
         },
         "shipping": {
-            "buyer_paid": round(buyer_paid_shipping, 2) if 'buyer_paid_shipping' in dir() else 0,
+            "buyer_paid": round(buyer_paid_shipping, 2),
             "label_costs": round(total_shipping_cost, 2),
-            "profit_loss": round(shipping_profit, 2) if 'shipping_profit' in dir() else 0,
+            "profit_loss": round(shipping_profit, 2),
         },
         "marketing": {
-            "etsy_ads": round(etsy_ads, 2) if 'etsy_ads' in dir() else 0,
-            "offsite_ads": round(offsite_ads_fees, 2) if 'offsite_ads_fees' in dir() else 0,
+            "etsy_ads": round(etsy_ads, 2),
+            "offsite_ads": round(offsite_ads_fees, 2),
             "total": round(total_marketing, 2),
         },
         "after_etsy_fees": round(etsy_net, 2),
@@ -7416,7 +7419,7 @@ def api_pnl():
         "net_profit": round(real_profit, 2),
         "profit_margin": round(real_profit_margin, 1),
         "cash_on_hand": round(bank_cash_on_hand, 2),
-    })
+    }))
 
 
 @server.route("/api/inventory/summary")
@@ -7431,7 +7434,7 @@ def api_inventory_summary():
         "out_of_stock": [],
     }
 
-    if 'STOCK_SUMMARY' in dir() and STOCK_SUMMARY is not None and len(STOCK_SUMMARY) > 0:
+    if STOCK_SUMMARY is not None and len(STOCK_SUMMARY) > 0:
         summary["total_items"] = len(STOCK_SUMMARY)
         summary["total_cost"] = round(STOCK_SUMMARY["total_cost"].sum(), 2) if "total_cost" in STOCK_SUMMARY.columns else 0
 
@@ -7454,7 +7457,7 @@ def api_inventory_summary():
             oos = STOCK_SUMMARY[STOCK_SUMMARY["in_stock"] <= 0]
             summary["out_of_stock"] = oos["display_name"].tolist()[:20] if "display_name" in oos.columns else []
 
-    return flask.jsonify(summary)
+    return _add_cors_headers(flask.jsonify(summary))
 
 
 @server.route("/api/valuation")
