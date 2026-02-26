@@ -530,6 +530,34 @@ def delete_quick_add(qa_id: int) -> bool:
         return False
 
 
+def save_config_value(key: str, value) -> bool:
+    """Save or update a config key/value pair in Supabase config table."""
+    client = _get_supabase_client()
+    if client is None:
+        return False
+    try:
+        # Upsert: insert or update if key exists
+        client.table("config").upsert({"key": key, "value": value}).execute()
+        return True
+    except Exception as e:
+        print(f"Failed to save config {key}: {e}")
+        return False
+
+
+def get_config_value(key: str, default=None):
+    """Get a single config value from Supabase."""
+    client = _get_supabase_client()
+    if client is None:
+        return default
+    try:
+        result = client.table("config").select("value").eq("key", key).execute()
+        if result.data and len(result.data) > 0:
+            return result.data[0]["value"]
+        return default
+    except Exception:
+        return default
+
+
 # ── Local-file loaders (fallback) ──────────────────────────────────────────
 
 def _load_etsy_local() -> pd.DataFrame:

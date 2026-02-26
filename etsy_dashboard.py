@@ -71,6 +71,7 @@ from supabase_loader import (
     sync_etsy_transactions as _sync_etsy_to_supabase,
     append_bank_transactions as _append_bank_to_supabase,
     append_etsy_transactions as _append_etsy_to_supabase,
+    save_config_value as _save_config_value,
 )
 
 RAILWAY_URL = os.environ.get("RAILWAY_URL", "https://web-production-7f385.up.railway.app")
@@ -7550,6 +7551,73 @@ def api_fees():
         },
         "as_percent_of_sales": round((total_fees / gross_sales * 100) if gross_sales > 0 else 0, 1),
     }))
+
+
+@server.route("/api/config/credit-card", methods=["GET", "POST", "OPTIONS"])
+def api_credit_card_config():
+    """Get or set credit card configuration (balance, limit, purchases)."""
+    global bb_cc_balance, bb_cc_limit, bb_cc_purchases, bb_cc_total_charged
+    global bb_cc_total_paid, bb_cc_available, bb_cc_asset_value, CONFIG
+
+    if flask.request.method == "OPTIONS":
+        return _add_cors_headers(flask.make_response())
+
+    if flask.request.method == "GET":
+        return _add_cors_headers(flask.jsonify({
+            "credit_limit": bb_cc_limit,
+            "current_balance": bb_cc_balance,
+            "total_charged": bb_cc_total_charged,
+            "total_paid": bb_cc_total_paid,
+            "available_credit": bb_cc_available,
+            "purchases": bb_cc_purchases,
+        }))
+
+    # POST: Update credit card config
+    try:
+        data = flask.request.get_json() or {}
+
+        # Allow setting balance directly OR via purchases
+        new_balance = data.get("balance")
+        new_limit = data.get("credit_limit", bb_cc_limit)
+        new_purchases = data.get("purchases", bb_cc_purchases)
+
+        # Build the config object
+        cc_config = {
+            "credit_limit": new_limit,
+            "purchases": new_purchases,
+            "payments": [],  # Payments are auto-detected from bank transactions
+        }
+
+        # If balance provided directly, create a synthetic purchase to represent it
+        if new_balance is not None and new_balance > 0:
+            # Calculate what total_charged should be: balance = charged - paid
+            # So charged = balance + paid
+            target_charged = new_balance + bb_cc_total_paid
+            cc_config["purchases"] = [{"amount": target_charged, "desc": "Credit Card Balance", "date": "2024-01-01"}]
+
+        # Save to Supabase
+        if _save_config_value("best_buy_cc", cc_config):
+            # Update global variables
+            CONFIG["best_buy_cc"] = cc_config
+            bb_cc_limit = cc_config["credit_limit"]
+            bb_cc_purchases = cc_config["purchases"]
+            bb_cc_total_charged = sum(p.get("amount", 0) for p in bb_cc_purchases)
+            bb_cc_balance = bb_cc_total_charged - bb_cc_total_paid
+            bb_cc_available = bb_cc_limit - bb_cc_balance
+            bb_cc_asset_value = bb_cc_total_charged
+
+            return _add_cors_headers(flask.jsonify({
+                "success": True,
+                "credit_limit": bb_cc_limit,
+                "current_balance": bb_cc_balance,
+                "total_charged": bb_cc_total_charged,
+                "total_paid": bb_cc_total_paid,
+                "available_credit": bb_cc_available,
+            }))
+        else:
+            return _add_cors_headers(flask.jsonify({"success": False, "error": "Failed to save config"})), 500
+    except Exception as e:
+        return _add_cors_headers(flask.jsonify({"success": False, "error": str(e)})), 500
 
 
 @server.route("/api/reload")
