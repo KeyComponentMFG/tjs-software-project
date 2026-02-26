@@ -7072,6 +7072,194 @@ def api_diagnostics():
     })
 
 
+# ── CORS helper for React app integration ────────────────────────────────────
+
+def _add_cors_headers(response):
+    """Add CORS headers to allow React app to call these endpoints."""
+    response.headers['Access-Control-Allow-Origin'] = '*'
+    response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
+    response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+    return response
+
+
+@server.after_request
+def after_request(response):
+    """Add CORS headers to all API responses."""
+    if flask.request.path.startswith('/api/'):
+        return _add_cors_headers(response)
+    return response
+
+
+# ── API Endpoints for React App Integration ──────────────────────────────────
+
+@server.route("/api/health")
+def api_health():
+    """Return business health score with sub-scores and grades."""
+    score, sub_scores, weights = _compute_health_score()
+    grade = "A" if score >= 80 else "B" if score >= 60 else "C" if score >= 40 else "D"
+
+    return flask.jsonify({
+        "score": score,
+        "grade": grade,
+        "sub_scores": sub_scores,
+        "weights": {k: round(v * 100) for k, v in weights.items()},
+        "breakdown": [
+            {"name": k, "score": sub_scores[k], "weight": round(weights[k] * 100)}
+            for k in sub_scores
+        ]
+    })
+
+
+@server.route("/api/briefing")
+def api_briefing():
+    """Return AI-generated daily briefing paragraphs."""
+    paragraphs = _generate_briefing()
+    return flask.jsonify({
+        "paragraphs": paragraphs,
+        "generated_at": pd.Timestamp.now().isoformat()
+    })
+
+
+@server.route("/api/actions")
+def api_actions():
+    """Return priority action items with impact estimates."""
+    actions = _generate_actions()
+    return flask.jsonify({
+        "actions": actions,
+        "count": len(actions)
+    })
+
+
+@server.route("/api/overview")
+def api_overview():
+    """Return complete dashboard overview for React app."""
+    score, sub_scores, weights = _compute_health_score()
+    grade = "A" if score >= 80 else "B" if score >= 60 else "C" if score >= 40 else "D"
+    briefing = _generate_briefing()
+    actions = _generate_actions()
+
+    return flask.jsonify({
+        "health": {
+            "score": score,
+            "grade": grade,
+            "sub_scores": sub_scores,
+        },
+        "briefing": briefing,
+        "actions": actions[:5],  # Top 5 actions
+        "kpis": {
+            "gross_sales": round(gross_sales, 2),
+            "net_revenue": round(etsy_net, 2),
+            "profit": round(real_profit, 2),
+            "profit_margin": round(real_profit_margin, 1),
+            "cash_on_hand": round(bank_cash_on_hand, 2),
+            "order_count": order_count,
+            "avg_order": round(avg_order, 2),
+        },
+        "monthly_trend": [
+            {"month": m, "revenue": round(monthly_sales.get(m, 0), 2)}
+            for m in months_sorted[-6:]
+        ] if months_sorted else [],
+        "expenses": {
+            "total_fees": round(total_fees, 2),
+            "shipping": round(total_shipping_cost, 2),
+            "marketing": round(total_marketing, 2),
+            "refunds": round(total_refunds, 2),
+            "owner_draws": round(bank_owner_draw_total, 2),
+        },
+        "bank": {
+            "deposits": round(bank_total_deposits, 2),
+            "debits": round(bank_total_debits, 2),
+            "balance": round(bank_cash_on_hand, 2),
+        }
+    })
+
+
+@server.route("/api/financials")
+def api_financials():
+    """Return detailed financial breakdown."""
+    return flask.jsonify({
+        "revenue": {
+            "gross_sales": round(gross_sales, 2),
+            "refunds": round(total_refunds, 2),
+            "net_sales": round(net_sales, 2),
+        },
+        "fees": {
+            "total": round(total_fees, 2),
+            "listing": round(listing_fees, 2),
+            "transaction": round(transaction_fees_product + transaction_fees_shipping, 2),
+            "processing": round(processing_fees, 2),
+            "marketing": round(total_marketing, 2),
+            "shipping_labels": round(total_shipping_cost, 2),
+        },
+        "profit": {
+            "etsy_net": round(etsy_net, 2),
+            "after_expenses": round(real_profit, 2),
+            "margin_percent": round(real_profit_margin, 1),
+        },
+        "bank": {
+            "total_deposits": round(bank_total_deposits, 2),
+            "total_debits": round(bank_total_debits, 2),
+            "cash_on_hand": round(bank_cash_on_hand, 2),
+            "categories": {k: round(v, 2) for k, v in bank_by_cat.items()},
+        },
+        "owner_draws": {
+            "total": round(bank_owner_draw_total, 2),
+            "tulsa": round(tulsa_draw_total, 2),
+            "texas": round(texas_draw_total, 2),
+        },
+        "shipping": {
+            "buyer_paid": round(buyer_paid_shipping, 2),
+            "label_costs": round(total_shipping_cost, 2),
+            "profit": round(shipping_profit, 2),
+            "margin": round(shipping_margin, 1),
+        },
+        "monthly": {
+            m: {
+                "sales": round(monthly_sales.get(m, 0), 2),
+                "fees": round(monthly_fees.get(m, 0), 2),
+                "shipping": round(monthly_shipping.get(m, 0), 2),
+                "orders": monthly_order_counts.get(m, 0),
+            }
+            for m in months_sorted[-12:]
+        } if months_sorted else {},
+    })
+
+
+@server.route("/api/tax")
+def api_tax():
+    """Return tax-related calculations."""
+    # Calculate tax estimates
+    net_income = real_profit
+    se_tax_rate = 0.153  # 15.3% self-employment
+    se_taxable = net_income * 0.9235  # 92.35% of net income
+    se_tax = se_taxable * se_tax_rate
+
+    # Estimate income tax (simplified 22% bracket)
+    taxable_income = net_income - (se_tax / 2)  # SE tax deduction
+    income_tax = taxable_income * 0.22
+
+    total_tax = se_tax + income_tax
+    quarterly = total_tax / 4
+
+    return flask.jsonify({
+        "net_income": round(net_income, 2),
+        "self_employment_tax": round(se_tax, 2),
+        "estimated_income_tax": round(income_tax, 2),
+        "total_estimated_tax": round(total_tax, 2),
+        "quarterly_payment": round(quarterly, 2),
+        "partnership_split": {
+            "partner_1": round(net_income / 2, 2),
+            "partner_2": round(net_income / 2, 2),
+        },
+        "deductions": {
+            "total_expenses": round(bank_biz_expense_total, 2) if 'bank_biz_expense_total' in dir() else 0,
+            "shipping": round(total_shipping_cost, 2),
+            "fees": round(total_fees, 2),
+            "marketing": round(total_marketing, 2),
+        }
+    })
+
+
 @server.route("/api/reload")
 def api_reload():
     """Force-reload all data from Supabase. Use after migrating data to refresh Railway."""
