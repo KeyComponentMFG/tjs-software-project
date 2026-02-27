@@ -1396,6 +1396,11 @@ def _cascade_reload(source="etsy"):
     _recompute_tax_years()
     _recompute_valuation()
     _rebuild_all_charts()
+    try:
+        from agents.governance import run_governance_async
+        run_governance_async()
+    except ImportError:
+        pass
 
 
 def _validate_etsy_csv(decoded_bytes):
@@ -7099,6 +7104,11 @@ app = dash.Dash(
     ],
 )
 server = app.server
+try:
+    from agents.governance import register_governance_routes
+    register_governance_routes(server)
+except ImportError:
+    pass
 app.title = "TJs Software Project"
 
 # Clean index template (no JS hacks needed — using dbc.Select for Darkly-styled dropdowns)
@@ -8193,6 +8203,11 @@ def api_reload():
         _recompute_tax_years()
         _recompute_valuation()
         _rebuild_all_charts()
+        try:
+            from agents.governance import run_governance_async
+            run_governance_async()
+        except ImportError:
+            pass
 
         # Parity check: compare api_reload values vs expected
         _check = round(DATA["Net_Clean"].sum(), 2)
