@@ -143,6 +143,32 @@ input:focus, textarea:focus {
 a { color: #00d4ff; text-decoration: none; }
 a:hover { color: #33ddff; text-decoration: underline; }
 
+/* ── Inventory Editor — inline rows ─────────────────────────────────── */
+.item-row {
+    transition: background-color 0.15s ease, border-left-color 0.15s ease;
+}
+.item-row:hover {
+    background-color: #ffffff08 !important;
+}
+/* Row inputs — comfortable 34px height */
+.item-row input[type="text"],
+.item-row input[type="number"] {
+    padding: 6px 10px !important;
+    border-radius: 6px !important;
+    height: 34px !important;
+    font-size: 13px !important;
+}
+.item-row .form-select {
+    padding: 4px 8px !important;
+    border-radius: 6px !important;
+    height: 34px !important;
+    font-size: 13px !important;
+}
+
+.order-header-compact {
+    user-select: none;
+}
+
 /* ── Responsive helpers ──────────────────────────────────────────────── */
 @media (max-width: 768px) {
     .tab-container { font-size: 12px; }

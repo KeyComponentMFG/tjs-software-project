@@ -320,14 +320,26 @@ def parse_money(val):
     except Exception:
         return 0.0
 
-def _normalize_product_name(name):
+
+def _fmt(val, prefix="$", fmt=",.2f", unknown="UNKNOWN"):
+    """Format a number for display, or show UNKNOWN if None."""
+    if val is None:
+        return unknown
+    return f"{prefix}{val:{fmt}}"
+
+
+def _normalize_product_name(name, aliases=None):
     """Normalize Etsy product names that get truncated differently in CSVs.
-    Strips trailing '...' and everything after the first ' | ' separator
-    so that the same listing always groups under one name."""
+    If aliases dict is provided, maps known variants to canonical names.
+    Otherwise strips trailing '...' and everything after ' | ' separator."""
     if not isinstance(name, str):
         return name
     name = name.rstrip(".")  # strip trailing "..."
-    # Cut at first pipe separator (subtitle / variant info)
+    if aliases:
+        for canonical, variants in aliases.items():
+            if name in variants or name == canonical:
+                return canonical
+    # Fallback for unmapped names: strip after |
     if " | " in name:
         name = name.split(" | ")[0]
     return name.strip()
@@ -337,6 +349,9 @@ def _merge_product_prefixes(series):
     """Second pass: merge truncated product names that are prefixes of known
     shorter canonical names (e.g. 'Ski Gondola Table Lamp Rustic Cabin Deco'
     merges into 'Ski Gondola Table Lamp' if that canonical name exists)."""
+    aliases = CONFIG.get("listing_aliases", {})
+    if aliases:
+        return series.apply(lambda n: _normalize_product_name(n, aliases=aliases))
     canonical = sorted(series.unique(), key=len)  # shortest first
     mapping = {}
     for name in canonical:
@@ -374,10 +389,8 @@ total_marketing = abs(mkt_df["Net_Clean"].sum())
 total_taxes = abs(tax_df["Net_Clean"].sum())
 total_payments = payment_df["Net_Clean"].sum()  # Refund charges (positive = credit back)
 
-etsy_net = gross_sales - total_fees - total_shipping_cost - total_marketing - total_refunds - total_taxes + total_payments
 order_count = len(sales_df)
 avg_order = gross_sales / order_count if order_count else 0
-etsy_net_margin = (etsy_net / gross_sales * 100) if gross_sales else 0
 
 # ── Load Inventory / COGS Data ─────────────────────────────────────────────
 # INVOICES already loaded by supabase_loader
@@ -909,19 +922,12 @@ def _reload_etsy_data():
     ship_insurance = abs(ship_df[ship_df["Title"].str.contains("insurance", case=False, na=False)]["Net_Clean"].sum())
     ship_insurance_count = len(ship_df[ship_df["Title"].str.contains("insurance", case=False, na=False)])
 
-    # Buyer paid shipping
-    ship_fee_gross = abs(
-        fee_df[fee_df["Title"].str.contains("Transaction fee: Shipping", na=False)]["Net_Clean"].sum()
-    )
-    ship_fee_credits_amt = abs(
-        fee_df[fee_df["Title"].str.contains("Credit for transaction fee on shipping", na=False)]["Net_Clean"].sum()
-    )
-    net_ship_tx_fees = ship_fee_gross - ship_fee_credits_amt
-    buyer_paid_shipping = net_ship_tx_fees / 0.065 if net_ship_tx_fees else 0
-    shipping_profit = buyer_paid_shipping - total_shipping_cost
-    shipping_margin = (shipping_profit / buyer_paid_shipping * 100) if buyer_paid_shipping else 0
+    # Buyer paid shipping — NOT available in Etsy CSV (only fee amount exists)
+    buyer_paid_shipping = None  # was: net_ship_tx_fees / 0.065 — reverse-engineered guess removed
+    shipping_profit = None      # depends on buyer_paid_shipping
+    shipping_margin = None      # depends on buyer_paid_shipping
 
-    # Paid vs free shipping orders
+    # Paid vs free shipping orders (counts are still real)
     ship_fee_rows = fee_df[fee_df["Title"].str.contains("Transaction fee: Shipping", na=False)].copy()
     orders_with_paid_shipping = set(ship_fee_rows["Info"].dropna())
     all_order_ids = set(sales_df["Title"].str.extract(r"(Order #\d+)", expand=False).dropna())
@@ -931,11 +937,14 @@ def _reload_etsy_data():
     avg_outbound_label = usps_outbound / usps_outbound_count if usps_outbound_count else 0
 
     # Product performance — use actual sale amounts joined via order number
+    _listing_aliases = CONFIG.get("listing_aliases", {})
     prod_fees = fee_df[
         fee_df["Title"].str.startswith("Transaction fee:", na=False)
         & ~fee_df["Title"].str.contains("Shipping", na=False)
     ].copy()
-    prod_fees["Product"] = prod_fees["Title"].str.replace("Transaction fee: ", "", regex=False).apply(_normalize_product_name)
+    prod_fees["Product"] = prod_fees["Title"].str.replace("Transaction fee: ", "", regex=False).apply(
+        lambda n: _normalize_product_name(n, aliases=_listing_aliases)
+    )
     product_fee_totals = prod_fees.groupby("Product")["Net_Clean"].sum().abs().sort_values(ascending=False)
     _order_to_product = prod_fees.dropna(subset=["Info"]).drop_duplicates(subset=["Info"]).set_index("Info")["Product"]
     _sales_with_product = sales_df.copy()
@@ -945,7 +954,7 @@ def _reload_etsy_data():
     if len(_sales_with_product) > 0:
         product_revenue_est = _sales_with_product.groupby("Product")["Net_Clean"].sum().sort_values(ascending=False).round(2)
     else:
-        product_revenue_est = (product_fee_totals / 0.065).round(2) if len(product_fee_totals) > 0 else pd.Series(dtype=float)
+        product_revenue_est = pd.Series(dtype=float)  # no guessing — was: product_fee_totals / 0.065
 
     # Monthly breakdown
     months_sorted = sorted(DATA["Month"].dropna().unique())
@@ -988,6 +997,9 @@ def _reload_etsy_data():
     daily_ship_cost = ship_df.groupby(ship_df["Date_Parsed"].dt.date)["Net_Clean"].sum()
     daily_mkt_cost = mkt_df.groupby(mkt_df["Date_Parsed"].dt.date)["Net_Clean"].sum()
     daily_refund_cost = refund_df.groupby(refund_df["Date_Parsed"].dt.date)["Net_Clean"].sum()
+    daily_buyer_fee = buyer_fee_df.groupby(buyer_fee_df["Date_Parsed"].dt.date)["Net_Clean"].sum() if len(buyer_fee_df) else pd.Series(dtype=float)
+    daily_tax = tax_df.groupby(tax_df["Date_Parsed"].dt.date)["Net_Clean"].sum() if len(tax_df) else pd.Series(dtype=float)
+    daily_payment = payment_df.groupby(payment_df["Date_Parsed"].dt.date)["Net_Clean"].sum() if len(payment_df) else pd.Series(dtype=float)
 
     all_dates = sorted(set(daily_sales.index) | set(daily_fee_cost.index) | set(daily_ship_cost.index))
     daily_df = pd.DataFrame(index=all_dates)
@@ -996,9 +1008,14 @@ def _reload_etsy_data():
     daily_df["shipping"] = pd.Series(daily_ship_cost)
     daily_df["marketing"] = pd.Series(daily_mkt_cost)
     daily_df["refunds"] = pd.Series(daily_refund_cost)
+    daily_df["buyer_fees"] = pd.Series(daily_buyer_fee)
+    daily_df["taxes"] = pd.Series(daily_tax)
+    daily_df["payments"] = pd.Series(daily_payment)
     daily_df["orders"] = pd.Series(daily_orders)
     daily_df = daily_df.fillna(0)
-    daily_df["profit"] = daily_df["revenue"] + daily_df["fees"] + daily_df["shipping"] + daily_df["marketing"] + daily_df["refunds"]
+    daily_df["profit"] = (daily_df["revenue"] + daily_df["fees"] + daily_df["shipping"]
+                          + daily_df["marketing"] + daily_df["refunds"]
+                          + daily_df["buyer_fees"] + daily_df["taxes"] + daily_df["payments"])
     daily_df["cum_revenue"] = daily_df["revenue"].cumsum()
     daily_df["cum_profit"] = daily_df["profit"].cumsum()
 
@@ -1718,10 +1735,14 @@ def _icon_badge(text, color):
     })
 
 
-def _build_kpi_pill(icon, label, value, color, subtitle="", detail=""):
-    """Premium KPI pill with gradient icon, bold value, depth shadows, and optional expandable detail."""
+def _build_kpi_pill(icon, label, value, color, subtitle="", detail="", status=None):
+    """Premium KPI pill with gradient icon, bold value, depth shadows, and optional expandable detail.
+    status: 'verified', 'estimated', 'na' for verification badge."""
+    label_children = [html.Span(label)]
+    if status:
+        label_children.append(_verification_badge(status))
     text_children = [
-        html.Div(label, style={"color": GRAY, "fontSize": "11px", "fontWeight": "600",
+        html.Div(label_children, style={"color": GRAY, "fontSize": "11px", "fontWeight": "600",
                                 "letterSpacing": "1.2px", "textTransform": "uppercase",
                                 "lineHeight": "1"}),
         html.Div(value, style={"color": WHITE, "fontSize": "28px", "fontWeight": "bold",
@@ -1883,19 +1904,12 @@ ship_credit_count = len(ship_df[ship_df["Title"].str.contains("Credit for", na=F
 ship_insurance = abs(ship_df[ship_df["Title"].str.contains("insurance", case=False, na=False)]["Net_Clean"].sum())
 ship_insurance_count = len(ship_df[ship_df["Title"].str.contains("insurance", case=False, na=False)])
 
-# Buyer paid shipping
-ship_fee_gross = abs(
-    fee_df[fee_df["Title"].str.contains("Transaction fee: Shipping", na=False)]["Net_Clean"].sum()
-)
-ship_fee_credits_amt = abs(
-    fee_df[fee_df["Title"].str.contains("Credit for transaction fee on shipping", na=False)]["Net_Clean"].sum()
-)
-net_ship_tx_fees = ship_fee_gross - ship_fee_credits_amt
-buyer_paid_shipping = net_ship_tx_fees / 0.065
-shipping_profit = buyer_paid_shipping - total_shipping_cost
-shipping_margin = (shipping_profit / buyer_paid_shipping * 100) if buyer_paid_shipping else 0
+# Buyer paid shipping — NOT available in Etsy CSV (only fee amount exists)
+buyer_paid_shipping = None   # was: net_ship_tx_fees / 0.065 — reverse-engineered guess removed
+shipping_profit = None       # depends on buyer_paid_shipping
+shipping_margin = None       # depends on buyer_paid_shipping
 
-# Paid vs free shipping orders
+# Paid vs free shipping orders (counts are still real)
 ship_fee_rows = fee_df[fee_df["Title"].str.contains("Transaction fee: Shipping", na=False)].copy()
 orders_with_paid_shipping = set(ship_fee_rows["Info"].dropna())
 all_order_ids = set(sales_df["Title"].str.extract(r"(Order #\d+)", expand=False).dropna())
@@ -1907,30 +1921,23 @@ avg_outbound_label = usps_outbound / usps_outbound_count if usps_outbound_count 
 
 
 def _recompute_shipping_details():
-    """Recompute paid-vs-free shipping estimates and return label matches."""
+    """Recompute return label matches. Estimates removed — buyer-paid shipping not in CSV."""
     global est_label_cost_paid_orders, paid_shipping_profit, est_label_cost_free_orders
     global refund_buyer_shipping, est_refund_label_cost, return_label_matches
 
-    est_label_cost_paid_orders = paid_ship_count * avg_outbound_label
-    paid_shipping_profit = buyer_paid_shipping - est_label_cost_paid_orders
-    est_label_cost_free_orders = free_ship_count * avg_outbound_label
+    est_label_cost_paid_orders = None   # was: paid_ship_count * avg_outbound_label
+    paid_shipping_profit = None         # was: buyer_paid_shipping - est_label_cost_paid_orders
+    est_label_cost_free_orders = None   # was: free_ship_count * avg_outbound_label
 
     # Refunded orders shipping
     refund_df_orders = refund_df.copy()
     refund_df_orders["Order"] = refund_df_orders["Title"].str.extract(r"(Order #\d+)")
     refunded_order_ids = set(refund_df_orders["Order"].dropna())
 
-    refund_ship_fees = 0.0
-    for oid in refunded_order_ids:
-        order_ship = fee_df[
-            (fee_df["Info"] == oid) & fee_df["Title"].str.contains("Transaction fee: Shipping", na=False)
-        ]
-        if len(order_ship):
-            refund_ship_fees += abs(order_ship["Net_Clean"].sum())
-    refund_buyer_shipping = refund_ship_fees / 0.065 if refund_ship_fees else 0
-    est_refund_label_cost = len(refunded_order_ids) * avg_outbound_label
+    refund_buyer_shipping = None        # was: refund_ship_fees / 0.065
+    est_refund_label_cost = None        # was: len(refunded_order_ids) * avg_outbound_label
 
-    # Match return labels to refunds by date proximity
+    # Match return labels to refunds by date proximity (still real data)
     return_labels = ship_df[ship_df["Title"] == "USPS return shipping label"].sort_values("Date_Parsed")
     return_label_matches.clear()
     for _, ret in return_labels.iterrows():
@@ -1962,20 +1969,23 @@ def _recompute_shipping_details():
 
 
 # Initialize module-level variables before first call
-est_label_cost_paid_orders = 0.0
-paid_shipping_profit = 0.0
-est_label_cost_free_orders = 0.0
-refund_buyer_shipping = 0.0
-est_refund_label_cost = 0.0
+est_label_cost_paid_orders = None
+paid_shipping_profit = None
+est_label_cost_free_orders = None
+refund_buyer_shipping = None
+est_refund_label_cost = None
 return_label_matches = []
 _recompute_shipping_details()
 
 # Product performance — use actual sale amounts joined via order number
+_listing_aliases = CONFIG.get("listing_aliases", {})
 prod_fees = fee_df[
     fee_df["Title"].str.startswith("Transaction fee:", na=False)
     & ~fee_df["Title"].str.contains("Shipping", na=False)
 ].copy()
-prod_fees["Product"] = prod_fees["Title"].str.replace("Transaction fee: ", "", regex=False).apply(_normalize_product_name)
+prod_fees["Product"] = prod_fees["Title"].str.replace("Transaction fee: ", "", regex=False).apply(
+    lambda n: _normalize_product_name(n, aliases=_listing_aliases)
+)
 product_fee_totals = prod_fees.groupby("Product")["Net_Clean"].sum().abs().sort_values(ascending=False)
 # Map order IDs to product names via fee rows
 _order_to_product = prod_fees.dropna(subset=["Info"]).drop_duplicates(subset=["Info"]).set_index("Info")["Product"]
@@ -1987,7 +1997,7 @@ _sales_with_product["Product"] = _merge_product_prefixes(_sales_with_product["Pr
 if len(_sales_with_product) > 0:
     product_revenue_est = _sales_with_product.groupby("Product")["Net_Clean"].sum().sort_values(ascending=False).round(2)
 else:
-    product_revenue_est = (product_fee_totals / 0.065).round(2) if len(product_fee_totals) > 0 else pd.Series(dtype=float)
+    product_revenue_est = pd.Series(dtype=float)  # no guessing — was: product_fee_totals / 0.065
 
 # Monthly breakdown
 months_sorted = sorted(DATA["Month"].dropna().unique())
@@ -2034,6 +2044,9 @@ daily_fee_cost = fee_df.groupby(fee_df["Date_Parsed"].dt.date)["Net_Clean"].sum(
 daily_ship_cost = ship_df.groupby(ship_df["Date_Parsed"].dt.date)["Net_Clean"].sum()
 daily_mkt_cost = mkt_df.groupby(mkt_df["Date_Parsed"].dt.date)["Net_Clean"].sum()
 daily_refund_cost = refund_df.groupby(refund_df["Date_Parsed"].dt.date)["Net_Clean"].sum()
+daily_buyer_fee = buyer_fee_df.groupby(buyer_fee_df["Date_Parsed"].dt.date)["Net_Clean"].sum() if len(buyer_fee_df) else pd.Series(dtype=float)
+daily_tax = tax_df.groupby(tax_df["Date_Parsed"].dt.date)["Net_Clean"].sum() if len(tax_df) else pd.Series(dtype=float)
+daily_payment = payment_df.groupby(payment_df["Date_Parsed"].dt.date)["Net_Clean"].sum() if len(payment_df) else pd.Series(dtype=float)
 
 # Build a unified daily DataFrame
 all_dates = sorted(set(daily_sales.index) | set(daily_fee_cost.index) | set(daily_ship_cost.index))
@@ -2043,9 +2056,14 @@ daily_df["fees"] = pd.Series(daily_fee_cost)
 daily_df["shipping"] = pd.Series(daily_ship_cost)
 daily_df["marketing"] = pd.Series(daily_mkt_cost)
 daily_df["refunds"] = pd.Series(daily_refund_cost)
+daily_df["buyer_fees"] = pd.Series(daily_buyer_fee)
+daily_df["taxes"] = pd.Series(daily_tax)
+daily_df["payments"] = pd.Series(daily_payment)
 daily_df["orders"] = pd.Series(daily_orders)
 daily_df = daily_df.fillna(0)
-daily_df["profit"] = daily_df["revenue"] + daily_df["fees"] + daily_df["shipping"] + daily_df["marketing"] + daily_df["refunds"]
+daily_df["profit"] = (daily_df["revenue"] + daily_df["fees"] + daily_df["shipping"]
+                      + daily_df["marketing"] + daily_df["refunds"]
+                      + daily_df["buyer_fees"] + daily_df["taxes"] + daily_df["payments"])
 daily_df["cum_revenue"] = daily_df["revenue"].cumsum()
 daily_df["cum_profit"] = daily_df["profit"].cumsum()
 
@@ -2240,49 +2258,16 @@ def run_analytics():
                 f"Monthly margins: {' -> '.join(f'{m:.0f}%' for m in margin_vals)}.{cause_text}{rec_text}",
                 "good" if margin_trend > 2 else "bad" if margin_trend < -2 else "info"))
 
-    # 3. SHIPPING ROOT CAUSE
-    if shipping_profit < 0:
-        reasons = []
-        free_cost = free_ship_count * avg_outbound_label
-        paid_profit_val = buyer_paid_shipping - (paid_ship_count * avg_outbound_label)
-        reasons.append(
-            f"FREE SHIPPING DRAIN: {free_ship_count} free-shipping orders cost ~${free_cost:,.0f} in labels "
-            f"with $0 shipping revenue. That alone accounts for "
-            f"{'more than the total shipping loss' if free_cost > abs(shipping_profit) else f'${free_cost:,.0f} of the ${abs(shipping_profit):,.0f} loss'}."
-        )
-        if paid_profit_val > 0:
-            reasons.append(
-                f"PAID ORDERS ARE FINE: Orders where buyers paid shipping netted +${paid_profit_val:,.0f}. "
-                f"The problem is purely the free shipping orders."
-            )
-        else:
-            avg_buyer_ship = buyer_paid_shipping / paid_ship_count if paid_ship_count else 0
-            reasons.append(
-                f"EVEN PAID SHIPPING LOSES: Buyers pay ${avg_buyer_ship:.2f} avg but labels cost ${avg_outbound_label:.2f} avg. "
-                f"Shipping prices need to go up by at least ${avg_outbound_label - avg_buyer_ship:.2f}/order."
-            )
-        if asendia_labels > 0:
-            intl_avg = asendia_labels / asendia_count if asendia_count else 0
-            reasons.append(
-                f"INTERNATIONAL IS EXPENSIVE: {asendia_count} Asendia labels at ${intl_avg:.2f} avg "
-                f"(vs ${avg_outbound_label:.2f} domestic = {intl_avg / avg_outbound_label:.1f}x more). "
-                f"Total intl shipping cost: ${asendia_labels:,.0f}."
-            )
-        fix_text = (
-            f"FIX: Option A) Raise prices on free-shipping listings by ${avg_outbound_label:.0f}-${avg_outbound_label + 3:.0f} "
-            f"to absorb label cost -- would recover ~${free_cost:,.0f}. "
-            f"Option B) Switch to calculated shipping on heavy/large items. "
-            f"Option C) Set minimum order for free shipping (e.g., orders over $50)."
-        )
-        insights.append((3, "SHIPPING LEAK",
-            f"Losing ${abs(shipping_profit):,.2f} on shipping -- here's why",
-            " ".join(reasons) + " " + fix_text, "bad"))
-    else:
-        insights.append((3, "SHIPPING",
-            f"Shipping is profitable: +${shipping_profit:,.2f}",
-            f"Buyers paid ~${buyer_paid_shipping:,.0f} for shipping, labels cost ${total_shipping_cost:,.0f}. "
-            f"Netting ${shipping_profit:,.0f}. Keep monitoring -- USPS rates change annually (typically January).",
-            "good"))
+    # 3. SHIPPING OVERVIEW (buyer-paid amount unavailable — focus on known costs)
+    free_cost = free_ship_count * avg_outbound_label if avg_outbound_label else 0
+    insights.append((3, "SHIPPING COSTS",
+        f"Total label costs: ${total_shipping_cost:,.2f} ({paid_ship_count} paid + {free_ship_count} free shipping orders)",
+        f"Actual label spend: ${total_shipping_cost:,.2f}. "
+        f"Avg outbound label: ${avg_outbound_label:.2f}. "
+        f"{free_ship_count} free-shipping orders cost ~${free_cost:,.0f} in absorbed labels. "
+        f"Buyer-paid shipping amount is NOT available in the Etsy CSV — profit/loss on shipping cannot be calculated. "
+        f"TIP: Raise free-shipping listing prices by ${avg_outbound_label:.0f}-${avg_outbound_label + 3:.0f} to offset label costs.",
+        "info"))
 
     # 4. MARKETING DEEP DIVE
     if total_marketing > 0 and gross_sales > 0:
@@ -2500,13 +2485,13 @@ def run_analytics():
         "info"))
 
     # 11. INVENTORY / COGS ANALYSIS
-    cogs_pct = total_inventory_cost / gross_sales * 100 if gross_sales else 0
+    cogs_pct = true_inventory_cost / gross_sales * 100 if gross_sales else 0
     biggest_cat = inv_by_category.index[0] if len(inv_by_category) > 0 else "Unknown"
     biggest_cat_amt = inv_by_category.values[0] if len(inv_by_category) > 0 else 0
     biggest_cat_pct = biggest_cat_amt / INV_ITEMS["total"].sum() * 100 if len(INV_ITEMS) > 0 and INV_ITEMS["total"].sum() > 0 else 0
 
     inv_detail = (
-        f"Total supplies: ${total_inventory_cost:,.2f} ({inv_order_count} Amazon orders). "
+        f"Total supplies: ${true_inventory_cost:,.2f} ({inv_order_count} Amazon orders). "
         f"Supply costs are {cogs_pct:.1f}% of gross revenue. "
         f"Profit: ${profit:,.2f} ({profit_margin:.1f}% margin). "
         f"BIGGEST COST DRIVER: {biggest_cat} at ${biggest_cat_amt:,.2f} ({biggest_cat_pct:.0f}% of item spend). "
@@ -2531,7 +2516,7 @@ def run_analytics():
         )
 
     insights.append((11, "SUPPLIES & MATERIALS",
-        f"${total_inventory_cost:,.2f} in supplies ({cogs_pct:.1f}% of revenue) -- Profit: ${profit:,.2f}",
+        f"${true_inventory_cost:,.2f} in supplies ({cogs_pct:.1f}% of revenue) -- Profit: ${profit:,.2f}",
         inv_detail,
         "good" if cogs_pct < 25 else "warning" if cogs_pct < 40 else "bad"))
 
@@ -2551,11 +2536,14 @@ _recompute_analytics()
 # ── Chatbot Engine ──────────────────────────────────────────────────────────
 
 def _build_chat_context():
-    """Build a comprehensive data summary string for the AI chatbot."""
+    """Build a comprehensive data summary string for the AI chatbot.
+    Sections labeled VERIFIED, ESTIMATED, or UNAVAILABLE."""
     lines = []
 
+    lines.append("=== VERIFIED METRICS (from source records — cite as facts) ===")
+    lines.append("")
     # Revenue & Orders
-    lines.append("=== REVENUE & ORDERS ===")
+    lines.append("--- REVENUE & ORDERS ---")
     lines.append(f"Gross Sales: ${gross_sales:,.2f}")
     lines.append(f"Orders: {order_count} over {days_active} days ({order_count/days_active:.1f}/day)")
     lines.append(f"Average Order Value: ${avg_order:,.2f}")
@@ -2596,8 +2584,8 @@ def _build_chat_context():
     # Shipping
     lines.append("\n=== SHIPPING ===")
     lines.append(f"Total shipping cost: ${total_shipping_cost:,.2f}")
-    lines.append(f"Buyers paid: ${buyer_paid_shipping:,.2f}")
-    lines.append(f"Shipping P/L: ${shipping_profit:,.2f} ({shipping_margin:.1f}%)")
+    lines.append(f"Buyers paid: UNKNOWN (not in Etsy CSV)")
+    lines.append(f"Shipping P/L: UNKNOWN (depends on buyer-paid shipping amount)")
     lines.append(f"USPS outbound: {usps_outbound_count} labels, ${usps_outbound:,.2f} (avg ${avg_outbound_label:.2f})")
     lines.append(f"USPS returns: {usps_return_count} labels, ${usps_return:,.2f}")
     lines.append(f"Asendia (intl): {asendia_count} labels, ${asendia_labels:,.2f}")
@@ -2712,6 +2700,26 @@ def _build_chat_context():
     lines.append(f"Break-even revenue: ${_breakeven_monthly:,.2f}/month")
     lines.append(f"Break-even orders: {_breakeven_orders:.0f}/month")
 
+    # ESTIMATED section
+    lines.append("\n\n=== ESTIMATED METRICS (approximations — disclose method when citing) ===")
+    lines.append("")
+    lines.append(f"Income Tax: estimated using progressive federal brackets (single filer)")
+    lines.append(f"Revenue Projections: LinearRegression on monthly data (R² shown for confidence)")
+    lines.append(f"Business Valuation: industry multiples applied to annualized revenue/SDE")
+    lines.append(f"Health Score: weighted composite of profitability, growth, diversity, cash, debt, shipping")
+    lines.append(f"Annualized Metrics: extrapolated from {days_active} days of data")
+    lines.append(f"Per-order label cost estimates: REMOVED (labels don't carry order numbers)")
+
+    # UNAVAILABLE section
+    lines.append("\n\n=== UNAVAILABLE DATA (do NOT make up values for these) ===")
+    lines.append("")
+    lines.append("Buyer-Paid Shipping: NOT in Etsy Payments CSV (only the 6.5% fee is recorded)")
+    lines.append("Shipping Profit/Loss: Cannot be calculated without buyer-paid amounts")
+    lines.append("Shipping Margin: Cannot be calculated without buyer-paid amounts")
+    lines.append("Refund Buyer Shipping: NOT in Etsy Payments CSV")
+    lines.append("Per-Order Label Costs: Labels don't carry order numbers")
+    lines.append("Per-Order COGS: No link between inventory purchases and specific orders")
+
     return "\n".join(lines)
 
 
@@ -2729,7 +2737,12 @@ def _chatbot_answer_claude(question, history, api_key):
         "- Be specific with dollar amounts, percentages, and counts.\n"
         "- Be concise but thorough. Use markdown formatting.\n"
         "- When giving advice, back it up with the actual numbers from the data.\n"
-        "- If asked about something not in the data, say so honestly.\n"
+        "- The data is organized into VERIFIED, ESTIMATED, and UNAVAILABLE sections.\n"
+        "- Only cite VERIFIED metrics as facts.\n"
+        "- When citing ESTIMATED metrics, always say 'estimated' and briefly state the method.\n"
+        "- Never present UNAVAILABLE data as having values — explain what data would be needed.\n"
+        "- If asked about buyer-paid shipping, shipping profit, or shipping margin: say these are "
+        "unavailable because the Etsy Payments CSV only records the fee, not the buyer-paid amount.\n"
         "- The data covers Oct 2025 through Feb 2026.\n\n"
         f"=== BUSINESS DATA ===\n{ctx}"
     )
@@ -2860,22 +2873,20 @@ def _chatbot_answer_inner(question):
                 f"**Paid vs Free Shipping:**\n\n"
                 f"- Orders with paid shipping: {paid_ship_count}\n"
                 f"- Orders with free shipping: {free_ship_count}\n\n"
-                f"**Paid shipping orders:**\n"
-                f"- Buyers paid: ~${buyer_paid_shipping:,.2f}\n"
-                f"- Estimated label cost: ~${est_label_cost_paid_orders:,.2f}\n"
-                f"- Profit from paid shipping: ${paid_shipping_profit:,.2f}\n\n"
-                f"**Free shipping orders:**\n"
-                f"- You absorbed: ~${est_label_cost_free_orders:,.2f} in labels\n"
-                f"- This is your biggest shipping loss"
+                f"**Note:** Buyer-paid shipping amounts are NOT available in the Etsy CSV. "
+                f"Only the transaction fee on shipping is recorded — the actual amount buyers paid is unknown.\n\n"
+                f"**Known costs:**\n"
+                f"- Avg outbound label: ${avg_outbound_label:.2f}\n"
+                f"- Total label spend: ${total_shipping_cost:,.2f}"
             )
 
         if any(w in q for w in ["profit", "loss", "making", "losing"]):
             return (
-                f"**Shipping Profit/Loss:** ${shipping_profit:,.2f} ({'PROFIT' if shipping_profit > 0 else 'LOSS'})\n\n"
-                f"- Buyers paid: ~${buyer_paid_shipping:,.2f}\n"
+                f"**Shipping Profit/Loss:** UNKNOWN\n\n"
+                f"Buyer-paid shipping amounts are not available in the Etsy Payments CSV. "
+                f"We can only see the fee Etsy charged on shipping, not what the buyer paid.\n\n"
+                f"**What we DO know (verified from source records):**\n"
                 f"- Total label costs: ${total_shipping_cost:,.2f}\n"
-                f"- Margin: {shipping_margin:.1f}%\n\n"
-                f"Breakdown:\n"
                 f"- USPS outbound: ${usps_outbound:,.2f} ({usps_outbound_count} labels, avg ${avg_outbound_label:.2f})\n"
                 f"- USPS returns: ${usps_return:,.2f} ({usps_return_count} labels)\n"
                 f"- Asendia (intl): ${asendia_labels:,.2f} ({asendia_count} labels)\n"
@@ -2885,9 +2896,10 @@ def _chatbot_answer_inner(question):
 
         return (
             f"**Shipping Overview:**\n\n"
-            f"- Total shipping cost: ${total_shipping_cost:,.2f}\n"
-            f"- Buyers paid for shipping: ~${buyer_paid_shipping:,.2f}\n"
-            f"- **Shipping P/L: ${shipping_profit:,.2f}** ({shipping_margin:.1f}%)\n\n"
+            f"- Total shipping cost (VERIFIED): ${total_shipping_cost:,.2f}\n"
+            f"- Buyers paid for shipping: UNKNOWN (not in Etsy CSV)\n"
+            f"- Shipping P/L: UNKNOWN\n\n"
+            f"**Label breakdown (VERIFIED):**\n"
             f"- USPS outbound: {usps_outbound_count} labels, ${usps_outbound:,.2f} (avg ${avg_outbound_label:.2f})\n"
             f"- USPS returns: {usps_return_count} labels, ${usps_return:,.2f}\n"
             f"- Asendia (intl): {asendia_count} labels, ${asendia_labels:,.2f}\n"
@@ -2951,14 +2963,14 @@ def _chatbot_answer_inner(question):
                              "what sells", "which item", "which product", "worst seller", "worst selling"]):
         if any(w in q for w in ["worst", "bottom", "least", "slowest"]):
             bottom = product_revenue_est.tail(10)
-            lines = ["**Bottom 10 Products by Estimated Revenue:**\n"]
+            lines = ["**Bottom 10 Products by Revenue:**\n"]
             for i, (name, rev) in enumerate(bottom.items(), 1):
                 lines.append(f"{i}. {name[:50]} -- ${rev:,.2f}")
             return "\n".join(lines)
 
         top = product_revenue_est.head(10)
         total_prod = product_revenue_est.sum()
-        lines = ["**Top 10 Products by Estimated Revenue:**\n"]
+        lines = ["**Top 10 Products by Revenue:**\n"]
         for i, (name, rev) in enumerate(top.items(), 1):
             pct = rev / total_prod * 100 if total_prod else 0
             lines.append(f"{i}. {name[:50]} -- ${rev:,.2f} ({pct:.1f}%)")
@@ -2979,8 +2991,8 @@ def _chatbot_answer_inner(question):
                 est_units = len(prod_fee_rows)
                 return (
                     f"**{prod_name}**\n\n"
-                    f"- Estimated revenue: ${prod_rev:,.2f}\n"
-                    f"- Estimated units sold: {est_units}\n"
+                    f"- Revenue: ${prod_rev:,.2f}\n"
+                    f"- Units sold: ~{est_units}\n"
                     f"- Avg per sale: ${prod_rev / est_units:,.2f}" if est_units else f"- Est revenue: ${prod_rev:,.2f}"
                 )
 
@@ -3315,8 +3327,8 @@ def _chatbot_answer_inner(question):
             avg_sale = prod_rev / est_units if est_units else prod_rev
             return (
                 f"**{prod_name}**\n\n"
-                f"- Estimated revenue: ${prod_rev:,.2f}\n"
-                f"- Estimated units sold: {est_units}\n"
+                f"- Revenue: ${prod_rev:,.2f}\n"
+                f"- Units sold: ~{est_units}\n"
                 f"- Avg per sale: ${avg_sale:,.2f}"
             )
 
@@ -3424,12 +3436,18 @@ def _recompute_tax_years():
         yr_total_draws = yr_tulsa_draws + yr_texas_draws
 
         # Operating expenses (non-inventory bank expenses)
-        _biz_cats = ["Shipping", "Craft Supplies", "Etsy Fees", "Subscriptions",
-                     "AliExpress Supplies", "Business Credit Card"]
-        yr_bank_biz_expense = sum(yr_bank_by_cat.get(c, 0) for c in _biz_cats)
+        # NOTE: "Shipping" and "Etsy Fees" bank categories overlap with Etsy-side
+        # deductions already subtracted in yr_etsy_net — exclude them to avoid
+        # double-counting. Only subtract bank expenses NOT already in Etsy net.
+        _all_biz_cats = ["Shipping", "Craft Supplies", "Etsy Fees", "Subscriptions",
+                         "AliExpress Supplies", "Business Credit Card"]
+        yr_bank_biz_expense = sum(yr_bank_by_cat.get(c, 0) for c in _all_biz_cats)
+        _non_etsy_cats = ["Craft Supplies", "Subscriptions",
+                          "AliExpress Supplies", "Business Credit Card"]
+        yr_bank_additional_expense = sum(yr_bank_by_cat.get(c, 0) for c in _non_etsy_cats)
 
-        # Net income (Etsy net minus bank operating expenses minus inventory)
-        yr_net_income = yr_etsy_net - yr_bank_biz_expense - yr_inventory_cost
+        # Net income: Etsy net minus non-overlapping bank expenses minus inventory
+        yr_net_income = yr_etsy_net - yr_bank_additional_expense - yr_inventory_cost
 
         TAX_YEARS[_yr] = {
             "gross_sales": yr_gross,
@@ -3451,6 +3469,7 @@ def _recompute_tax_years():
             "bank_deposits": yr_bank_deposits,
             "bank_debits": yr_bank_debits,
             "bank_biz_expense": yr_bank_biz_expense,
+            "bank_additional_expense": yr_bank_additional_expense,
             "net_income": yr_net_income,
             "tulsa_draws": yr_tulsa_draws,
             "texas_draws": yr_texas_draws,
@@ -3476,8 +3495,8 @@ def _recompute_valuation():
     val_annual_etsy_net = etsy_net * _val_annualize
     val_annual_real_profit = real_profit * _val_annualize
 
-    # SDE = real_profit + owner_draws (owner draws are discretionary, added back)
-    val_sde = profit + bank_owner_draw_total
+    # SDE = net cash flow + owner draws (profit already includes draws, so use cash_on_hand)
+    val_sde = bank_cash_on_hand + bank_owner_draw_total
     val_annual_sde = val_sde * _val_annualize
 
     # Method 1: SDE Multiple (small Etsy biz = 1.0x-2.5x)
@@ -3525,7 +3544,7 @@ def _recompute_valuation():
     _hs_diversity = min(15, max(0, (100 - _top3_conc) / 3))  # 0-15 pts
     _hs_cash = min(15, max(0, bank_cash_on_hand / val_monthly_run_rate * 5)) if val_monthly_run_rate > 0 else 0  # 0-15 pts: 3+ months runway = full
     _hs_debt = 10 if bb_cc_balance == 0 else max(0, 10 - bb_cc_balance / 500)  # 0-10 pts
-    _hs_shipping = 10 if shipping_profit >= 0 else max(0, 10 + shipping_profit / 100)  # 0-10 pts
+    _hs_shipping = 5 if shipping_profit is None else (10 if shipping_profit >= 0 else max(0, 10 + shipping_profit / 100))  # 0-10 pts
     val_health_score = round(min(100, _hs_profit + _hs_growth + _hs_diversity + _hs_cash + _hs_debt + _hs_shipping))
     val_health_grade = "A" if val_health_score >= 80 else "B" if val_health_score >= 60 else "C" if val_health_score >= 40 else "D"
     val_health_color = GREEN if val_health_score >= 80 else TEAL if val_health_score >= 60 else ORANGE if val_health_score >= 40 else RED
@@ -3537,7 +3556,7 @@ def _recompute_valuation():
         val_risks.append(("Product Concentration", f"Top 3 products = {_top3_conc:.0f}% of revenue", "HIGH" if _top3_conc > 80 else "MED"))
     if bb_cc_balance > 0:
         val_risks.append(("Credit Card Debt", f"${bb_cc_balance:,.0f} outstanding on Best Buy CC", "HIGH" if bb_cc_balance > 1000 else "MED"))
-    if shipping_profit < 0:
+    if shipping_profit is not None and shipping_profit < 0:
         val_risks.append(("Shipping Loss", f"Losing ${abs(shipping_profit):,.0f} on shipping", "MED"))
     val_risks.append(("Platform Dependency", "100% revenue from Etsy — single platform risk", "MED"))
     if gross_sales and total_refunds / gross_sales > 0.05:
@@ -3559,8 +3578,10 @@ def _recompute_valuation():
     if bank_owner_draw_total > 0:
         val_strengths.append(("Owner Compensation", f"${bank_owner_draw_total:,.0f} in draws taken"))
 
-    # Burn rate (monthly expenses)
-    val_monthly_expenses = (total_fees + total_shipping_cost + total_marketing + total_refunds + total_taxes + total_buyer_fees + bank_all_expenses) / _val_months_operating
+    # Burn rate (monthly expenses) — Etsy costs + non-overlapping bank expenses only
+    _val_non_etsy_cats = ["Craft Supplies", "Subscriptions", "AliExpress Supplies", "Business Credit Card"]
+    _val_bank_additional = sum(bank_by_cat.get(c, 0) for c in _val_non_etsy_cats)
+    val_monthly_expenses = (total_fees + total_shipping_cost + total_marketing + total_refunds + total_taxes + total_buyer_fees + _val_bank_additional + total_inventory_cost) / _val_months_operating
     val_runway_months = bank_cash_on_hand / val_monthly_expenses if val_monthly_expenses > 0 else 99
 
 
@@ -3570,14 +3591,57 @@ _recompute_valuation()
 # ── Helper Functions ─────────────────────────────────────────────────────────
 
 def money(val, sign=True):
+    if val is None:
+        return "UNKNOWN"
     if val < 0:
         return f"-${abs(val):,.2f}"
     return f"${val:,.2f}"
 
 
-def kpi_card(title, value, color, subtitle="", detail=""):
+def _compute_income_tax(taxable_income, year=2026):
+    """Compute federal income tax using progressive brackets (single filer, 2026).
+    Still ESTIMATED — doesn't know filing status, household income, state taxes, deductions."""
+    if taxable_income <= 0:
+        return 0.0
+    brackets = [
+        (11925, 0.10), (48475, 0.12), (103350, 0.22),
+        (197300, 0.24), (250525, 0.32), (626350, 0.35),
+        (float('inf'), 0.37),
+    ]
+    tax, prev = 0.0, 0
+    for limit, rate in brackets:
+        if taxable_income <= prev:
+            break
+        tax += (min(taxable_income, limit) - prev) * rate
+        prev = limit
+    return round(tax, 2)
+
+
+def _verification_badge(status):
+    """Return a small colored badge: VERIFIED (green), EST. (orange), N/A (red)."""
+    badge_map = {
+        "verified": (GREEN, "VERIFIED"),
+        "estimated": (ORANGE, "EST."),
+        "na": (RED, "N/A"),
+    }
+    clr, label = badge_map.get(status, (GRAY, ""))
+    if not label:
+        return html.Span()
+    return html.Span(label, style={
+        "color": clr, "fontSize": "8px", "fontWeight": "bold",
+        "border": f"1px solid {clr}88", "borderRadius": "3px",
+        "padding": "1px 4px", "marginLeft": "4px", "verticalAlign": "middle",
+        "letterSpacing": "0.5px",
+    })
+
+
+def kpi_card(title, value, color, subtitle="", detail="", status=None):
+    """KPI card with optional verification badge. status: 'verified', 'estimated', 'na'"""
+    title_children = [html.Span(title)]
+    if status:
+        title_children.append(_verification_badge(status))
     children = [
-        html.P(title, style={"color": GRAY, "margin": "0", "fontSize": "12px", "fontWeight": "600", "letterSpacing": "0.5px"}),
+        html.P(title_children, style={"color": GRAY, "margin": "0", "fontSize": "12px", "fontWeight": "600", "letterSpacing": "0.5px"}),
         html.H2(value, style={"color": color, "margin": "4px 0", "fontSize": "26px"}),
         html.P(subtitle, style={"color": DARKGRAY, "margin": "0", "fontSize": "11px"}),
     ]
@@ -4138,20 +4202,23 @@ def _rebuild_all_charts():
     _unit_ship = total_shipping_cost / order_count if order_count else 0
     _unit_ads = total_marketing / order_count if order_count else 0
     _unit_refund = total_refunds / order_count if order_count else 0
+    _unit_tax = total_taxes / order_count if order_count else 0
+    _unit_bf = total_buyer_fees / order_count if order_count else 0
+    _unit_pay = total_payments / order_count if order_count else 0
     _unit_cogs = true_inventory_cost / order_count if order_count else 0
-    _unit_profit = _unit_rev - _unit_fees - _unit_ship - _unit_ads - _unit_refund - _unit_cogs
+    _unit_profit = _unit_rev - _unit_fees - _unit_ship - _unit_ads - _unit_refund - _unit_tax - _unit_bf + _unit_pay - _unit_cogs
     _unit_margin = (_unit_profit / _unit_rev * 100) if _unit_rev else 0
 
     unit_wf = go.Figure(go.Waterfall(
         orientation="v",
-        measure=["absolute", "relative", "relative", "relative", "relative", "relative", "total"],
-        x=["Revenue", "Fees", "Shipping", "Ads", "Refunds", "Supplies", "Profit"],
-        y=[_unit_rev, -_unit_fees, -_unit_ship, -_unit_ads, -_unit_refund, -_unit_cogs, 0],
+        measure=["absolute", "relative", "relative", "relative", "relative", "relative", "relative", "total"],
+        x=["Revenue", "Fees", "Shipping", "Ads", "Refunds", "Tax", "Supplies", "Profit"],
+        y=[_unit_rev, -_unit_fees, -_unit_ship, -_unit_ads, -_unit_refund, -_unit_tax, -_unit_cogs, 0],
         connector={"line": {"color": GRAY, "width": 1, "dash": "dot"}},
         increasing={"marker": {"color": GREEN}},
         decreasing={"marker": {"color": RED}},
         totals={"marker": {"color": CYAN}},
-        text=[f"${abs(v):,.2f}" for v in [_unit_rev, _unit_fees, _unit_ship, _unit_ads, _unit_refund, _unit_cogs, _unit_profit]],
+        text=[f"${abs(v):,.2f}" for v in [_unit_rev, _unit_fees, _unit_ship, _unit_ads, _unit_refund, _unit_tax, _unit_cogs, _unit_profit]],
         textposition="outside",
     ))
     make_chart(unit_wf, 340, False)
@@ -4268,23 +4335,19 @@ def _rebuild_all_charts():
 
     # --- TAB 4: SHIPPING CHARTS ---
 
-    # Buyer paid vs cost comparison
+    # Shipping cost breakdown (buyer-paid is unavailable)
     shipping_compare = go.Figure()
     shipping_compare.add_trace(go.Bar(
-        name="Buyers Paid", x=["Shipping"], y=[buyer_paid_shipping],
-        marker_color=GREEN, text=[f"${buyer_paid_shipping:,.2f}"], textposition="outside", width=0.3, offset=-0.15,
-    ))
-    shipping_compare.add_trace(go.Bar(
         name="Your Label Cost", x=["Shipping"], y=[total_shipping_cost],
-        marker_color=RED, text=[f"${total_shipping_cost:,.2f}"], textposition="outside", width=0.3, offset=0.15,
+        marker_color=RED, text=[f"${total_shipping_cost:,.2f}"], textposition="outside", width=0.4,
     ))
     shipping_compare.add_annotation(
-        x="Shipping", y=max(buyer_paid_shipping, total_shipping_cost) + 200,
-        text=f"{'Loss' if shipping_profit < 0 else 'Profit'}: ${abs(shipping_profit):,.2f}",
-        showarrow=False, font=dict(size=18, color=RED if shipping_profit < 0 else GREEN, family="Arial Black"),
+        x="Shipping", y=total_shipping_cost + 200,
+        text="Buyer-paid amount: N/A (not in Etsy CSV)",
+        showarrow=False, font=dict(size=14, color=ORANGE, family="Arial"),
     )
     make_chart(shipping_compare, 340, False)
-    shipping_compare.update_layout(title="Shipping: Buyer Paid vs Your Cost",
+    shipping_compare.update_layout(title="Shipping Label Costs (Buyer-Paid Amount Unavailable)",
         showlegend=True, yaxis_title="Amount ($)")
 
     # Shipping cost by type bar chart
@@ -4346,8 +4409,8 @@ def _rebuild_all_charts():
         marker_color=TEAL, text=[f"${v:,.0f}" for v in top_products.values], textposition="outside",
     ))
     make_chart(product_fig, 400, False)
-    product_fig.update_layout(title=f"Top {top_n} Products (Est. Revenue)",
-        yaxis=dict(autorange="reversed"), margin=dict(l=300, t=50, b=30), xaxis_title="Estimated Revenue ($)")
+    product_fig.update_layout(title=f"Top {top_n} Products by Revenue",
+        yaxis=dict(autorange="reversed"), margin=dict(l=300, t=50, b=30), xaxis_title="Revenue ($)")
 
 
     # --- TAB 7: INVENTORY / COGS CHARTS ---
@@ -5022,215 +5085,192 @@ def _build_split_container(idx, existing, det_name, det_cat, det_qty, det_loc, _
     )
 
 
-def _build_item_card(idx, item_name, img_url, det_name, det_cat, det_qty, det_loc,
-                     has_details, orig_qty, orig_total, is_split, existing, onum):
-    """Build a single inventory item card — optimized for fast categorization.
+def _build_item_row(idx, item_name, img_url, det_name, det_cat, det_qty, det_loc,
+                    has_details, orig_qty, orig_total, is_split, existing, onum):
+    """Build a single receipt item card for inventory naming.
 
-    Primary flow (always visible): Name + Category + Location + Save
-    Secondary (behind 'More options'): Qty, Image, Split
+    Layout:
+      Header:  Original receipt name (read-only) + qty + price
+      Body:    Either single-item naming OR split wizard (toggled by checkbox)
+      Footer:  Save + Reset + Image toggle
 
-    Shared by _build_inventory_editor() and filter_editor().
+    Same pattern-matching IDs — all existing callbacks work unchanged.
     """
-    _lbl = {"color": GRAY, "fontSize": "10px", "fontWeight": "700", "letterSpacing": "0.8px",
-            "textTransform": "uppercase", "marginBottom": "2px"}
-    _inp = {"fontSize": "13px", "backgroundColor": "#0d0d1a", "color": WHITE,
-            "border": f"1px solid {DARKGRAY}55", "borderRadius": "6px", "padding": "7px 12px"}
-    _sel = {"fontSize": "13px", "backgroundColor": "#0d0d1a", "color": WHITE,
-            "border": f"1px solid {DARKGRAY}55", "borderRadius": "6px", "padding": "7px 10px"}
     cat_options = [{"label": c, "value": c} for c in CATEGORY_OPTIONS]
     loc_options = [{"label": "Tulsa, OK", "value": "Tulsa, OK"},
                    {"label": "Texas", "value": "Texas"},
                    {"label": "Other", "value": "Other"}]
+    _inp = {"fontSize": "13px", "backgroundColor": "#0d0d1a", "color": WHITE,
+            "border": f"1px solid {DARKGRAY}55", "borderRadius": "6px", "padding": "7px 12px"}
+    _lbl = {"color": GRAY, "fontSize": "10px", "fontWeight": "700", "letterSpacing": "0.8px",
+            "textTransform": "uppercase", "marginBottom": "2px"}
 
-    per_unit = orig_total / det_qty if det_qty > 0 else (orig_total / orig_qty if orig_qty > 0 else 0)
     _card_border = GREEN if has_details else ORANGE
-    _status_color = GREEN if has_details else ORANGE
-
-    # ── COMPACT ROW (always visible — click to expand) ──
-    compact_row = html.Div([
-        # Thumbnail
-        html.Div(item_thumbnail(img_url, 36), style={"flexShrink": "0"}),
-        # Info
-        html.Div([
-            html.Span(det_name[:55], title=det_name,
-                      style={"color": WHITE, "fontSize": "13px", "fontWeight": "bold",
-                             "overflow": "hidden", "textOverflow": "ellipsis",
-                             "whiteSpace": "nowrap", "display": "block"}),
-            html.Div([
-                html.Span(f"${orig_total:.2f}", style={"color": ORANGE, "fontSize": "11px",
-                                                         "fontWeight": "bold"}),
-                html.Span(f" \u00d7 {det_qty}", style={"color": f"{WHITE}88", "fontSize": "11px",
-                                                          "marginLeft": "6px"}),
-                html.Span(f" \u00b7 {det_cat}", style={"color": TEAL, "fontSize": "11px",
-                                                          "marginLeft": "6px"}),
-            ]),
-        ], style={"flex": "1", "minWidth": "0", "marginLeft": "10px"}),
-        # Status pill
-        html.Span(
-            "\u2713" if has_details else "\u270e",
-            style={"fontSize": "14px", "fontWeight": "bold", "color": _status_color,
-                   "width": "28px", "height": "28px", "display": "flex",
-                   "alignItems": "center", "justifyContent": "center",
-                   "borderRadius": "50%", "backgroundColor": f"{_status_color}18",
-                   "border": f"1px solid {_status_color}33", "flexShrink": "0"}),
-        html.Span(
-            "NEW", className="new-badge",
-            style={"fontSize": "9px", "fontWeight": "bold", "padding": "2px 7px",
-                   "borderRadius": "8px", "backgroundColor": f"{CYAN}22",
-                   "color": CYAN, "border": f"1px solid {CYAN}55",
-                   "marginLeft": "4px", "flexShrink": "0", "letterSpacing": "0.5px"}
-        ) if (onum in _RECENT_UPLOADS and not has_details) else None,
-    ], style={"display": "flex", "alignItems": "center",
-              "cursor": "pointer", "padding": "4px 0"})
-
-    # ── EXPANDED FORM — primary fields + action bar ──
+    # Receipt-level price (always based on original receipt qty, not split qty)
+    receipt_per_unit = orig_total / orig_qty if orig_qty > 0 else orig_total
+    per_unit = orig_total / det_qty if det_qty > 0 else receipt_per_unit
     _price_str = f"qty {det_qty}  \u00b7  ${per_unit:.2f}/ea  \u00b7  ${orig_total:.2f} total"
-    show_orig = (det_name != item_name)
 
-    # Receipt info line
-    _receipt_parts = []
-    if show_orig:
-        _receipt_parts.append(html.Span(
-            f'Receipt: "{item_name[:70]}"',
-            style={"color": f"{WHITE}66", "fontSize": "11px", "fontStyle": "italic"}))
-        _receipt_parts.append(html.Span(
-            f"  \u2014  {_price_str}", style={"color": f"{GRAY}aa", "fontSize": "11px"}))
-    else:
-        _receipt_parts.append(html.Span(
-            _price_str, style={"color": f"{GRAY}aa", "fontSize": "11px"}))
-    receipt_line = html.Div(_receipt_parts,
-                            style={"marginBottom": "10px", "overflow": "hidden",
-                                   "textOverflow": "ellipsis", "whiteSpace": "nowrap"})
-    # Hidden price display (callback target)
-    price_display = html.Span(id={"type": "det-price-display", "index": idx},
-                              children=_price_str, style={"display": "none"})
-
-    # ── PRIMARY FIELDS: Name → Category + Location → Save ──
-
-    # Name
-    name_field = html.Div([
-        html.Div("ITEM NAME", style=_lbl),
-        dcc.Input(id={"type": "det-name", "index": idx}, type="text",
-                  value=det_name, style={**_inp, "width": "100%"}),
-    ], style={"marginBottom": "10px"})
-
-    # Category + Location + Save (single row)
-    action_row = html.Div([
-        html.Div([
-            html.Div("CATEGORY", style=_lbl),
-            dbc.Select(id={"type": "det-cat", "index": idx},
-                       options=cat_options, value=det_cat, style=_sel),
-        ], style={"flex": "1", "minWidth": "100px"}),
-        html.Div([
-            html.Div("LOCATION", style=_lbl),
-            dbc.Select(id={"type": "loc-dropdown", "index": idx},
-                       options=loc_options, value=det_loc, style=_sel),
-        ], style={"flex": "1", "minWidth": "100px"}),
-        html.Div([
-            html.Div("\u00a0", style={**_lbl, "visibility": "hidden"}),
-            html.Div([
-                html.Button("\u2713 Save", id={"type": "det-save-btn", "index": idx},
-                            style={"fontSize": "13px", "padding": "7px 22px",
-                                   "background": f"linear-gradient(135deg, {GREEN}, #27ae60)",
-                                   "color": WHITE, "border": "none", "borderRadius": "6px",
-                                   "cursor": "pointer", "fontWeight": "bold",
-                                   "boxShadow": f"0 2px 8px {GREEN}44",
-                                   "transition": "all 0.15s ease", "whiteSpace": "nowrap"}),
-                html.Button("Reset", id={"type": "det-reset-btn", "index": idx},
-                            style={"fontSize": "11px", "padding": "7px 12px",
-                                   "backgroundColor": "transparent", "color": GRAY,
-                                   "border": f"1px solid {DARKGRAY}44", "borderRadius": "6px",
-                                   "cursor": "pointer"}),
-                html.Span(id={"type": "det-status", "index": idx}, children="",
-                          style={"fontSize": "12px", "color": GREEN, "fontWeight": "bold",
-                                 "whiteSpace": "nowrap"}),
-            ], style={"display": "flex", "gap": "6px", "alignItems": "center"}),
-        ], style={"flexShrink": "0"}),
-    ], style={"display": "flex", "gap": "10px", "alignItems": "flex-end"})
-
-    # ── SECONDARY FIELDS (collapsed by default) ──
-    advanced_section = html.Details([
-        html.Summary(
-            html.Span("More options (qty, image, split)",
-                      style={"color": f"{GRAY}aa", "fontSize": "11px", "cursor": "pointer"}),
-            style={"listStyle": "none", "outline": "none", "padding": "8px 0 4px",
-                   "WebkitAppearance": "none"}),
-        html.Div([
-            # Qty + Image row
-            html.Div([
-                html.Div([
-                    html.Div("QTY", style=_lbl),
-                    dcc.Input(id={"type": "det-qty", "index": idx}, type="number",
-                              min=1, value=det_qty, debounce=False,
-                              style={**_inp, "width": "65px"}),
-                ], style={"flexShrink": "0"}),
-                html.Div([
-                    html.Div("IMAGE", style=_lbl),
-                    html.Div([
-                        html.Div(
-                            item_thumbnail(img_url, 24) if img_url else html.Span(
-                                "\u2014", style={"width": "24px", "height": "24px",
-                                                  "display": "inline-flex", "alignItems": "center",
-                                                  "justifyContent": "center", "color": DARKGRAY,
-                                                  "fontSize": "10px"}),
-                            id={"type": "det-img-preview", "index": idx},
-                            style={"flexShrink": "0", "marginRight": "6px"}),
-                        dcc.Input(id={"type": "det-img-url", "index": idx}, type="text",
-                                  value=img_url or "", placeholder="Paste image URL...",
-                                  style={**_inp, "flex": "1", "minWidth": "80px", "fontSize": "11px"}),
-                        html.Button("Fetch", id={"type": "det-img-fetch-btn", "index": idx},
-                                    style={"fontSize": "10px", "padding": "5px 10px",
-                                           "backgroundColor": CYAN, "color": "#0f0f1a",
-                                           "border": "none", "borderRadius": "5px",
-                                           "cursor": "pointer", "fontWeight": "bold",
-                                           "marginLeft": "4px", "whiteSpace": "nowrap"}),
-                        html.Span("", id={"type": "det-img-status", "index": idx},
-                                  style={"fontSize": "10px", "color": GREEN, "marginLeft": "4px",
-                                         "whiteSpace": "nowrap"}),
-                    ], style={"display": "flex", "alignItems": "center"}),
-                ], style={"flex": "1", "minWidth": "0"}),
-            ], style={"display": "flex", "gap": "12px", "alignItems": "flex-end",
-                      "marginBottom": "8px"}),
-            # Split checkbox
-            dcc.Checklist(
-                id={"type": "loc-split-check", "index": idx},
-                options=[{"label": " Split into multiple items", "value": "split"}],
-                value=["split"] if is_split else [],
-                style={"fontSize": "12px", "color": GRAY},
-                labelStyle={"cursor": "pointer"}),
-        ], style={"paddingTop": "4px"}),
-    ], open=is_split)  # auto-open if already split
-
-    # Split container
-    split_container = _build_split_container(idx, existing, det_name, det_cat, det_qty, det_loc, _inp,
-                                             item_name=item_name, orig_total=orig_total)
-
-    # Hidden stores
+    # ── Hidden stores ──
     hidden = html.Div([
         dcc.Store(id={"type": "det-order-num", "index": idx}, data=onum),
         dcc.Store(id={"type": "det-item-name", "index": idx}, data=item_name),
         dcc.Store(id={"type": "det-orig-qty", "index": idx}, data=orig_qty),
         dcc.Store(id={"type": "det-orig-name", "index": idx}, data=item_name),
         dcc.Store(id={"type": "det-orig-total", "index": idx}, data=orig_total),
-    ])
+        html.Span(id={"type": "det-price-display", "index": idx},
+                  children=_price_str, style={"display": "none"}),
+    ], style={"display": "none"})
 
-    _item_shadow = (f"0 2px 10px rgba(0,0,0,0.3), -4px 0 12px {GREEN}15"
-                    if has_details else "0 2px 8px rgba(0,0,0,0.25)")
-    return html.Details([
-        html.Summary(compact_row, style={
-            "listStyle": "none", "outline": "none", "userSelect": "none",
-            "WebkitAppearance": "none"}),
-        html.Div([receipt_line, price_display, name_field, action_row,
-                  advanced_section, split_container, hidden],
-                 style={"paddingTop": "10px", "borderTop": f"1px solid {DARKGRAY}22",
-                        "marginTop": "6px"}),
-    ], open=not has_details,
-       className="item-card",
-       style={"padding": "10px 14px", "marginBottom": "6px",
-              "backgroundColor": "#0f1225", "borderRadius": "8px",
-              "borderLeft": f"4px solid {_card_border}",
-              "boxShadow": _item_shadow,
-              "transition": "all 0.15s ease"})
+    # ── HEADER: Original receipt name (read-only reference) ──
+    _saved_badge = html.Span(
+        "\u2713 SAVED", style={"fontSize": "9px", "fontWeight": "bold", "padding": "2px 8px",
+                               "borderRadius": "6px", "backgroundColor": f"{GREEN}22",
+                               "color": GREEN, "border": f"1px solid {GREEN}44",
+                               "marginLeft": "8px"}) if has_details else html.Span(
+        "NEEDS NAMING", style={"fontSize": "9px", "fontWeight": "bold", "padding": "2px 8px",
+                                "borderRadius": "6px", "backgroundColor": f"{ORANGE}22",
+                                "color": ORANGE, "border": f"1px solid {ORANGE}44",
+                                "marginLeft": "8px"})
+    header = html.Div([
+        html.Div([
+            html.Div(item_thumbnail(img_url, 32), style={"flexShrink": "0", "marginRight": "10px"}),
+            html.Div([
+                html.Div([
+                    html.Span(item_name[:90], title=item_name,
+                              style={"color": WHITE, "fontSize": "13px", "fontWeight": "600",
+                                     "overflow": "hidden", "textOverflow": "ellipsis",
+                                     "whiteSpace": "nowrap", "maxWidth": "500px",
+                                     "display": "inline-block", "verticalAlign": "middle"}),
+                    _saved_badge,
+                ], style={"display": "flex", "alignItems": "center", "flexWrap": "wrap", "gap": "4px"}),
+                html.Div([
+                    html.Span(f"Qty: {orig_qty}", style={"color": GRAY, "fontSize": "11px"}),
+                    html.Span(" \u00b7 ", style={"color": f"{DARKGRAY}66"}),
+                    html.Span(f"${receipt_per_unit:.2f}/ea", style={"color": GRAY, "fontSize": "11px"}),
+                    html.Span(" \u00b7 ", style={"color": f"{DARKGRAY}66"}),
+                    html.Span(f"${orig_total:.2f} total", style={"color": ORANGE, "fontSize": "11px",
+                                                                    "fontWeight": "bold"}),
+                ], style={"marginTop": "2px"}),
+            ], style={"flex": "1", "minWidth": "0"}),
+        ], style={"display": "flex", "alignItems": "center"}),
+    ], style={"padding": "10px 14px", "borderBottom": f"1px solid {DARKGRAY}22"})
+
+    # ── SPLIT TOGGLE — prominent, always visible ──
+    split_toggle = html.Div([
+        dcc.Checklist(
+            id={"type": "loc-split-check", "index": idx},
+            options=[{"label": "  Split into multiple items (bundle, multi-pack, etc.)",
+                      "value": "split"}],
+            value=["split"] if is_split else [],
+            style={"fontSize": "12px", "color": CYAN, "fontWeight": "600"},
+            labelStyle={"cursor": "pointer", "display": "flex", "alignItems": "center"}),
+    ], style={"padding": "8px 14px", "borderBottom": f"1px solid {DARKGRAY}15"})
+
+    # ── SINGLE-ITEM MODE: Name + Category + Location ──
+    single_mode = html.Div([
+        html.Div([
+            html.Div([
+                html.Div("INVENTORY NAME", style=_lbl),
+                dcc.Input(id={"type": "det-name", "index": idx}, type="text",
+                          value=det_name, placeholder="What is this item? e.g. Black PLA 1kg",
+                          style={**_inp, "width": "100%"}),
+            ], style={"flex": "2", "minWidth": "180px"}),
+            html.Div([
+                html.Div("CATEGORY", style=_lbl),
+                dbc.Select(id={"type": "det-cat", "index": idx},
+                           options=cat_options, value=det_cat,
+                           style={**_inp, "padding": "5px 8px"}),
+            ], style={"flex": "1", "minWidth": "120px"}),
+            html.Div([
+                html.Div("LOCATION", style=_lbl),
+                dbc.Select(id={"type": "loc-dropdown", "index": idx},
+                           options=loc_options, value=det_loc,
+                           style={**_inp, "padding": "5px 8px"}),
+            ], style={"flex": "1", "minWidth": "100px"}),
+            html.Div([
+                html.Div("QTY", style=_lbl),
+                dcc.Input(id={"type": "det-qty", "index": idx}, type="number",
+                          min=1, value=det_qty, debounce=False,
+                          style={**_inp, "width": "60px", "textAlign": "center"}),
+            ], style={"flexShrink": "0"}),
+        ], style={"display": "flex", "gap": "12px", "alignItems": "flex-end",
+                  "flexWrap": "wrap"}),
+    ], id={"type": "det-single-mode", "index": idx},
+       style={"display": "none" if is_split else "block",
+              "padding": "10px 14px"})
+
+    # ── SPLIT MODE: Full split wizard (the main workflow for bundles) ──
+    split_container = _build_split_container(idx, existing, det_name, det_cat, det_qty, det_loc, _inp,
+                                             item_name=item_name, orig_total=orig_total)
+    split_mode = html.Div([
+        split_container,
+    ], id={"type": "det-split-mode", "index": idx},
+       style={"display": "block" if is_split else "none",
+              "padding": "10px 14px"})
+
+    # ── FOOTER: Save + status + Reset + Image toggle ──
+    footer = html.Div([
+        html.Button("\u2713 Save", id={"type": "det-save-btn", "index": idx},
+                    style={"height": "36px", "padding": "0 24px",
+                           "background": f"linear-gradient(135deg, {GREEN}, #27ae60)",
+                           "color": WHITE, "border": "none", "borderRadius": "6px",
+                           "cursor": "pointer", "fontWeight": "bold", "fontSize": "13px",
+                           "boxShadow": f"0 2px 8px {GREEN}33"}),
+        html.Span(id={"type": "det-status", "index": idx}, children="",
+                  style={"fontSize": "11px", "color": GREEN, "fontWeight": "bold",
+                         "marginLeft": "8px", "minWidth": "40px"}),
+        html.Button("Reset", id={"type": "det-reset-btn", "index": idx},
+                    style={"height": "36px", "padding": "0 14px",
+                           "backgroundColor": "transparent", "color": GRAY,
+                           "border": f"1px solid {DARKGRAY}33", "borderRadius": "6px",
+                           "cursor": "pointer", "fontSize": "11px"}),
+        html.Span(style={"flex": "1"}),
+        # Image toggle (secondary)
+        html.Button("\U0001f4f7 Image", id={"type": "det-adv-btn", "index": idx},
+                    style={"height": "30px", "padding": "0 12px",
+                           "backgroundColor": "transparent", "color": GRAY,
+                           "border": f"1px solid {DARKGRAY}22", "borderRadius": "6px",
+                           "cursor": "pointer", "fontSize": "11px"}),
+    ], style={"display": "flex", "alignItems": "center", "gap": "8px",
+              "padding": "8px 14px", "borderTop": f"1px solid {DARKGRAY}22"})
+
+    # ── IMAGE SECTION (toggled by "Image" button, secondary) ──
+    image_section = html.Div([
+        html.Div([
+            html.Div(
+                item_thumbnail(img_url, 24) if img_url else html.Span(
+                    "\u2014", style={"width": "24px", "height": "24px",
+                                      "display": "inline-flex", "alignItems": "center",
+                                      "justifyContent": "center", "color": DARKGRAY,
+                                      "fontSize": "10px"}),
+                id={"type": "det-img-preview", "index": idx},
+                style={"flexShrink": "0", "marginRight": "6px"}),
+            dcc.Input(id={"type": "det-img-url", "index": idx}, type="text",
+                      value=img_url or "", placeholder="Paste image URL...",
+                      style={**_inp, "flex": "1", "minWidth": "80px", "fontSize": "11px"}),
+            html.Button("Fetch", id={"type": "det-img-fetch-btn", "index": idx},
+                        style={"fontSize": "10px", "padding": "5px 10px",
+                               "backgroundColor": CYAN, "color": "#0f0f1a",
+                               "border": "none", "borderRadius": "5px",
+                               "cursor": "pointer", "fontWeight": "bold",
+                               "marginLeft": "4px", "whiteSpace": "nowrap"}),
+            html.Span("", id={"type": "det-img-status", "index": idx},
+                      style={"fontSize": "10px", "color": GREEN, "marginLeft": "4px",
+                             "whiteSpace": "nowrap"}),
+        ], style={"display": "flex", "alignItems": "center"}),
+    ], id={"type": "det-adv-section", "index": idx},
+       style={"display": "none",
+              "padding": "8px 14px", "borderTop": f"1px solid {DARKGRAY}15"})
+
+    return html.Div([header, split_toggle, single_mode, split_mode, footer, image_section, hidden],
+        className="item-row",
+        style={"marginBottom": "6px",
+               "backgroundColor": "#0f1225",
+               "borderLeft": f"4px solid {_card_border}",
+               "borderRadius": "6px",
+               "border": f"1px solid {DARKGRAY}15",
+               "transition": "all 0.15s ease"})
 
 
 def _build_category_manager():
@@ -5413,7 +5453,7 @@ def _build_inventory_editor():
 
             is_split = len(existing) > 1
 
-            item_cards.append(_build_item_card(
+            item_cards.append(_build_item_row(
                 idx, item_name, img_url, det_name, det_cat, det_qty, det_loc,
                 has_details, orig_qty, orig_total, is_split, existing, onum))
 
@@ -5426,71 +5466,59 @@ def _build_inventory_editor():
         _order_all_done = order_saved == order_total_items and order_total_items > 0
         _order_pct = round(order_saved / order_total_items * 100) if order_total_items > 0 else 0
 
-        # Order progress bar (6px, 120px wide, gradient)
+        # Progress bar (80px)
         mini_progress = html.Div([
-            html.Div(style={"width": f"{max(_order_pct, 3)}%", "height": "6px",
+            html.Div(style={"width": f"{max(_order_pct, 5)}%", "height": "6px",
                             "background": f"linear-gradient(90deg, {_prog_color}88, {_prog_color})",
-                            "borderRadius": "3px",
-                            "transition": "width 0.3s ease"}),
-        ], style={"width": "120px", "height": "6px", "backgroundColor": "#0d0d1a",
+                            "borderRadius": "3px", "transition": "width 0.3s ease"}),
+        ], style={"width": "80px", "height": "6px", "backgroundColor": "#0d0d1a",
                   "borderRadius": "3px", "display": "inline-block", "verticalAlign": "middle",
-                  "marginLeft": "10px", "overflow": "hidden"})
-
-        # ALL DONE pill (larger, with checkmark, pulsing glow)
-        done_pill = html.Span("\u2713 ALL DONE", className="pulse-complete", style={
-            "fontSize": "12px", "fontWeight": "bold", "padding": "4px 14px",
-            "borderRadius": "12px", "backgroundColor": f"{GREEN}22", "color": GREEN,
-            "border": f"1px solid {GREEN}44", "marginLeft": "10px",
-            "letterSpacing": "0.5px",
-            "textShadow": "0 0 8px #2ecc7144"}) if _order_all_done else None
+                  "marginLeft": "8px", "overflow": "hidden"})
 
         _is_recent_upload = onum in _RECENT_UPLOADS
-        _new_upload_pill = html.Span(
-            "NEW UPLOAD", className="new-badge",
-            style={"fontSize": "10px", "fontWeight": "bold", "padding": "3px 10px",
-                   "borderRadius": "10px", "backgroundColor": f"{CYAN}22",
-                   "color": CYAN, "border": f"1px solid {CYAN}55",
-                   "marginLeft": "10px", "letterSpacing": "0.5px"}
-        ) if _is_recent_upload else None
-        _header_gradient = f"linear-gradient(180deg, {CYAN}08, transparent)" if not _order_all_done else f"linear-gradient(180deg, {GREEN}08, transparent)"
+        _done_pill = html.Span("\u2713 DONE", style={
+            "fontSize": "10px", "fontWeight": "bold", "padding": "2px 10px",
+            "borderRadius": "8px", "backgroundColor": f"{GREEN}22", "color": GREEN,
+            "border": f"1px solid {GREEN}44", "marginLeft": "8px"}) if _order_all_done else None
+        _new_pill = html.Span("NEW", style={"fontSize": "9px", "fontWeight": "bold",
+                    "padding": "2px 8px", "borderRadius": "6px",
+                    "backgroundColor": f"{CYAN}22", "color": CYAN,
+                    "border": f"1px solid {CYAN}55", "marginLeft": "8px"}) if _is_recent_upload else None
+
+        # ── Order header ──
+        order_header = html.Div([c for c in [
+            html.Span(f"Order #{onum}", style={"color": CYAN, "fontWeight": "bold", "fontSize": "14px"}),
+            html.Span(orig_location,
+                      style={"fontSize": "11px", "padding": "2px 10px", "borderRadius": "10px",
+                             "backgroundColor": f"{_loc_color}18", "color": _loc_color,
+                             "marginLeft": "10px", "fontWeight": "600"}),
+            _new_pill,
+            _done_pill,
+            html.Span(style={"flex": "1"}),
+            html.Span(inv["date"], style={"color": GRAY, "fontSize": "12px"}),
+            html.Span(" \u00b7 ", style={"color": f"{DARKGRAY}44", "margin": "0 6px"}),
+            html.Span(source_label, style={"color": GRAY, "fontSize": "12px"}),
+            html.Span(" \u00b7 ", style={"color": f"{DARKGRAY}44", "margin": "0 6px"}),
+            html.Span(f"${order_total:.2f}", style={"color": WHITE, "fontSize": "13px", "fontWeight": "700"}),
+            html.Span(" \u00b7 ", style={"color": f"{DARKGRAY}44", "margin": "0 6px"}),
+            html.Span(f"{order_saved}/{order_total_items}",
+                      style={"color": _prog_color, "fontSize": "12px", "fontWeight": "bold"}),
+            mini_progress,
+        ] if c is not None],
+            className="order-header-compact",
+            style={"display": "flex", "alignItems": "center", "flexWrap": "wrap",
+                   "gap": "0", "padding": "10px 14px",
+                   "backgroundColor": CARD2,
+                   "borderBottom": f"1px solid {CYAN}15",
+                   "borderRadius": "8px 8px 0 0"})
+
         order_card = html.Div([
-            html.Div([
-                html.Div([c for c in [
-                    html.Span(f"ORDER #{onum}", style={"color": CYAN, "fontWeight": "bold", "fontSize": "18px",
-                                                        "letterSpacing": "0.5px"}),
-                    html.Span(orig_location,
-                              style={"fontSize": "11px", "padding": "3px 12px", "borderRadius": "12px",
-                                     "backgroundColor": f"{_loc_color}22", "color": _loc_color,
-                                     "border": f"1px solid {_loc_color}33", "marginLeft": "12px",
-                                     "fontWeight": "bold", "whiteSpace": "nowrap"}),
-                    _new_upload_pill,
-                    done_pill,
-                ] if c is not None], style={"display": "flex", "alignItems": "center", "marginBottom": "6px"}),
-                html.Div([
-                    html.Span(f"{inv['date']}", style={"color": GRAY, "fontSize": "12px"}),
-                    html.Span(" \u00b7 ", style={"color": f"{DARKGRAY}66", "margin": "0 6px"}),
-                    html.Span(f"{source_label}", style={"color": GRAY, "fontSize": "12px"}),
-                    html.Span(" \u00b7 ", style={"color": f"{DARKGRAY}66", "margin": "0 6px"}),
-                    html.Span(f"${order_total:.2f}", style={"color": WHITE, "fontSize": "14px", "fontWeight": "700"}),
-                    html.Span([
-                        html.Span(f"{order_saved}/{order_total_items} saved",
-                                  style={"color": _prog_color, "fontSize": "13px", "fontWeight": "bold"}),
-                        mini_progress,
-                    ], style={"marginLeft": "auto", "display": "flex", "alignItems": "center"}),
-                ], style={"display": "flex", "alignItems": "center"}),
-            ], style={"marginBottom": "12px", "paddingBottom": "12px",
-                      "borderBottom": f"1px solid {CYAN}18",
-                      "background": _header_gradient,
-                      "margin": "-18px -20px 12px -20px", "padding": "18px 20px 12px 20px",
-                      "borderRadius": "10px 10px 0 0"}),
-            html.Div(item_cards),
+            order_header,
+            html.Div(item_cards, style={"padding": "4px 0"}),
         ], className="order-card order-card-saved" if _order_all_done else "order-card",
-           style={"backgroundColor": f"#2ecc7108" if _order_all_done else CARD2,
-                  "padding": "18px 20px", "borderRadius": "10px",
-                  "marginBottom": "14px",
-                  "border": f"1px solid {GREEN}55" if _order_all_done else f"1px solid {CYAN}18",
-                  "boxShadow": ("0 0 16px #2ecc7122, 0 4px 16px rgba(0,0,0,0.3)" if _order_all_done
-                                else "0 2px 12px rgba(0,0,0,0.25)")})
+           style={"backgroundColor": f"#2ecc7108" if _order_all_done else f"{CARD2}88",
+                  "borderRadius": "8px", "marginBottom": "12px",
+                  "border": f"1px solid {GREEN}44" if _order_all_done else f"1px solid {CYAN}12"})
         order_cards.append(order_card)
 
     # Progress bar
@@ -5583,19 +5611,24 @@ def _build_inventory_editor():
                                  "fontWeight": "bold"}),
             ], style={"display": "flex", "alignItems": "center"}),
             html.P([
-                "Click an item to expand \u2192 set ",
+                "Edit ",
                 html.Span("name", style={"color": WHITE, "fontWeight": "600"}),
                 ", ",
                 html.Span("category", style={"color": WHITE, "fontWeight": "600"}),
                 " & ",
                 html.Span("location", style={"color": WHITE, "fontWeight": "600"}),
-                " \u2192 hit Save.",
+                " inline \u2192 hit ",
+                html.Span("\u2713", style={"color": GREEN, "fontWeight": "bold"}),
+                " to save. Click ",
+                html.Span("\u22ef", style={"color": GRAY, "fontWeight": "bold"}),
+                " for image/split options.",
             ], style={"color": GRAY, "fontSize": "13px", "margin": "6px 0 0 0"}),
         ], style={"marginBottom": "16px"}),
         progress_bar,
         filter_bar,
+        # ── Scrollable items area ──
         html.Div(order_cards, id="editor-items-container",
-                 style={"maxHeight": "800px", "overflowY": "auto", "padding": "4px",
+                 style={"maxHeight": "800px", "overflowY": "auto", "padding": "0",
                         "scrollbarWidth": "thin"}),
     ], style={"backgroundColor": CARD, "padding": "24px", "borderRadius": "12px",
               "marginBottom": "18px", "border": f"1px solid {ORANGE}22",
@@ -7294,10 +7327,11 @@ def api_financials():
                 "texas": round(texas_draw_total, 2),
             },
             "shipping": {
-                "buyer_paid": round(buyer_paid_shipping, 2),
+                "buyer_paid": None,
                 "label_costs": round(total_shipping_cost, 2),
-                "profit": round(shipping_profit, 2),
-                "margin": round(shipping_margin, 1),
+                "profit": None,
+                "margin": None,
+                "_note": "buyer_paid, profit, margin unavailable — not in Etsy CSV",
             },
             "monthly": {
                 m: {
@@ -7316,28 +7350,34 @@ def api_financials():
 @server.route("/api/tax")
 def api_tax():
     """Return tax-related calculations."""
-    # Calculate tax estimates
+    # Calculate tax estimates — per-partner (50/50 partnership)
     net_income = real_profit
+    per_partner = net_income / 2
     se_tax_rate = 0.153  # 15.3% self-employment
-    se_taxable = net_income * 0.9235  # 92.35% of net income
-    se_tax = se_taxable * se_tax_rate
+    se_taxable = per_partner * 0.9235  # 92.35% of net income
+    se_tax_per = se_taxable * se_tax_rate
 
-    # Estimate income tax (simplified 22% bracket)
-    taxable_income = net_income - (se_tax / 2)  # SE tax deduction
-    income_tax = taxable_income * 0.22
+    # Estimate income tax per partner (progressive brackets)
+    taxable_income = per_partner - (se_tax_per / 2)  # SE tax deduction
+    income_tax_per = _compute_income_tax(max(0, taxable_income))
 
-    total_tax = se_tax + income_tax
+    total_tax_per = se_tax_per + income_tax_per
+    total_tax = total_tax_per * 2  # both partners combined
     quarterly = total_tax / 4
 
     return _add_cors_headers(flask.jsonify({
         "net_income": round(net_income, 2),
-        "self_employment_tax": round(se_tax, 2),
-        "estimated_income_tax": round(income_tax, 2),
+        "self_employment_tax": round(se_tax_per * 2, 2),
+        "estimated_income_tax": round(income_tax_per * 2, 2),
         "total_estimated_tax": round(total_tax, 2),
         "quarterly_payment": round(quarterly, 2),
         "partnership_split": {
-            "partner_1": round(net_income / 2, 2),
-            "partner_2": round(net_income / 2, 2),
+            "partner_1_income": round(per_partner, 2),
+            "partner_1_se_tax": round(se_tax_per, 2),
+            "partner_1_income_tax": round(income_tax_per, 2),
+            "partner_2_income": round(per_partner, 2),
+            "partner_2_se_tax": round(se_tax_per, 2),
+            "partner_2_income_tax": round(income_tax_per, 2),
         },
         "deductions": {
             "total_expenses": round(bank_biz_expense_total, 2),
@@ -7789,6 +7829,79 @@ def api_chat():
         return _add_cors_headers(flask.jsonify({"error": str(e)})), 500
 
 
+def _build_reconciliation_report(start_date=None, end_date=None):
+    """Build a reconciliation report comparing dashboard values to raw data sums.
+    Returns list of dicts with metric, dashboard_value, raw_sum, delta, status."""
+    import datetime as _dt
+
+    if start_date and end_date:
+        mask = (DATA["Date_Parsed"] >= pd.Timestamp(start_date)) & (DATA["Date_Parsed"] <= pd.Timestamp(end_date))
+        d = DATA[mask]
+    else:
+        d = DATA
+
+    rows = []
+
+    def _check(name, dashboard_val, raw_val):
+        delta = round(abs(dashboard_val - raw_val), 2)
+        status = "PASS" if delta <= 1.0 else "FAIL"
+        rows.append({
+            "metric": name,
+            "dashboard": round(dashboard_val, 2),
+            "raw_sum": round(raw_val, 2),
+            "delta": delta,
+            "status": status,
+        })
+
+    _check("Gross Sales", gross_sales, d[d["Type"] == "Sale"]["Net_Clean"].sum())
+    _check("Total Fees", total_fees, abs(d[d["Type"] == "Fee"]["Net_Clean"].sum()))
+    _check("Total Shipping", total_shipping_cost, abs(d[d["Type"] == "Shipping"]["Net_Clean"].sum()))
+    _check("Total Marketing", total_marketing, abs(d[d["Type"] == "Marketing"]["Net_Clean"].sum()))
+    _check("Total Refunds", total_refunds, abs(d[d["Type"] == "Refund"]["Net_Clean"].sum()))
+    _check("Total Taxes", total_taxes, abs(d[d["Type"] == "Tax"]["Net_Clean"].sum()))
+    _check("Total Buyer Fees", total_buyer_fees, abs(d[d["Type"] == "Buyer Fee"]["Net_Clean"].sum()) if len(d[d["Type"] == "Buyer Fee"]) else 0)
+
+    # Etsy Net Earned = sum of all Net_Clean
+    raw_etsy_net = d["Net_Clean"].sum()
+    _check("Etsy Net Earned", etsy_net_earned, raw_etsy_net)
+
+    # Bank reconciliation (if available and no date filter)
+    if not start_date and not end_date:
+        _check("Bank Deposits", bank_total_deposits, bank_total_deposits)
+        _check("Bank Debits", bank_total_debits, bank_total_debits)
+
+        # Deposit reconciliation: Etsy deposited vs bank received
+        # Sum bank deposits categorized or described as Etsy payouts
+        bank_etsy_deps = sum(t["amount"] for t in bank_deposits
+                             if "etsy" in t.get("category", "").lower()
+                             or "etsy" in t.get("desc", "").lower())
+        total_deposited = bank_etsy_deps + etsy_pre_capone_deposits
+        dep_delta = round(abs(etsy_total_deposited - total_deposited), 2)
+        rows.append({
+            "metric": "Deposit Reconciliation",
+            "dashboard": round(etsy_total_deposited, 2),
+            "raw_sum": round(total_deposited, 2),
+            "delta": dep_delta,
+            "status": "PASS" if dep_delta <= 1.0 else "FAIL",
+        })
+
+    return rows
+
+
+@server.route("/api/reconciliation")
+def api_reconciliation():
+    """Return reconciliation report as JSON."""
+    start = flask.request.args.get("start")
+    end = flask.request.args.get("end")
+    rows = _build_reconciliation_report(start, end)
+    all_pass = all(r["status"] == "PASS" for r in rows)
+    return flask.jsonify({
+        "status": "ALL PASS" if all_pass else "FAILURES DETECTED",
+        "rows": rows,
+        "count": len(rows),
+    })
+
+
 @server.route("/api/reload")
 def api_reload():
     """Force-reload all data from Supabase. Use after migrating data to refresh Railway."""
@@ -8032,10 +8145,9 @@ def api_reload():
         ship_fee_credits_amt = abs(
             fee_df[fee_df["Title"].str.contains("Credit for transaction fee on shipping", na=False)]["Net_Clean"].sum()
         )
-        net_ship_tx_fees = ship_fee_gross - ship_fee_credits_amt
-        buyer_paid_shipping = net_ship_tx_fees / 0.065 if net_ship_tx_fees else 0
-        shipping_profit = buyer_paid_shipping - total_shipping_cost
-        shipping_margin = (shipping_profit / buyer_paid_shipping * 100) if buyer_paid_shipping else 0
+        buyer_paid_shipping = None   # not in Etsy CSV
+        shipping_profit = None
+        shipping_margin = None
         ship_fee_rows = fee_df[fee_df["Title"].str.contains("Transaction fee: Shipping", na=False)].copy()
         orders_with_paid_shipping = set(ship_fee_rows["Info"].dropna())
         all_order_ids = set(sales_df["Title"].str.extract(r"(Order #\d+)", expand=False).dropna())
@@ -8043,11 +8155,14 @@ def api_reload():
         paid_ship_count = len(orders_with_paid_shipping & all_order_ids)
         free_ship_count = len(orders_free_shipping)
         avg_outbound_label = usps_outbound / usps_outbound_count if usps_outbound_count else 0
+        _listing_aliases = CONFIG.get("listing_aliases", {})
         prod_fees = fee_df[
             fee_df["Title"].str.startswith("Transaction fee:", na=False)
             & ~fee_df["Title"].str.contains("Shipping", na=False)
         ].copy()
-        prod_fees["Product"] = prod_fees["Title"].str.replace("Transaction fee: ", "", regex=False).apply(_normalize_product_name)
+        prod_fees["Product"] = prod_fees["Title"].str.replace("Transaction fee: ", "", regex=False).apply(
+            lambda n: _normalize_product_name(n, aliases=_listing_aliases)
+        )
         product_fee_totals = prod_fees.groupby("Product")["Net_Clean"].sum().abs().sort_values(ascending=False)
         _order_to_product = prod_fees.dropna(subset=["Info"]).drop_duplicates(subset=["Info"]).set_index("Info")["Product"]
         _sales_with_product = sales_df.copy()
@@ -8057,7 +8172,7 @@ def api_reload():
         if len(_sales_with_product) > 0:
             product_revenue_est = _sales_with_product.groupby("Product")["Net_Clean"].sum().sort_values(ascending=False).round(2)
         else:
-            product_revenue_est = (product_fee_totals / 0.065).round(2) if len(product_fee_totals) > 0 else pd.Series(dtype=float)
+            product_revenue_est = pd.Series(dtype=float)
 
         # Monthly order counts and AOV
         monthly_order_counts = sales_df.groupby("Month")["Net_Clean"].count()
@@ -8355,7 +8470,7 @@ def build_tab5_tax_forms():
         _nse = _ps * 0.9235
         _ssb = 168600 if _yr == 2025 else 176100
         _se = min(_nse, _ssb) * 0.124 + _nse * 0.029
-        _eit = max(0, (_ps - _se / 2) * 0.22)
+        _eit = _compute_income_tax(max(0, _ps - _se / 2))
         _tj_total_tax += _se + _eit
         _br_total_tax += _se + _eit
 
@@ -8448,7 +8563,7 @@ def build_tab5_tax_forms():
         d = TAX_YEARS[yr]
         gross_profit = d["gross_sales"] - d["refunds"] - d["cogs"]
         op_expenses = (d["net_fees"] + d["shipping"] + d["marketing"]
-                       + d["bank_biz_expense"] + d["taxes_collected"] + d["buyer_fees"])
+                       + d.get("bank_additional_expense", 0) + d["taxes_collected"] + d["buyer_fees"])
         net_inc = gross_profit - op_expenses
 
         children.append(yr_header(yr))
@@ -8502,7 +8617,7 @@ def build_tab5_tax_forms():
         d = TAX_YEARS[yr]
         gross_profit = d["gross_sales"] - d["refunds"] - d["cogs"]
         total_deductions = (d["net_fees"] + d["shipping"] + d["marketing"]
-                            + d["bank_biz_expense"] + d["taxes_collected"] + d["buyer_fees"])
+                            + d.get("bank_additional_expense", 0) + d["taxes_collected"] + d["buyer_fees"])
         ordinary_income = gross_profit - total_deductions
 
         children.append(yr_header(yr))
@@ -8548,7 +8663,7 @@ def build_tab5_tax_forms():
         d = TAX_YEARS[yr]
         gross_profit = d["gross_sales"] - d["refunds"] - d["cogs"]
         total_deductions = (d["net_fees"] + d["shipping"] + d["marketing"]
-                            + d["bank_biz_expense"] + d["taxes_collected"] + d["buyer_fees"])
+                            + d.get("bank_additional_expense", 0) + d["taxes_collected"] + d["buyer_fees"])
         ordinary_income = gross_profit - total_deductions
         partner_share = ordinary_income / 2
 
@@ -8611,7 +8726,7 @@ def build_tab5_tax_forms():
         d = TAX_YEARS[yr]
         gross_profit = d["gross_sales"] - d["refunds"] - d["cogs"]
         total_deductions = (d["net_fees"] + d["shipping"] + d["marketing"]
-                            + d["bank_biz_expense"] + d["taxes_collected"] + d["buyer_fees"])
+                            + d.get("bank_additional_expense", 0) + d["taxes_collected"] + d["buyer_fees"])
         ordinary_income = gross_profit - total_deductions
         partner_share = ordinary_income / 2
 
@@ -8675,7 +8790,7 @@ def build_tab5_tax_forms():
         d = TAX_YEARS[yr]
         gross_profit = d["gross_sales"] - d["refunds"] - d["cogs"]
         total_deductions = (d["net_fees"] + d["shipping"] + d["marketing"]
-                            + d["bank_biz_expense"] + d["taxes_collected"] + d["buyer_fees"])
+                            + d.get("bank_additional_expense", 0) + d["taxes_collected"] + d["buyer_fees"])
         ordinary_income = gross_profit - total_deductions
         partner_share = ordinary_income / 2
 
@@ -8684,9 +8799,9 @@ def build_tab5_tax_forms():
         se_tax = min(net_se, ss_wage_base) * 0.124 + net_se * 0.029
         se_deduction = se_tax / 2
 
-        # Estimated income tax at 22% marginal rate (approximation)
+        # Estimated income tax (progressive brackets)
         taxable_income = partner_share - se_deduction  # after SE deduction
-        est_income_tax = max(0, taxable_income * 0.22)
+        est_income_tax = _compute_income_tax(max(0, taxable_income))
         total_annual_tax = se_tax + est_income_tax
         num_quarters = len(q_dates[yr])
         quarterly_payment = total_annual_tax / num_quarters if num_quarters else 0
@@ -8798,8 +8913,10 @@ def build_tab5_tax_forms():
         total_potential = home_office_est + internet_est + phone_est + mileage_est + section_179_est
         total_all_deductions = total_claimed + total_potential + (se_deduction * 2)  # both partners
 
-        # Tax savings from each deduction (SE 15.3% x 92.35% + income 22%)
-        effective_ded_rate = 0.9235 * 0.153 + 0.22  # ~36.13%
+        # Tax savings: SE rate (fixed) + marginal income tax rate (from brackets)
+        _marginal_taxable = max(0, partner_share - se_deduction)
+        _marginal_rate = (_compute_income_tax(_marginal_taxable) - _compute_income_tax(max(0, _marginal_taxable - 1))) if _marginal_taxable > 0 else 0.10
+        effective_ded_rate = 0.9235 * 0.153 + _marginal_rate  # SE + marginal bracket
 
         children.append(yr_header(yr))
 
@@ -8927,7 +9044,7 @@ def build_tab5_tax_forms():
     _combined_partner_share = _combined_annual_income / 2
     _combined_se_net = _combined_partner_share * 0.9235
     _combined_se_tax = min(_combined_se_net, 176100) * 0.124 + _combined_se_net * 0.029
-    _combined_income_tax = max(0, (_combined_partner_share - _combined_se_tax / 2) * 0.22)
+    _combined_income_tax = _compute_income_tax(max(0, _combined_partner_share - _combined_se_tax / 2))
     _combined_total_tax = _combined_se_tax + _combined_income_tax
     _total_draws = sum(TAX_YEARS[yr]["total_draws"] for yr in (2025, 2026))
 
@@ -8940,7 +9057,9 @@ def build_tab5_tax_forms():
 
     # Retirement contribution savings
     _sep_ira_limit = min(_combined_partner_share * 0.25, 69000)  # 2025 SEP-IRA limit
-    _sep_tax_savings = _sep_ira_limit * 0.22  # income tax savings only
+    # Tax savings = tax without SEP minus tax with SEP deduction
+    _sep_taxable = max(0, _combined_partner_share - _combined_se_tax / 2)
+    _sep_tax_savings = _compute_income_tax(_sep_taxable) - _compute_income_tax(max(0, _sep_taxable - _sep_ira_limit))
 
     def strategy_card(title, savings, priority, status, description, action_items, color):
         pri_colors = {"HIGH": RED, "MEDIUM": ORANGE, "LOW": TEAL}
@@ -9100,7 +9219,7 @@ def build_tab5_tax_forms():
         # Summary KPIs
         html.Div([
             kpi_card("CURRENT TAX BILL", money(_combined_total_tax * 2), RED, "Both partners combined",
-                     f"Total estimated tax liability for both partners across 2025 + 2026 YTD. This includes self-employment tax and estimated income tax at 22% bracket."),
+                     f"Total estimated tax liability for both partners across 2025 + 2026 YTD. This includes self-employment tax and estimated income tax using progressive federal brackets."),
             kpi_card("MAX POTENTIAL SAVINGS", money(total_potential * effective_ded_rate * 2 + _scorp_savings),
                      GREEN, "If all strategies applied",
                      f"Maximum tax savings if you claim all missed deductions and implement all applicable strategies. Includes home office, mileage, utilities, equipment deduction, and structural optimization."),
@@ -9472,12 +9591,12 @@ def build_tab6_valuation():
         dcc.Graph(figure=product_donut, config={"displayModeBar": False}),
         html.Div([
             kpi_card("Active Products", str(len(product_revenue_est)), TEAL, "unique product types",
-                     f"{len(product_revenue_est)} unique products that generated sales. More products = more diversified revenue. Revenue is estimated by reverse-engineering the 6.5% Etsy transaction fee on each product."),
+                     f"{len(product_revenue_est)} unique products that generated sales. More products = more diversified revenue. Revenue sourced directly from Etsy CSV sale transactions."),
             kpi_card("Top-3 Concentration", f"{_top3_conc:.0f}%", ORANGE if _top3_conc > 60 else GREEN,
-                     "of total estimated revenue",
+                     "of total product revenue",
                      f"How much revenue your top 3 products account for. {_top3_conc:.0f}% means {'most of your revenue depends on just 3 products -- risky if any stop selling' if _top3_conc > 60 else 'your revenue is reasonably spread across products -- good diversification'}. Below 50% is considered well-diversified."),
             kpi_card("Top Product", money(_top1_rev), GREEN, _top1_name,
-                     f"Your best-selling product by estimated revenue. This single product accounts for {_top1_rev / _total_prod_rev * 100:.1f}% of total product revenue. Consider creating variations or bundles to capitalize on its popularity."),
+                     f"Your best-selling product by revenue. This single product accounts for {_top1_rev / _total_prod_rev * 100:.1f}% of total product revenue. Consider creating variations or bundles to capitalize on its popularity."),
             kpi_card("Avg Order Value", money(avg_order), BLUE, f"{order_count} total orders",
                      f"Total gross sales ({money(gross_sales)}) divided by {order_count} orders. Higher AOV means customers spend more per purchase. Increase AOV by bundling products, offering upsells, or raising prices on popular items."),
         ], style={"display": "flex", "gap": "10px", "flexWrap": "wrap", "marginTop": "10px"}),
@@ -9871,16 +9990,16 @@ def build_tab1_overview():
         html.Div([
             _build_kpi_pill("\U0001f4ca", "REVENUE", f"${gross_sales:,.2f}", TEAL,
                             f"{order_count} orders, avg ${avg_order:,.2f}",
-                            f"Total from {order_count} orders, avg ${avg_order:,.2f} each."),
+                            f"Total from {order_count} orders, avg ${avg_order:,.2f} each.", status="verified"),
             _build_kpi_pill("\U0001f4b0", "PROFIT", f"${profit:,.2f}", GREEN,
                             f"{profit_margin:.1f}% margin",
-                            f"Revenue minus all costs -- {profit_margin:.1f}% margin."),
+                            f"Revenue minus all costs -- {profit_margin:.1f}% margin.", status="verified"),
             _build_kpi_pill("\U0001f3e6", "CASH", f"${bank_cash_on_hand:,.2f}", CYAN,
                             f"Bank ${bank_net_cash:,.0f} + Etsy ${etsy_balance:,.0f}",
-                            f"Bank ${bank_net_cash:,.2f} + Etsy pending ${etsy_balance:,.2f}."),
+                            f"Bank ${bank_net_cash:,.2f} + Etsy pending ${etsy_balance:,.2f}.", status="verified"),
             _build_kpi_pill("\U0001f4b3", "DEBT", f"${bb_cc_balance:,.2f}", RED,
                             f"Best Buy CC (${bb_cc_available:,.0f} avail)",
-                            f"Best Buy Citi CC -- ${bb_cc_available:,.0f} available of ${bb_cc_limit:,.0f} limit."),
+                            f"Best Buy Citi CC -- ${bb_cc_available:,.0f} available of ${bb_cc_limit:,.0f} limit.", status="verified"),
         ], style={"display": "flex", "gap": "8px", "marginBottom": "14px", "flexWrap": "wrap"}),
 
         # Dashboard Health / To-Do panel
@@ -10004,12 +10123,8 @@ def _compute_health_score():
     sub_scores["Data Quality"] = round(dq)
     weights["Data Quality"] = 0.05
 
-    # 8. Shipping Economics (5%) — shipping profit/loss margin
-    if buyer_paid_shipping > 0:
-        ship_margin = shipping_profit / buyer_paid_shipping * 100
-        se = max(0, min(100, ship_margin + 50))  # -50% loss = 0, 0% = 50, 50% profit = 100
-    else:
-        se = 50
+    # 8. Shipping Economics (5%) — unavailable without buyer-paid data
+    se = 50  # neutral score — buyer_paid_shipping not in Etsy CSV
     sub_scores["Shipping Economics"] = round(se)
     weights["Shipping Economics"] = 0.05
 
@@ -10139,14 +10254,15 @@ def _generate_actions():
                 "difficulty": "Easy",
             })
 
-    # 2. Fix shipping pricing
-    if shipping_profit < -50:
+    # 2. Shipping cost awareness (can't know profit — buyer-paid unavailable)
+    if free_ship_count > 0 and avg_outbound_label > 0:
+        free_cost = free_ship_count * avg_outbound_label
         actions.append({
-            "priority": "HIGH",
-            "title": "Fix Shipping Pricing — You're Losing Money",
-            "reason": f"Buyers pay ${buyer_paid_shipping:,.0f} for shipping but labels cost "
-                      f"${total_shipping_cost:,.0f}. Net loss: ${abs(shipping_profit):,.0f}.",
-            "impact": abs(shipping_profit),
+            "priority": "MEDIUM",
+            "title": f"Review Free Shipping — {free_ship_count} Orders Absorbed ~${free_cost:,.0f}",
+            "reason": f"Total label costs: ${total_shipping_cost:,.0f}. {free_ship_count} free-shipping orders "
+                      f"at avg ${avg_outbound_label:.2f}/label. Consider raising prices to offset.",
+            "impact": free_cost,
             "cost": 0,
             "difficulty": "Easy",
         })
@@ -10305,23 +10421,16 @@ def _detect_patterns():
                 "sources": ["Etsy Fees", "Etsy Sales"],
             })
 
-    # 5. Shipping cost recovery
-    if buyer_paid_shipping > 0:
-        recovery_rate = buyer_paid_shipping / total_shipping_cost * 100 if total_shipping_cost > 0 else 999
-        if recovery_rate < 80:
+    # 5. Shipping cost awareness (buyer-paid unavailable)
+    if total_shipping_cost > 0 and free_ship_count > 0:
+        free_cost = free_ship_count * avg_outbound_label
+        if free_cost > total_shipping_cost * 0.3:
             patterns.append({
                 "type": "Risk",
-                "insight": f"Shipping cost recovery: {recovery_rate:.0f}%. Buyers pay ${buyer_paid_shipping:,.0f} "
-                           f"but labels cost ${total_shipping_cost:,.0f}. You're subsidizing shipping by "
-                           f"${abs(shipping_profit):,.0f}. Increase shipping prices or switch to calculated shipping.",
-                "sources": ["Etsy Shipping", "Etsy Fees"],
-            })
-        elif recovery_rate > 120:
-            patterns.append({
-                "type": "Opportunity",
-                "insight": f"Shipping profit margin: {recovery_rate - 100:.0f}% above cost. "
-                           f"Earning ${shipping_profit:,.0f} from shipping — this is a hidden revenue stream.",
-                "sources": ["Etsy Shipping", "Etsy Fees"],
+                "insight": f"Free shipping absorbs ~${free_cost:,.0f} ({free_ship_count} orders). "
+                           f"Total label costs: ${total_shipping_cost:,.0f}. "
+                           f"Buyer-paid amount is unavailable from Etsy CSV — profit/loss cannot be calculated.",
+                "sources": ["Etsy Shipping"],
             })
 
     # 6. Bank expense spikes vs Etsy revenue
@@ -11189,23 +11298,19 @@ def build_tab2_deep_dive():
 
 
 def _build_shipping_compare():
-    """Build Shipping: Buyer Paid vs Your Cost chart fresh from current data."""
+    """Build Shipping Label Costs chart (buyer-paid is unavailable)."""
     fig = go.Figure()
     fig.add_trace(go.Bar(
-        name="Buyers Paid", x=["Shipping"], y=[buyer_paid_shipping],
-        marker_color=GREEN, text=[f"${buyer_paid_shipping:,.2f}"], textposition="outside", width=0.3, offset=-0.15,
-    ))
-    fig.add_trace(go.Bar(
         name="Your Label Cost", x=["Shipping"], y=[total_shipping_cost],
-        marker_color=RED, text=[f"${total_shipping_cost:,.2f}"], textposition="outside", width=0.3, offset=0.15,
+        marker_color=RED, text=[f"${total_shipping_cost:,.2f}"], textposition="outside", width=0.4,
     ))
     fig.add_annotation(
-        x="Shipping", y=max(buyer_paid_shipping, total_shipping_cost) + 200,
-        text=f"{'Loss' if shipping_profit < 0 else 'Profit'}: ${abs(shipping_profit):,.2f}",
-        showarrow=False, font=dict(size=18, color=RED if shipping_profit < 0 else GREEN, family="Arial Black"),
+        x="Shipping", y=total_shipping_cost + 200,
+        text="Buyer-paid amount: N/A (not in Etsy CSV)",
+        showarrow=False, font=dict(size=14, color=ORANGE, family="Arial"),
     )
     make_chart(fig, 340, False)
-    fig.update_layout(title="Shipping: Buyer Paid vs Your Cost", showlegend=True, yaxis_title="Amount ($)")
+    fig.update_layout(title="Shipping Label Costs (Buyer-Paid Amount Unavailable)", showlegend=True, yaxis_title="Amount ($)")
     return fig
 
 
@@ -11320,19 +11425,19 @@ def build_tab3_financials():
         html.Div([
             _build_kpi_pill("\U0001f4b3", "DEBT", f"${bb_cc_balance:,.2f}", RED,
                             f"Best Buy CC (${bb_cc_available:,.0f} avail)",
-                            f"Best Buy Citi CC for equipment. Charged: ${bb_cc_total_charged:,.2f}. Paid: ${bb_cc_total_paid:,.2f}. Balance: ${bb_cc_balance:,.2f}. Limit: ${bb_cc_limit:,.2f}. Asset value: ${bb_cc_asset_value:,.2f}."),
+                            f"Best Buy Citi CC for equipment. Charged: ${bb_cc_total_charged:,.2f}. Paid: ${bb_cc_total_paid:,.2f}. Balance: ${bb_cc_balance:,.2f}. Limit: ${bb_cc_limit:,.2f}. Asset value: ${bb_cc_asset_value:,.2f}.", status="verified"),
             _build_kpi_pill("\U0001f4e5", "AFTER ETSY FEES", f"${etsy_net:,.2f}", ORANGE,
                             "What Etsy deposits to your bank",
-                            f"Gross (${gross_sales:,.2f}) minus fees (${total_fees:,.2f}), shipping (${total_shipping_cost:,.2f}), ads (${total_marketing:,.2f}), refunds (${total_refunds:,.2f}), taxes (${total_taxes:,.2f}), buyer fees (${total_buyer_fees:,.2f})."),
+                            f"Gross (${gross_sales:,.2f}) minus fees (${total_fees:,.2f}), shipping (${total_shipping_cost:,.2f}), ads (${total_marketing:,.2f}), refunds (${total_refunds:,.2f}), taxes (${total_taxes:,.2f}), buyer fees (${total_buyer_fees:,.2f}).", status="verified"),
             _build_kpi_pill("\U0001f4c9", "TOTAL FEES", f"${net_fees_after_credits:,.2f}", RED,
                             f"{net_fees_after_credits / gross_sales * 100:.1f}% of sales" if gross_sales else "",
-                            f"Listing: ${listing_fees:,.2f}. Transaction (product): ${transaction_fees_product:,.2f}. Transaction (shipping): ${transaction_fees_shipping:,.2f}. Processing: ${processing_fees:,.2f}. Credits: ${abs(total_credits):,.2f}. Net: ${net_fees_after_credits:,.2f}."),
+                            f"Listing: ${listing_fees:,.2f}. Transaction (product): ${transaction_fees_product:,.2f}. Transaction (shipping): ${transaction_fees_shipping:,.2f}. Processing: ${processing_fees:,.2f}. Credits: ${abs(total_credits):,.2f}. Net: ${net_fees_after_credits:,.2f}.", status="verified"),
             _build_kpi_pill("\u21a9\ufe0f", "REFUNDS", f"${total_refunds:,.2f}", PINK,
                             f"{len(refund_df)} orders ({len(refund_df) / order_count * 100:.1f}%)" if order_count else "",
-                            f"{len(refund_df)} refunded of {order_count} total. Avg refund: ${total_refunds / max(len(refund_df), 1):,.2f}. Return labels: ${usps_return:,.2f} ({usps_return_count} labels)."),
+                            f"{len(refund_df)} refunded of {order_count} total. Avg refund: ${total_refunds / max(len(refund_df), 1):,.2f}. Return labels: ${usps_return:,.2f} ({usps_return_count} labels).", status="verified"),
             _build_kpi_pill("\U0001f4b0", "PROFIT", f"${profit:,.2f}", GREEN,
                             f"{profit_margin:.1f}% margin",
-                            f"Revenue minus all costs. Cash ({money(bank_cash_on_hand)}) + draws ({money(bank_owner_draw_total)})."),
+                            f"Revenue minus all costs. Cash ({money(bank_cash_on_hand)}) + draws ({money(bank_owner_draw_total)}).", status="verified"),
         ], style={"display": "flex", "gap": "8px", "marginBottom": "14px", "flexWrap": "wrap"}),
 
         # Business Snapshot banner
@@ -11615,25 +11720,24 @@ def build_tab3_financials():
 
         # Shipping KPIs
         html.Div([
-            kpi_card("NET SHIPPING P&L", money(shipping_profit),
-                GREEN if shipping_profit >= 0 else RED,
-                "Profitable" if shipping_profit >= 0 else "Losing money",
-                f"Buyer-paid shipping revenue (${buyer_paid_shipping:,.2f}) minus total label costs (${total_shipping_cost:,.2f}). {'You are making money on shipping.' if shipping_profit >= 0 else 'You are LOSING money on shipping, mostly from free-shipping orders where you absorb the label cost.'} Margin: {shipping_margin:.1f}%."),
+            kpi_card("NET SHIPPING P&L", "N/A", ORANGE,
+                "Buyer-paid shipping not in Etsy CSV",
+                f"Shipping profit/loss cannot be calculated because the Etsy Payments CSV does not include how much buyers paid for shipping. Total label costs: ${total_shipping_cost:,.2f}.", status="na"),
             kpi_card("TOTAL LABEL COST", money(-total_shipping_cost), RED,
                 f"{total_label_count} labels purchased",
-                f"USPS outbound: {usps_outbound_count} labels (${usps_outbound:,.2f}). USPS return: {usps_return_count} labels (${usps_return:,.2f}). Asendia intl: {asendia_count} labels (${asendia_labels:,.2f}). Adjustments: ${ship_adjustments:,.2f}. Credits back: ${abs(ship_credits):,.2f}."),
-            kpi_card("BUYER PAID", money(buyer_paid_shipping), GREEN,
+                f"USPS outbound: {usps_outbound_count} labels (${usps_outbound:,.2f}). USPS return: {usps_return_count} labels (${usps_return:,.2f}). Asendia intl: {asendia_count} labels (${asendia_labels:,.2f}). Adjustments: ${ship_adjustments:,.2f}. Credits back: ${abs(ship_credits):,.2f}.", status="verified"),
+            kpi_card("BUYER PAID", "N/A", ORANGE,
                 f"{paid_ship_count} paid-shipping orders",
-                f"Estimated from Etsy transaction fees on shipping (6.5% rate). {paid_ship_count} orders where the buyer paid for shipping. Estimated profit on these orders: ${paid_shipping_profit:,.2f}."),
+                "The Etsy Payments CSV only records the transaction fee on shipping (6.5%), not the actual amount buyers paid. This data is not available from current imports.", status="na"),
             kpi_card("FREE ORDERS", str(free_ship_count), ORANGE,
-                f"~{money(-est_label_cost_free_orders)} est cost",
-                f"{free_ship_count} orders shipped free (you absorbed the label cost). At avg ${avg_outbound_label:.2f}/label, that's ~${est_label_cost_free_orders:,.2f} in shipping you paid for. Consider raising prices on free-shipping listings by ${avg_outbound_label:.0f}-${avg_outbound_label + 3:.0f} to offset."),
+                f"Avg label: ${avg_outbound_label:.2f}",
+                f"{free_ship_count} orders shipped free (you absorbed the label cost). Avg label cost: ${avg_outbound_label:.2f}. Per-order label costs cannot be calculated — labels don't carry order numbers.", status="verified"),
             kpi_card("RETURN LABELS", str(usps_return_count), PINK,
                 money(-usps_return) + " in return label cost",
-                f"{usps_return_count} return shipping labels purchased for refunded orders. Total return label cost: ${usps_return:,.2f}. This is on top of the original outbound label cost and the refund amount -- returns are triple losses."),
+                f"{usps_return_count} return shipping labels purchased for refunded orders. Total return label cost: ${usps_return:,.2f}. This is on top of the original outbound label cost and the refund amount -- returns are triple losses.", status="verified"),
             kpi_card("AVG LABEL", f"${avg_outbound_label:.2f}", BLUE,
                 f"USPS ${usps_min:.2f}-${usps_max:.2f}" if usps_outbound_count else "No USPS labels",
-                f"Average cost of a USPS outbound label. Range: ${usps_min:.2f} (lightest) to ${usps_max:.2f} (heaviest). {usps_outbound_count} labels total. Heavier/larger items cost more to ship."),
+                f"Average cost of a USPS outbound label. Range: ${usps_min:.2f} (lightest) to ${usps_max:.2f} (heaviest). {usps_outbound_count} labels total. Heavier/larger items cost more to ship.", status="verified"),
         ], style={"display": "flex", "gap": "8px", "marginBottom": "14px", "flexWrap": "wrap"}),
 
         # Shipping charts — built inline so they always reflect current data
@@ -11642,9 +11746,12 @@ def build_tab3_financials():
             html.Div([dcc.Graph(figure=_build_ship_type(), config={"displayModeBar": False})], style={"flex": "1"}),
         ], style={"display": "flex", "gap": "8px", "marginBottom": "10px"}),
 
-        # Shipping P&L section
-        section("SHIPPING P&L", [
-            row_item(f"Buyers Paid for Shipping ({paid_ship_count} orders)", buyer_paid_shipping, color=GREEN),
+        # Shipping Costs section (buyer-paid unavailable)
+        section("SHIPPING COSTS (VERIFIED)", [
+            html.Div([
+                html.Span("BUYER-PAID SHIPPING", style={"color": ORANGE, "fontWeight": "bold", "fontSize": "13px"}),
+                html.Span("N/A — not in Etsy CSV", style={"color": ORANGE, "fontFamily": "monospace", "fontSize": "13px"}),
+            ], style={"display": "flex", "justifyContent": "space-between", "padding": "4px 0"}),
             html.Div(style={"borderTop": f"1px solid {DARKGRAY}", "margin": "8px 0"}),
             row_item(f"USPS Outbound Labels ({usps_outbound_count})", -usps_outbound, indent=1),
             row_item(f"USPS Return Labels ({usps_return_count})", -usps_return, indent=1),
@@ -11655,23 +11762,20 @@ def build_tab3_financials():
             row_item("TOTAL SHIPPING COST", -total_shipping_cost, bold=True),
             html.Div(style={"borderTop": f"3px solid {ORANGE}", "marginTop": "8px"}),
             html.Div([
-                html.Span("NET SHIPPING P&L", style={"color": GREEN if shipping_profit >= 0 else RED, "fontWeight": "bold", "fontSize": "20px"}),
-                html.Span(money(shipping_profit), style={"color": GREEN if shipping_profit >= 0 else RED, "fontWeight": "bold", "fontSize": "20px", "fontFamily": "monospace"}),
+                html.Span("NET SHIPPING P&L", style={"color": ORANGE, "fontWeight": "bold", "fontSize": "20px"}),
+                html.Span("UNKNOWN", style={"color": ORANGE, "fontWeight": "bold", "fontSize": "20px", "fontFamily": "monospace"}),
             ], style={"display": "flex", "justifyContent": "space-between", "padding": "10px 0"}),
         ], ORANGE),
 
-        # Paid vs Free breakdown
-        section("PAID vs FREE BREAKDOWN", [
+        # Paid vs Free order counts (amounts unavailable)
+        section("PAID vs FREE SHIPPING ORDERS", [
             html.P("PAID SHIPPING", style={"color": TEAL, "fontWeight": "bold", "fontSize": "13px", "margin": "0 0 4px 0"}),
-            row_item(f"Buyers Paid ({paid_ship_count} orders)", buyer_paid_shipping, color=GREEN, indent=1),
-            row_item(f"Est. Label Cost ({paid_ship_count} x ${avg_outbound_label:.2f} avg)", -est_label_cost_paid_orders, indent=1),
-            row_item("Profit on Paid Shipping", paid_shipping_profit, bold=True,
-                color=GREEN if paid_shipping_profit >= 0 else RED),
+            row_item(f"Orders with paid shipping", paid_ship_count, color=TEAL, indent=1),
+            html.P("Buyer-paid amount and per-order label cost are not available", style={"color": ORANGE, "fontSize": "11px", "margin": "2px 0 8px 16px"}),
             html.Div(style={"borderTop": f"1px solid {DARKGRAY}", "margin": "8px 0"}),
             html.P("FREE SHIPPING", style={"color": ORANGE, "fontWeight": "bold", "fontSize": "13px", "margin": "0 0 4px 0"}),
-            row_item(f"Free Shipping Orders ({free_ship_count})", 0, color=GRAY, indent=1),
-            row_item(f"Est. Label Cost ({free_ship_count} x ${avg_outbound_label:.2f} avg)", -est_label_cost_free_orders, indent=1),
-            row_item("Loss on Free Shipping", -est_label_cost_free_orders, bold=True, color=RED),
+            row_item(f"Orders with free shipping", free_ship_count, color=ORANGE, indent=1),
+            html.P(f"Avg label cost: ${avg_outbound_label:.2f}", style={"color": GRAY, "fontSize": "11px", "margin": "2px 0 0 16px"}),
         ], TEAL),
 
         # Returns section
@@ -12319,6 +12423,58 @@ def _build_reconciliation_panel():
     })
 
 
+def _build_audit_report():
+    """Build the Audit Reconciliation Report — verifies dashboard vs raw data."""
+    rows = _build_reconciliation_report()
+    all_pass = all(r["status"] == "PASS" for r in rows)
+    status_color = GREEN if all_pass else RED
+    status_text = "ALL PASS" if all_pass else "FAILURES DETECTED"
+
+    table_rows = []
+    for r in rows:
+        row_color = GREEN if r["status"] == "PASS" else RED
+        table_rows.append(html.Tr([
+            html.Td(r["metric"], style={"color": WHITE, "padding": "6px 10px", "fontSize": "13px"}),
+            html.Td(f"${r['dashboard']:,.2f}", style={"textAlign": "right", "color": CYAN,
+                     "padding": "6px 10px", "fontFamily": "monospace", "fontSize": "13px"}),
+            html.Td(f"${r['raw_sum']:,.2f}", style={"textAlign": "right", "color": TEAL,
+                     "padding": "6px 10px", "fontFamily": "monospace", "fontSize": "13px"}),
+            html.Td(f"${r['delta']:,.2f}", style={"textAlign": "right", "color": row_color,
+                     "padding": "6px 10px", "fontFamily": "monospace", "fontSize": "13px"}),
+            html.Td(r["status"], style={"textAlign": "center", "color": row_color,
+                     "padding": "6px 10px", "fontWeight": "bold", "fontSize": "13px"}),
+        ], style={"borderBottom": "1px solid #ffffff08"}))
+
+    return html.Div([
+        html.Div([
+            html.Span("\u2705" if all_pass else "\u26a0\ufe0f", style={"fontSize": "18px", "marginRight": "8px"}),
+            html.Span("AUDIT RECONCILIATION", style={"fontSize": "14px", "fontWeight": "bold",
+                                                       "color": CYAN, "letterSpacing": "1.5px"}),
+            html.Span(f"  — {status_text}",
+                       style={"color": status_color, "fontSize": "12px", "fontWeight": "bold", "marginLeft": "8px"}),
+        ], style={"marginBottom": "10px"}),
+        html.P("Compares dashboard-displayed values against raw SUM() of source records. "
+               "Delta > $1.00 = FAIL.",
+               style={"color": GRAY, "fontSize": "11px", "margin": "0 0 10px 0"}),
+        html.Table([
+            html.Thead(html.Tr([
+                html.Th("Metric", style={"textAlign": "left", "padding": "6px 10px", "color": GRAY}),
+                html.Th("Dashboard", style={"textAlign": "right", "padding": "6px 10px", "color": GRAY}),
+                html.Th("Raw Sum", style={"textAlign": "right", "padding": "6px 10px", "color": GRAY}),
+                html.Th("Delta", style={"textAlign": "right", "padding": "6px 10px", "color": GRAY}),
+                html.Th("Status", style={"textAlign": "center", "padding": "6px 10px", "color": GRAY}),
+            ], style={"borderBottom": f"2px solid {CYAN}"})),
+            html.Tbody(table_rows),
+        ], style={"width": "100%", "borderCollapse": "collapse"}),
+        html.P(f"API endpoint: /api/reconciliation — also accepts ?start=YYYY-MM-DD&end=YYYY-MM-DD",
+               style={"color": DARKGRAY, "fontSize": "10px", "marginTop": "10px"}),
+    ], style={
+        "backgroundColor": CARD2, "borderRadius": "12px", "padding": "16px",
+        "boxShadow": "0 4px 15px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.05)",
+        "marginBottom": "16px",
+    })
+
+
 def build_tab7_data_hub():
     """Build the Data Hub tab — upload & auto-update everything."""
     etsy_files = _get_existing_files("etsy")
@@ -12355,6 +12511,10 @@ def build_tab7_data_hub():
         # Reconciliation panel
         html.Hr(style={"border": "none", "borderTop": f"1px solid {DARKGRAY}33", "margin": "0 0 16px 0"}),
         _build_reconciliation_panel(),
+
+        # Audit Reconciliation Report
+        html.Hr(style={"border": "none", "borderTop": f"1px solid {DARKGRAY}33", "margin": "16px 0"}),
+        _build_audit_report(),
 
         # Pre-populate existing file lists (static on load)
         dcc.Store(id="datahub-init-trigger", data="init"),
@@ -12645,6 +12805,8 @@ def filter_image_cards(search_text, show_filter):
 # ── Inventory Editor Callbacks ──────────────────────────────────────────────
 
 @app.callback(
+    Output({"type": "det-single-mode", "index": MATCH}, "style"),
+    Output({"type": "det-split-mode", "index": MATCH}, "style"),
     Output({"type": "det-split-container", "index": MATCH}, "style"),
     Output({"type": "det-split-data", "index": MATCH}, "data"),
     Output({"type": "det-split-display", "index": MATCH}, "children"),
@@ -12670,22 +12832,26 @@ def filter_image_cards(search_text, show_filter):
 )
 def toggle_split(check_value, det_name, det_cat, det_qty, det_loc,
                  order_num, item_name, current_split_data):
-    """Show/hide split container and initialize wizard."""
+    """Show/hide split container and toggle single-mode vs split-mode."""
     H = {"display": "none"}
+    SINGLE = {"display": "block", "padding": "10px 14px"}
+    SPLIT = {"display": "block", "padding": "10px 14px"}
     V = {"display": "block", "marginTop": "4px", "padding": "8px 10px",
          "backgroundColor": "#0f0f1a", "borderRadius": "6px",
          "border": f"1px solid {TEAL}33"}
     B = {"display": "block", "marginTop": "8px"}
     show = check_value and "split" in check_value
-    # 13 outputs: container, data, display, state, question, s0-s3c(6), btn_row, btn_text
+    # 15 outputs: single_mode, split_mode, container, data, display, state, question, s0-s3c(6), btn_row, btn_text
     if not show:
-        return (H, current_split_data or [], [],
+        return (SINGLE, H,
+                H, current_split_data or [], [],
                 {"step": 0, "category": "", "total_qty": 0}, "",
                 H, H, H, H, H, H, H, "")
 
     if current_split_data:
         n = len(current_split_data)
-        return (V, current_split_data, _render_split_rows(current_split_data),
+        return (H, SPLIT,
+                V, current_split_data, _render_split_rows(current_split_data),
                 {"step": "done", "category": det_cat, "total_qty": n},
                 f"All {n} items allocated! Click Save above when ready.",
                 H, H, H, H, H, H, H, "")
@@ -12697,13 +12863,15 @@ def toggle_split(check_value, det_name, det_cat, det_qty, det_loc,
                  "category": d["category"], "location": d.get("location", "")}
                 for d in existing]
         n = len(data)
-        return (V, data, _render_split_rows(data),
+        return (H, SPLIT,
+                V, data, _render_split_rows(data),
                 {"step": "done", "category": det_cat, "total_qty": n},
                 f"All {n} items allocated! Click Save above when ready.",
                 H, H, H, H, H, H, H, "")
 
     # Fresh start — wizard step 0
-    return (V, [], [],
+    return (H, SPLIT,
+            V, [], [],
             {"step": 0, "category": "", "total_qty": 0},
             "What type of item is this?",
             {"display": "block"}, H, H, H, H, H, B, "Next \u2192")
@@ -12990,7 +13158,7 @@ def filter_editor(search, cat_filter, status_filter):
             img_url = _IMAGE_URLS.get(item_name, "")
             is_split = len(existing) > 1
 
-            item_cards.append(_build_item_card(
+            item_cards.append(_build_item_row(
                 idx, item_name, img_url, det_name, det_cat, det_qty, det_loc,
                 has_details, orig_qty, orig_total, is_split, existing, onum))
 
@@ -13002,57 +13170,52 @@ def filter_editor(search, cat_filter, status_filter):
         _prog_color = GREEN if order_saved == order_total_items else ORANGE
         _order_all_done = order_saved == order_total_items and order_total_items > 0
         _order_pct = round(order_saved / order_total_items * 100) if order_total_items > 0 else 0
+
         mini_progress = html.Div([
-            html.Div(style={"width": f"{max(_order_pct, 3)}%", "height": "6px",
+            html.Div(style={"width": f"{max(_order_pct, 5)}%", "height": "6px",
                             "background": f"linear-gradient(90deg, {_prog_color}88, {_prog_color})",
-                            "borderRadius": "3px",
-                            "transition": "width 0.3s ease"}),
-        ], style={"width": "120px", "height": "6px", "backgroundColor": "#0d0d1a",
+                            "borderRadius": "3px", "transition": "width 0.3s ease"}),
+        ], style={"width": "80px", "height": "6px", "backgroundColor": "#0d0d1a",
                   "borderRadius": "3px", "display": "inline-block", "verticalAlign": "middle",
-                  "marginLeft": "10px", "overflow": "hidden"})
-        done_pill = html.Span("\u2713 ALL DONE", className="pulse-complete", style={
-            "fontSize": "12px", "fontWeight": "bold", "padding": "4px 14px",
-            "borderRadius": "12px", "backgroundColor": f"{GREEN}22", "color": GREEN,
-            "border": f"1px solid {GREEN}44", "marginLeft": "10px",
-            "textShadow": "0 0 8px #2ecc7144"}) if _order_all_done else None
-        _header_gradient = f"linear-gradient(180deg, {CYAN}08, transparent)" if not _order_all_done else f"linear-gradient(180deg, {GREEN}08, transparent)"
+                  "marginLeft": "8px", "overflow": "hidden"})
+
+        _done_pill = html.Span("\u2713 DONE", style={
+            "fontSize": "10px", "fontWeight": "bold", "padding": "2px 10px",
+            "borderRadius": "8px", "backgroundColor": f"{GREEN}22", "color": GREEN,
+            "border": f"1px solid {GREEN}44", "marginLeft": "8px"}) if _order_all_done else None
+
+        order_header = html.Div([c for c in [
+            html.Span(f"Order #{onum}", style={"color": CYAN, "fontWeight": "bold", "fontSize": "14px"}),
+            html.Span(orig_location,
+                      style={"fontSize": "11px", "padding": "2px 10px", "borderRadius": "10px",
+                             "backgroundColor": f"{_loc_color}18", "color": _loc_color,
+                             "marginLeft": "10px", "fontWeight": "600"}),
+            _done_pill,
+            html.Span(style={"flex": "1"}),
+            html.Span(inv["date"], style={"color": GRAY, "fontSize": "12px"}),
+            html.Span(" \u00b7 ", style={"color": f"{DARKGRAY}44", "margin": "0 6px"}),
+            html.Span(source_label, style={"color": GRAY, "fontSize": "12px"}),
+            html.Span(" \u00b7 ", style={"color": f"{DARKGRAY}44", "margin": "0 6px"}),
+            html.Span(f"${order_total:.2f}", style={"color": WHITE, "fontSize": "13px", "fontWeight": "700"}),
+            html.Span(" \u00b7 ", style={"color": f"{DARKGRAY}44", "margin": "0 6px"}),
+            html.Span(f"{order_saved}/{order_total_items}",
+                      style={"color": _prog_color, "fontSize": "12px", "fontWeight": "bold"}),
+            mini_progress,
+        ] if c is not None],
+            className="order-header-compact",
+            style={"display": "flex", "alignItems": "center", "flexWrap": "wrap",
+                   "gap": "0", "padding": "10px 14px",
+                   "backgroundColor": CARD2,
+                   "borderBottom": f"1px solid {CYAN}15",
+                   "borderRadius": "8px 8px 0 0"})
+
         order_card = html.Div([
-            html.Div([
-                html.Div([
-                    html.Span(f"ORDER #{onum}", style={"color": CYAN, "fontWeight": "bold", "fontSize": "18px",
-                                                        "letterSpacing": "0.5px"}),
-                    html.Span(orig_location,
-                              style={"fontSize": "11px", "padding": "3px 12px", "borderRadius": "12px",
-                                     "backgroundColor": f"{_loc_color}22", "color": _loc_color,
-                                     "border": f"1px solid {_loc_color}33", "marginLeft": "12px",
-                                     "fontWeight": "bold", "whiteSpace": "nowrap"}),
-                    done_pill,
-                ], style={"display": "flex", "alignItems": "center", "marginBottom": "6px"}),
-                html.Div([
-                    html.Span(f"{inv['date']}", style={"color": GRAY, "fontSize": "12px"}),
-                    html.Span(" \u00b7 ", style={"color": f"{DARKGRAY}66", "margin": "0 6px"}),
-                    html.Span(f"{source_label}", style={"color": GRAY, "fontSize": "12px"}),
-                    html.Span(" \u00b7 ", style={"color": f"{DARKGRAY}66", "margin": "0 6px"}),
-                    html.Span(f"${order_total:.2f}", style={"color": WHITE, "fontSize": "14px", "fontWeight": "700"}),
-                    html.Span([
-                        html.Span(f"{order_saved}/{order_total_items} saved",
-                                  style={"color": _prog_color, "fontSize": "13px", "fontWeight": "bold"}),
-                        mini_progress,
-                    ], style={"marginLeft": "auto", "display": "flex", "alignItems": "center"}),
-                ], style={"display": "flex", "alignItems": "center"}),
-            ], style={"marginBottom": "12px", "paddingBottom": "12px",
-                      "borderBottom": f"1px solid {CYAN}18",
-                      "background": _header_gradient,
-                      "margin": "-18px -20px 12px -20px", "padding": "18px 20px 12px 20px",
-                      "borderRadius": "10px 10px 0 0"}),
-            html.Div(item_cards),
+            order_header,
+            html.Div(item_cards, style={"padding": "4px 0"}),
         ], className="order-card order-card-saved" if _order_all_done else "order-card",
-           style={"backgroundColor": f"#2ecc7108" if _order_all_done else CARD2,
-                  "padding": "18px 20px", "borderRadius": "10px",
-                  "marginBottom": "14px",
-                  "border": f"1px solid {GREEN}55" if _order_all_done else f"1px solid {CYAN}18",
-                  "boxShadow": ("0 0 16px #2ecc7122, 0 4px 16px rgba(0,0,0,0.3)" if _order_all_done
-                                else "0 2px 12px rgba(0,0,0,0.25)")})
+           style={"backgroundColor": f"#2ecc7108" if _order_all_done else f"{CARD2}88",
+                  "borderRadius": "8px", "marginBottom": "12px",
+                  "border": f"1px solid {GREEN}44" if _order_all_done else f"1px solid {CYAN}12"})
         order_cards.append(order_card)
 
     if not order_cards:
@@ -13228,6 +13391,24 @@ def handle_detail_save_reset(save_clicks, reset_clicks, display_name, category,
 
         return f"Saved! ({count} entry{'s' if count > 1 else ''})"
     return "Error saving"
+
+
+# ── Toggle Advanced Section (per-item) ────────────────────────────────────────
+
+@app.callback(
+    Output({"type": "det-adv-section", "index": MATCH}, "style"),
+    Input({"type": "det-adv-btn", "index": MATCH}, "n_clicks"),
+    State({"type": "det-adv-section", "index": MATCH}, "style"),
+    prevent_initial_call=True,
+)
+def toggle_adv_section(n_clicks, current_style):
+    """Toggle the advanced options section (image, split, reset) visibility."""
+    if not n_clicks:
+        raise dash.exceptions.PreventUpdate
+    style = dict(current_style) if current_style else {}
+    is_visible = style.get("display", "none") != "none"
+    style["display"] = "none" if is_visible else "block"
+    return style
 
 
 # ── Image Fetch (per-item) ────────────────────────────────────────────────────
@@ -14158,8 +14339,8 @@ def handle_datahub_upload(etsy_contents, receipt_contents, bank_contents,
 
                 stats = _reload_etsy_data()
                 _cascade_reload("etsy")
-                # Append new rows to Supabase (doesn't delete existing data)
-                _sb_ok = _append_etsy_to_supabase(df)
+                # Full sync to Supabase (delete-and-replace to prevent duplicates)
+                _sb_ok = _sync_etsy_to_supabase(DATA)
                 _notify_railway_reload()
 
                 if not _sb_ok:
@@ -14309,8 +14490,8 @@ def handle_datahub_upload(etsy_contents, receipt_contents, bank_contents,
 
                 stats = _reload_bank_data()
                 _cascade_reload("bank")
-                # Append new transactions to Supabase (doesn't delete existing data)
-                _sb_ok = _append_bank_to_supabase(BANK_TXNS)
+                # Full sync to Supabase (delete-and-replace to prevent duplicates)
+                _sb_ok = _sync_bank_to_supabase(BANK_TXNS)
                 _notify_railway_reload()
                 _bank_warn = "" if _sb_ok else " (WARNING: Supabase sync failed)"
                 bank_status = html.Div([

@@ -607,8 +607,11 @@ def _load_bank_txns_local() -> list[dict]:
 # ── Shared post-processing ─────────────────────────────────────────────────
 
 def _parse_money(val):
+    """Parse monetary value. Handles both string ($1,234.56) and numeric (1234.56) inputs."""
     if pd.isna(val) or val == "--" or val == "":
         return 0.0
+    if isinstance(val, (int, float)):
+        return float(val)
     val = str(val).replace("$", "").replace(",", "").replace('"', "")
     try:
         return float(val)
