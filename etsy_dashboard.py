@@ -167,8 +167,8 @@ if os.path.isdir(_etsy_dir):
     for _ef in sorted(_glob_mod.glob(os.path.join(_etsy_dir, "etsy_statement*.csv"))):
         try:
             _etsy_frames.append(pd.read_csv(_ef))
-        except Exception:
-            pass
+        except Exception as _e:
+            print(f"WARNING: Failed to parse Etsy CSV {os.path.basename(_ef)}: {_e}")
 
 def _pm(val):
     if pd.isna(val) or val == "--" or val == "":
@@ -229,8 +229,8 @@ if os.path.isdir(_init_bank_dir):
                 _txns, _cov = _init_parse_bank(os.path.join(_init_bank_dir, _fn))
                 _init_bank_txns.extend(_txns)
                 _init_covered.update(_cov)
-            except Exception:
-                pass
+            except Exception as _e:
+                print(f"WARNING: Failed to parse bank PDF {_fn}: {_e}")
     _csv_txns = []
     _csv_cov = set()
     for _fn in sorted(os.listdir(_init_bank_dir)):
@@ -239,8 +239,8 @@ if os.path.isdir(_init_bank_dir):
                 _txns, _cov = _init_parse_csv(os.path.join(_init_bank_dir, _fn))
                 _csv_txns.extend(_txns)
                 _csv_cov.update(_cov)
-            except Exception:
-                pass
+            except Exception as _e:
+                print(f"WARNING: Failed to parse bank CSV {_fn}: {_e}")
     if _csv_txns:
         _seen = {}
         for _t in _csv_txns:
@@ -514,8 +514,8 @@ try:
                 "true_qty": d["true_qty"],
                 "location": d.get("location", ""),
             })
-except Exception:
-    pass  # table may not exist yet
+except Exception as _e:
+    print(f"WARNING: Failed to load item details: {_e}")
 
 # ── Location Overrides ─────────────────────────────────────────────────────
 # Load overrides from Supabase (keyed by (order_num, item_name))
@@ -525,8 +525,8 @@ try:
     for ov in _raw_overrides:
         key = (ov["order_num"], ov["item_name"])
         _LOC_OVERRIDES.setdefault(key, []).append({"location": ov["location"], "qty": ov["qty"]})
-except Exception:
-    pass  # table may not exist yet
+except Exception as _e:
+    print(f"WARNING: Failed to load location overrides: {_e}")
 
 # Apply overrides: expand split items into separate rows
 # NOTE: Skip overrides when item details exist (details already include locations)

@@ -298,10 +298,11 @@ class FinancialIntegrityAgent:
                 message="DATA not available", severity="MEDIUM",
                 citation="DATA is None/empty")
 
-        # Check for exact duplicate rows (same Date, Type, Title, Net)
-        dup_cols = ["Date", "Type", "Title", "Net"]
+        # Check for exact duplicate rows — must include Info to distinguish
+        # legitimate same-day transactions (listing fees, shipping labels, etc.)
+        dup_cols = ["Date", "Type", "Title", "Info", "Net"]
         existing_cols = [c for c in dup_cols if c in data.columns]
-        if len(existing_cols) < 3:
+        if len(existing_cols) < 4:
             return CheckResult(
                 name="dedup_integrity", status="SKIP",
                 message="Not enough columns for dedup check", severity="LOW",
@@ -523,7 +524,8 @@ class DataConsistencyAgent:
             citation=f"var:months_sorted={months[:3]}...{months[-1:]}")
 
     def _orphaned_records(self, ed):
-        """Check that all sale-related types have at least some matching sale records."""
+        """Check that sale records contain parseable order numbers.
+        Etsy order numbers are in the Title field: 'Payment for Order #XXXXXXXXX'."""
         data = _safe_getattr(ed, "DATA")
         if data is None:
             return CheckResult(
@@ -531,23 +533,25 @@ class DataConsistencyAgent:
                 message="DATA not available", severity="LOW",
                 citation="DATA is None")
 
+        import re
         sale_orders = set()
-        if "Info" in data.columns:
-            sale_info = data[data["Type"] == "Sale"]["Info"].dropna()
-            for info in sale_info:
-                # Extract order number patterns
-                import re
-                m = re.search(r"#?(\d{9,})", str(info))
+        sales = data[data["Type"] == "Sale"]
+        if "Title" in data.columns and len(sales) > 0:
+            for title in sales["Title"].dropna():
+                m = re.search(r"Order\s*#(\d{9,})", str(title))
                 if m:
                     sale_orders.add(m.group(1))
 
-        status = "PASS" if len(sale_orders) > 0 else "WARN"
+        total_sales = len(sales)
+        pct = (len(sale_orders) / total_sales * 100) if total_sales > 0 else 0
+        status = "PASS" if pct >= 80 else ("WARN" if pct >= 50 else "FAIL")
         return CheckResult(
             name="orphaned_records", status=status,
-            message=f"{len(sale_orders)} unique order references found in sale records",
-            severity="LOW", source_variable="DATA.Info",
-            source_value=len(sale_orders),
-            citation=f"var:sale_order_count={len(sale_orders)}")
+            message=f"{len(sale_orders)}/{total_sales} sales have order numbers ({pct:.0f}%)",
+            severity="LOW" if status == "PASS" else "MEDIUM",
+            source_variable="DATA.Title", source_value=len(sale_orders),
+            expected_value=total_sales,
+            citation=f"var:sale_order_count={len(sale_orders)}, total_sales={total_sales}")
 
     def _etsy_balance_gap(self, ed):
         gap = round(abs(_safe_getattr(ed, "etsy_csv_gap", 0)), 2)
@@ -1116,7 +1120,7 @@ class DeploymentGuardianAgent:
                     result = [None]
                     def _check(t=table):
                         try:
-                            client.table(t).select("id", count="exact").limit(0).execute()
+                            client.table(t).select("*").limit(0).execute()
                             result[0] = True
                         except Exception:
                             result[0] = False
@@ -1300,39 +1304,734 @@ class DeploymentGuardianAgent:
 
 
 # ---------------------------------------------------------------------------
+# Agent 7: Silent Error Sentinel (10 points)
+# ---------------------------------------------------------------------------
+
+class SilentErrorSentinelAgent:
+    """Detects data quality issues that silent exception handlers may have hidden."""
+    agent_id = 7
+    agent_name = "SilentErrorSentinelAgent"
+
+    def run(self) -> GovernanceMessage:
+        ed = _get_dashboard()
+        checks: list[CheckResult] = []
+        if ed is None:
+            checks.append(CheckResult(
+                name="dashboard_import", status="SKIP", message="Dashboard not loaded",
+                severity="CRITICAL", citation="import etsy_dashboard failed"))
+            return self._wrap(checks)
+
+        checks.append(self._nan_in_financials(ed))
+        checks.append(self._null_dates(ed))
+        checks.append(self._bank_txn_integrity(ed))
+        checks.append(self._invoice_field_completeness(ed))
+        checks.append(self._config_type_safety(ed))
+        checks.append(self._data_loading_coverage(ed))
+        checks.append(self._amount_parse_quality(ed))
+
+        return self._wrap(checks)
+
+    def _nan_in_financials(self, ed):
+        """Check that critical financial totals are never NaN or infinite."""
+        import math
+        critical_vars = [
+            "gross_sales", "total_fees", "total_refunds", "total_shipping_cost",
+            "total_marketing", "total_taxes", "etsy_net_earned", "bank_net_cash",
+            "real_profit", "bank_total_deposits", "bank_total_debits",
+            "total_inventory_cost", "bank_owner_draw_total",
+        ]
+        nan_vars = []
+        inf_vars = []
+        for var in critical_vars:
+            val = _safe_getattr(ed, var, "MISSING")
+            if val == "MISSING":
+                continue
+            if val is None:
+                nan_vars.append(f"{var}=None")
+            elif isinstance(val, float):
+                if math.isnan(val):
+                    nan_vars.append(f"{var}=NaN")
+                elif math.isinf(val):
+                    inf_vars.append(f"{var}=Inf")
+
+        failures = nan_vars + inf_vars
+        status = "PASS" if not failures else "FAIL"
+        return CheckResult(
+            name="nan_in_financials", status=status,
+            message=f"{'All {0} financial vars are valid numbers'.format(len(critical_vars))}" if not failures
+                    else f"Bad values: {', '.join(failures)}",
+            severity="CRITICAL" if failures else "INFO",
+            source_value=len(failures), expected_value=0,
+            citation=f"checked {len(critical_vars)} financial globals for NaN/Inf")
+
+    def _null_dates(self, ed):
+        """Check for NaT dates in DATA that could cause silent grouping errors."""
+        import pandas as pd
+        data = _safe_getattr(ed, "DATA")
+        if data is None or "Date_Parsed" not in data.columns:
+            return CheckResult(
+                name="null_dates", status="SKIP",
+                message="DATA.Date_Parsed not available", severity="LOW",
+                citation="DATA is None or missing Date_Parsed")
+
+        nat_count = data["Date_Parsed"].isna().sum()
+        total = len(data)
+        pct = (nat_count / total * 100) if total > 0 else 0
+        status = "PASS" if nat_count == 0 else ("WARN" if pct < 5 else "FAIL")
+        return CheckResult(
+            name="null_dates", status=status,
+            message=f"{nat_count}/{total} rows have null dates ({pct:.1f}%)",
+            severity="HIGH" if pct >= 5 else ("MEDIUM" if nat_count > 0 else "INFO"),
+            source_variable="DATA.Date_Parsed", source_value=nat_count,
+            expected_value=0, delta=nat_count,
+            citation=f"var:DATA rows={total}, NaT dates={nat_count}")
+
+    def _bank_txn_integrity(self, ed):
+        """Verify every bank transaction has required fields and valid amounts."""
+        txns = _safe_getattr(ed, "BANK_TXNS", [])
+        if not txns:
+            return CheckResult(
+                name="bank_txn_integrity", status="SKIP",
+                message="No bank transactions", severity="MEDIUM",
+                citation="BANK_TXNS is empty")
+
+        issues = []
+        for i, t in enumerate(txns):
+            if not t.get("date"):
+                issues.append(f"txn[{i}] missing date")
+            if not t.get("type"):
+                issues.append(f"txn[{i}] missing type")
+            amt = t.get("amount")
+            if amt is None or (isinstance(amt, float) and (amt != amt)):  # NaN check
+                issues.append(f"txn[{i}] bad amount={amt}")
+            if not t.get("category"):
+                issues.append(f"txn[{i}] missing category")
+
+        status = "PASS" if not issues else ("WARN" if len(issues) < 5 else "FAIL")
+        return CheckResult(
+            name="bank_txn_integrity", status=status,
+            message=f"{len(issues)} field issues in {len(txns)} bank transactions"
+                    + (f": {issues[:3]}" if issues else ""),
+            severity="HIGH" if len(issues) >= 5 else ("MEDIUM" if issues else "INFO"),
+            source_variable="BANK_TXNS", source_value=len(issues),
+            expected_value=0, delta=len(issues),
+            citation=f"var:BANK_TXNS len={len(txns)}, field_issues={len(issues)}")
+
+    def _invoice_field_completeness(self, ed):
+        """Check that invoices have all required fields populated."""
+        invoices = _safe_getattr(ed, "INVOICES", [])
+        if not invoices:
+            return CheckResult(
+                name="invoice_field_completeness", status="SKIP",
+                message="No invoices to check", severity="LOW",
+                citation="INVOICES is empty")
+
+        required = ["order_num", "date", "grand_total", "subtotal", "source"]
+        incomplete = 0
+        for inv in invoices:
+            for field in required:
+                if not inv.get(field) and inv.get(field) != 0:
+                    incomplete += 1
+                    break
+
+        pct = (1 - incomplete / len(invoices)) * 100 if invoices else 0
+        status = "PASS" if incomplete == 0 else ("WARN" if pct >= 90 else "FAIL")
+        return CheckResult(
+            name="invoice_field_completeness", status=status,
+            message=f"{len(invoices) - incomplete}/{len(invoices)} invoices have all required fields ({pct:.0f}%)",
+            severity="MEDIUM" if incomplete > 0 else "INFO",
+            source_variable="INVOICES", source_value=incomplete,
+            expected_value=0,
+            citation=f"var:INVOICES len={len(invoices)}, checked fields={required}")
+
+    def _config_type_safety(self, ed):
+        """Check that numeric config values are actually numeric, not strings."""
+        config = _safe_getattr(ed, "CONFIG", {})
+        numeric_keys = ["etsy_pre_capone_deposits", "etsy_starting_balance"]
+        type_errors = []
+        for key in numeric_keys:
+            val = config.get(key)
+            if val is not None and isinstance(val, str):
+                try:
+                    float(val)
+                    type_errors.append(f"{key} is string '{val}' (works but risky)")
+                except ValueError:
+                    type_errors.append(f"{key} is non-numeric string '{val}'")
+
+        status = "PASS" if not type_errors else "WARN"
+        return CheckResult(
+            name="config_type_safety", status=status,
+            message=f"{'Config numeric types OK' if not type_errors else '; '.join(type_errors)}",
+            severity="MEDIUM" if type_errors else "INFO",
+            citation=f"checked {numeric_keys} for type safety")
+
+    def _data_loading_coverage(self, ed):
+        """Verify that all three data sources loaded with non-zero data."""
+        data = _safe_getattr(ed, "DATA")
+        txns = _safe_getattr(ed, "BANK_TXNS", [])
+        invoices = _safe_getattr(ed, "INVOICES", [])
+
+        sources = {
+            "Etsy (DATA)": len(data) if data is not None else 0,
+            "Bank (BANK_TXNS)": len(txns),
+            "Inventory (INVOICES)": len(invoices),
+        }
+        empty = [name for name, count in sources.items() if count == 0]
+        status = "PASS" if not empty else "FAIL"
+        return CheckResult(
+            name="data_loading_coverage", status=status,
+            message=f"{'All 3 sources loaded' if not empty else f'Empty sources: {empty}'}: "
+                    + ", ".join(f"{n}={c}" for n, c in sources.items()),
+            severity="CRITICAL" if empty else "INFO",
+            citation=f"sources: {sources}")
+
+    def _amount_parse_quality(self, ed):
+        """Check for $0.00 amounts that might indicate silent parse failures."""
+        data = _safe_getattr(ed, "DATA")
+        if data is None or "Net_Clean" not in data.columns:
+            return CheckResult(
+                name="amount_parse_quality", status="SKIP",
+                message="DATA.Net_Clean not available", severity="LOW",
+                citation="DATA is None")
+
+        # Sales and Fees should rarely have exactly $0.00
+        sales = data[data["Type"] == "Sale"]
+        zero_sales = (sales["Net_Clean"] == 0).sum() if len(sales) > 0 else 0
+        fees = data[data["Type"] == "Fee"]
+        zero_fees = (fees["Net_Clean"] == 0).sum() if len(fees) > 0 else 0
+
+        pct_zero_sales = (zero_sales / len(sales) * 100) if len(sales) > 0 else 0
+        status = "PASS" if pct_zero_sales < 5 else "WARN"
+        return CheckResult(
+            name="amount_parse_quality", status=status,
+            message=f"{zero_sales} zero-amount sales ({pct_zero_sales:.1f}%), {zero_fees} zero-amount fees",
+            severity="MEDIUM" if pct_zero_sales >= 5 else "INFO",
+            source_variable="DATA.Net_Clean", source_value=zero_sales,
+            citation=f"var:zero_sales={zero_sales}/{len(sales)}, zero_fees={zero_fees}/{len(fees)}")
+
+    def _wrap(self, checks):
+        passed = sum(1 for c in checks if c.status == "PASS")
+        failed = sum(1 for c in checks if c.status == "FAIL")
+        warned = sum(1 for c in checks if c.status == "WARN")
+        skipped = sum(1 for c in checks if c.status == "SKIP")
+        findings = [f"[{c.status}] {c.name}: {c.message}" for c in checks if c.status in ("FAIL", "WARN")]
+        return GovernanceMessage(
+            agent_name=self.agent_name, agent_id=self.agent_id,
+            checks=[asdict(c) for c in checks],
+            summary={"total": len(checks), "passed": passed, "failed": failed,
+                     "warned": warned, "skipped": skipped},
+            findings=findings)
+
+
+# ---------------------------------------------------------------------------
+# Agent 8: Trend Anomaly Detector (10 points)
+# ---------------------------------------------------------------------------
+
+class TrendAnomalyAgent:
+    """Detects statistical anomalies in monthly financial data."""
+    agent_id = 8
+    agent_name = "TrendAnomalyAgent"
+
+    def run(self) -> GovernanceMessage:
+        ed = _get_dashboard()
+        checks: list[CheckResult] = []
+        if ed is None:
+            checks.append(CheckResult(
+                name="dashboard_import", status="SKIP", message="Dashboard not loaded",
+                severity="CRITICAL", citation="import etsy_dashboard failed"))
+            return self._wrap(checks)
+
+        checks.append(self._revenue_anomalies(ed))
+        checks.append(self._fee_ratio_check(ed))
+        checks.append(self._refund_rate(ed))
+        checks.append(self._margin_consistency(ed))
+        checks.append(self._growth_trajectory(ed))
+        checks.append(self._seasonal_pattern(ed))
+
+        return self._wrap(checks)
+
+    def _revenue_anomalies(self, ed):
+        """Flag months with revenue >2 std deviations from mean."""
+        import numpy as np
+        monthly_sales = _safe_getattr(ed, "monthly_sales", {})
+        # monthly_sales may be a pandas Series or dict — convert to dict
+        if hasattr(monthly_sales, "to_dict"):
+            monthly_sales = monthly_sales.to_dict()
+        if len(monthly_sales) < 3:
+            return CheckResult(
+                name="revenue_anomalies", status="SKIP",
+                message=f"Need 3+ months for anomaly detection (have {len(monthly_sales)})",
+                severity="INFO", citation=f"monthly_sales has {len(monthly_sales)} entries")
+
+        values = list(monthly_sales.values())
+        mean = float(np.mean(values))
+        std = float(np.std(values))
+        anomalies = []
+        if std > 0:
+            for month, val in monthly_sales.items():
+                z = (float(val) - mean) / std
+                if abs(z) > 2.0:
+                    direction = "spike" if z > 0 else "drop"
+                    anomalies.append(f"{month}: ${val:,.0f} ({direction}, z={z:.1f})")
+
+        status = "PASS" if not anomalies else "WARN"
+        return CheckResult(
+            name="revenue_anomalies", status=status,
+            message=f"{'No revenue anomalies' if not anomalies else f'{len(anomalies)} anomalies: ' + '; '.join(anomalies)}",
+            severity="MEDIUM" if anomalies else "INFO",
+            source_variable="monthly_sales",
+            citation=f"mean=${mean:,.0f}, std=${std:,.0f}, months={len(monthly_sales)}")
+
+    @staticmethod
+    def _to_dict(obj):
+        """Convert pandas Series to dict; pass dicts through."""
+        if hasattr(obj, "to_dict"):
+            return obj.to_dict()
+        return obj if obj else {}
+
+    def _fee_ratio_check(self, ed):
+        """Verify that fees are within expected Etsy range (typically 15-25% of sales)."""
+        gross = _safe_getattr(ed, "gross_sales", 0)
+        fees = _safe_getattr(ed, "total_fees", 0)
+        if gross <= 0:
+            return CheckResult(
+                name="fee_ratio_check", status="SKIP",
+                message="No gross sales", severity="LOW",
+                citation="gross_sales=0")
+
+        ratio = fees / gross * 100
+        status = "PASS" if 10 <= ratio <= 30 else "WARN"
+        return CheckResult(
+            name="fee_ratio_check", status=status,
+            message=f"Fee ratio: {ratio:.1f}% (fees=${fees:,.2f} / sales=${gross:,.2f})",
+            severity="MEDIUM" if status == "WARN" else "INFO",
+            source_variable="total_fees", source_value=round(ratio, 1),
+            expected_value=20.0,
+            citation=f"var:total_fees={fees}, gross_sales={gross}, ratio={ratio:.1f}%")
+
+    def _refund_rate(self, ed):
+        """Check that refund rate is within normal range (<10%)."""
+        gross = _safe_getattr(ed, "gross_sales", 0)
+        refunds = _safe_getattr(ed, "total_refunds", 0)
+        if gross <= 0:
+            return CheckResult(
+                name="refund_rate", status="SKIP",
+                message="No gross sales", severity="LOW",
+                citation="gross_sales=0")
+
+        rate = refunds / gross * 100
+        status = "PASS" if rate < 10 else ("WARN" if rate < 20 else "FAIL")
+        return CheckResult(
+            name="refund_rate", status=status,
+            message=f"Refund rate: {rate:.1f}% (${refunds:,.2f} of ${gross:,.2f})",
+            severity="HIGH" if rate >= 20 else ("MEDIUM" if rate >= 10 else "INFO"),
+            source_variable="total_refunds", source_value=round(rate, 1),
+            citation=f"var:total_refunds={refunds}, gross_sales={gross}")
+
+    def _margin_consistency(self, ed):
+        """Check that monthly margins don't swing wildly."""
+        monthly_sales = self._to_dict(_safe_getattr(ed, "monthly_sales", {}))
+        monthly_net = self._to_dict(_safe_getattr(ed, "monthly_net_revenue", {}))
+        months_sorted = _safe_getattr(ed, "months_sorted", [])
+
+        if len(months_sorted) < 3:
+            return CheckResult(
+                name="margin_consistency", status="SKIP",
+                message="Need 3+ months", severity="INFO",
+                citation=f"months_sorted has {len(months_sorted)} entries")
+
+        margins = []
+        for m in months_sorted:
+            s = monthly_sales.get(m, 0)
+            n = monthly_net.get(m, 0)
+            if s > 0:
+                margins.append((m, n / s * 100))
+
+        if len(margins) < 3:
+            return CheckResult(
+                name="margin_consistency", status="SKIP",
+                message="Not enough months with sales for margin check",
+                severity="INFO", citation=f"margins computed for {len(margins)} months")
+
+        margin_vals = [m[1] for m in margins]
+        import numpy as np
+        std = np.std(margin_vals)
+        mean = np.mean(margin_vals)
+        # Wild swings = std > 15 percentage points
+        status = "PASS" if std < 15 else "WARN"
+        worst = max(margins, key=lambda x: abs(x[1] - mean))
+        return CheckResult(
+            name="margin_consistency", status=status,
+            message=f"Margin mean={mean:.1f}%, std={std:.1f}%, most volatile month: {worst[0]} ({worst[1]:.1f}%)",
+            severity="MEDIUM" if std >= 15 else "INFO",
+            source_variable="monthly_net_revenue",
+            citation=f"margins across {len(margins)} months, mean={mean:.1f}%, std={std:.1f}%")
+
+    def _growth_trajectory(self, ed):
+        """Check if business is growing, stable, or declining."""
+        monthly_sales = self._to_dict(_safe_getattr(ed, "monthly_sales", {}))
+        months_sorted = _safe_getattr(ed, "months_sorted", [])
+        if len(months_sorted) < 3:
+            return CheckResult(
+                name="growth_trajectory", status="SKIP",
+                message="Need 3+ months for growth analysis",
+                severity="INFO", citation=f"{len(months_sorted)} months")
+
+        values = [monthly_sales.get(m, 0) for m in months_sorted]
+        # Compare first half to second half
+        mid = len(values) // 2
+        first_half = sum(values[:mid]) / max(mid, 1)
+        second_half = sum(values[mid:]) / max(len(values) - mid, 1)
+
+        if first_half > 0:
+            growth = (second_half - first_half) / first_half * 100
+        else:
+            growth = 100 if second_half > 0 else 0
+
+        if growth > 10:
+            label = "GROWING"
+        elif growth > -10:
+            label = "STABLE"
+        else:
+            label = "DECLINING"
+
+        status = "PASS" if growth >= -20 else "WARN"
+        return CheckResult(
+            name="growth_trajectory", status=status,
+            message=f"Business is {label}: {growth:+.1f}% (first half avg ${first_half:,.0f} → second half avg ${second_half:,.0f})",
+            severity="MEDIUM" if label == "DECLINING" else "INFO",
+            source_variable="monthly_sales", source_value=round(growth, 1),
+            citation=f"first_half_avg=${first_half:,.0f}, second_half_avg=${second_half:,.0f}, growth={growth:.1f}%")
+
+    def _seasonal_pattern(self, ed):
+        """Info-level: detect if there's a seasonal sales pattern."""
+        monthly_sales = self._to_dict(_safe_getattr(ed, "monthly_sales", {}))
+        if len(monthly_sales) < 4:
+            return CheckResult(
+                name="seasonal_pattern", status="SKIP",
+                message="Need 4+ months for seasonal analysis",
+                severity="INFO", citation=f"{len(monthly_sales)} months")
+
+        best_month = max(monthly_sales, key=monthly_sales.get)
+        worst_month = min(monthly_sales, key=monthly_sales.get)
+        best_val = monthly_sales[best_month]
+        worst_val = monthly_sales[worst_month]
+        ratio = best_val / worst_val if worst_val > 0 else float("inf")
+
+        return CheckResult(
+            name="seasonal_pattern", status="PASS",
+            message=f"Best: {best_month} (${best_val:,.0f}), Worst: {worst_month} (${worst_val:,.0f}), ratio={ratio:.1f}x",
+            severity="INFO",
+            source_variable="monthly_sales",
+            citation=f"best={best_month}=${best_val:,.0f}, worst={worst_month}=${worst_val:,.0f}")
+
+    def _wrap(self, checks):
+        passed = sum(1 for c in checks if c.status == "PASS")
+        failed = sum(1 for c in checks if c.status == "FAIL")
+        warned = sum(1 for c in checks if c.status == "WARN")
+        skipped = sum(1 for c in checks if c.status == "SKIP")
+        findings = [f"[{c.status}] {c.name}: {c.message}" for c in checks if c.status in ("FAIL", "WARN")]
+        return GovernanceMessage(
+            agent_name=self.agent_name, agent_id=self.agent_id,
+            checks=[asdict(c) for c in checks],
+            summary={"total": len(checks), "passed": passed, "failed": failed,
+                     "warned": warned, "skipped": skipped},
+            findings=findings)
+
+
+# ---------------------------------------------------------------------------
+# Agent 9: Cross-Source Reconciliation (10 points)
+# ---------------------------------------------------------------------------
+
+class CrossSourceReconciliationAgent:
+    """Cross-references data across Etsy, bank, and inventory sources to verify
+    end-to-end pipeline coherence."""
+    agent_id = 9
+    agent_name = "CrossSourceReconciliationAgent"
+
+    def run(self) -> GovernanceMessage:
+        ed = _get_dashboard()
+        checks: list[CheckResult] = []
+        if ed is None:
+            checks.append(CheckResult(
+                name="dashboard_import", status="SKIP", message="Dashboard not loaded",
+                severity="CRITICAL", citation="import etsy_dashboard failed"))
+            return self._wrap(checks)
+
+        checks.append(self._etsy_deposit_vs_bank(ed))
+        checks.append(self._profit_waterfall(ed))
+        checks.append(self._expense_coverage(ed))
+        checks.append(self._draw_settlement_math(ed))
+        checks.append(self._inventory_pipeline(ed))
+        checks.append(self._cash_flow_identity(ed))
+
+        return self._wrap(checks)
+
+    def _etsy_deposit_vs_bank(self, ed):
+        """Etsy total deposited should be close to bank total deposits
+        (bank may have non-Etsy deposits, so bank >= etsy_deposited minus pre-capone)."""
+        etsy_deposited = _safe_getattr(ed, "etsy_total_deposited", 0)
+        bank_deposits = _safe_getattr(ed, "bank_total_deposits", 0)
+        pre_capone = _safe_getattr(ed, "etsy_pre_capone_deposits", 0)
+
+        # Bank deposits should be roughly etsy_total_deposited - pre_capone
+        # (pre_capone was before this bank account existed)
+        expected_bank = etsy_deposited - pre_capone
+        delta = round(abs(bank_deposits - expected_bank), 2)
+        # Allow some tolerance — timing differences, partial months
+        tol_pct = 0.15  # 15%
+        tol_abs = max(expected_bank * tol_pct, 100) if expected_bank > 0 else 100
+        status = "PASS" if delta <= tol_abs else "WARN"
+        return CheckResult(
+            name="etsy_deposit_vs_bank", status=status,
+            message=f"bank_deposits=${bank_deposits:,.2f} vs expected ${expected_bank:,.2f} "
+                    f"(etsy_deposited=${etsy_deposited:,.2f} - pre_capone=${pre_capone:,.2f}), delta=${delta:,.2f}",
+            severity="HIGH" if status == "WARN" else "INFO",
+            source_variable="bank_total_deposits", source_value=bank_deposits,
+            expected_value=round(expected_bank, 2), delta=delta,
+            tolerance=round(tol_abs, 2),
+            citation=f"var:etsy_total_deposited={etsy_deposited}, bank_total_deposits={bank_deposits}, pre_capone={pre_capone}")
+
+    def _profit_waterfall(self, ed):
+        """Verify the full profit waterfall: revenue → expenses → profit → cash + draws."""
+        gross = _safe_getattr(ed, "gross_sales", 0)
+        etsy_net = _safe_getattr(ed, "etsy_net_earned", 0)
+        real_profit = _safe_getattr(ed, "real_profit", 0)
+        cash = _safe_getattr(ed, "bank_cash_on_hand", 0)
+        draws = _safe_getattr(ed, "bank_owner_draw_total", 0)
+
+        # real_profit should be <= gross_sales (you can't profit more than you earned)
+        profit_exceeds = real_profit > gross * 1.1  # 10% tolerance for timing
+        # cash + draws should equal real_profit
+        profit_check = abs(round(cash + draws, 2) - round(real_profit, 2)) <= 0.01
+
+        failures = []
+        if profit_exceeds and gross > 0:
+            failures.append(f"real_profit (${real_profit:,.2f}) exceeds gross_sales (${gross:,.2f})")
+        if not profit_check:
+            failures.append(f"cash({cash:,.2f})+draws({draws:,.2f}) != real_profit({real_profit:,.2f})")
+
+        status = "PASS" if not failures else "FAIL"
+        return CheckResult(
+            name="profit_waterfall", status=status,
+            message=f"{'Profit waterfall valid' if not failures else '; '.join(failures)}: "
+                    f"gross=${gross:,.2f} → net=${etsy_net:,.2f} → profit=${real_profit:,.2f} "
+                    f"= cash(${cash:,.2f}) + draws(${draws:,.2f})",
+            severity="CRITICAL" if failures else "INFO",
+            source_variable="real_profit", source_value=round(real_profit, 2),
+            citation=f"waterfall: gross={gross} → etsy_net={etsy_net} → profit={real_profit}")
+
+    def _expense_coverage(self, ed):
+        """Check that bank expenses + Etsy fees account for the gap between gross and profit."""
+        gross = _safe_getattr(ed, "gross_sales", 0)
+        real_profit = _safe_getattr(ed, "real_profit", 0)
+        total_fees = _safe_getattr(ed, "total_fees", 0)
+        total_ship = _safe_getattr(ed, "total_shipping_cost", 0)
+        total_mkt = _safe_getattr(ed, "total_marketing", 0)
+        total_refunds = _safe_getattr(ed, "total_refunds", 0)
+        total_taxes = _safe_getattr(ed, "total_taxes", 0)
+        bank_all_exp = _safe_getattr(ed, "bank_all_expenses", 0)
+        inv_cost = _safe_getattr(ed, "total_inventory_cost", 0)
+
+        known_expenses = total_fees + total_ship + total_mkt + total_refunds + total_taxes
+        total_gap = gross - real_profit
+        accounted = known_expenses + bank_all_exp
+        unexplained = abs(total_gap - accounted)
+
+        # Some gap is expected (Etsy balance, timing)
+        pct_unexplained = (unexplained / gross * 100) if gross > 0 else 0
+        status = "PASS" if pct_unexplained < 10 else ("WARN" if pct_unexplained < 25 else "FAIL")
+        return CheckResult(
+            name="expense_coverage", status=status,
+            message=f"Gross→Profit gap: ${total_gap:,.2f}, accounted: ${accounted:,.2f}, "
+                    f"unexplained: ${unexplained:,.2f} ({pct_unexplained:.1f}%)",
+            severity="HIGH" if pct_unexplained >= 25 else ("MEDIUM" if pct_unexplained >= 10 else "INFO"),
+            source_variable="gross_sales", source_value=round(total_gap, 2),
+            expected_value=round(accounted, 2),
+            delta=round(unexplained, 2),
+            citation=f"gap={total_gap}, etsy_expenses={known_expenses}, bank_expenses={bank_all_exp}")
+
+    def _draw_settlement_math(self, ed):
+        """Verify draw settlement calculations between partners."""
+        tulsa = round(_safe_getattr(ed, "tulsa_draw_total", 0), 2)
+        texas = round(_safe_getattr(ed, "texas_draw_total", 0), 2)
+        diff = round(_safe_getattr(ed, "draw_diff", 0), 2)
+        owed_to = _safe_getattr(ed, "draw_owed_to", "")
+
+        expected_diff = round(abs(tulsa - texas), 2)
+        diff_match = abs(diff - expected_diff) <= 0.01
+
+        expected_owed = "Braden" if tulsa > texas else "TJ"
+        owed_match = owed_to == expected_owed or tulsa == texas
+
+        failures = []
+        if not diff_match:
+            failures.append(f"draw_diff={diff} but |tulsa-texas|={expected_diff}")
+        if not owed_match:
+            failures.append(f"draw_owed_to='{owed_to}' but expected '{expected_owed}'")
+
+        status = "PASS" if not failures else "FAIL"
+        return CheckResult(
+            name="draw_settlement_math", status=status,
+            message=f"Tulsa=${tulsa:,.2f}, Texas=${texas:,.2f}, diff=${diff:,.2f}, owed_to={owed_to}"
+                    + (f" ERRORS: {failures}" if failures else ""),
+            severity="HIGH" if failures else "INFO",
+            source_variable="draw_diff", source_value=diff,
+            expected_value=expected_diff,
+            citation=f"var:tulsa={tulsa}, texas={texas}, diff={diff}, owed_to={owed_to}")
+
+    def _inventory_pipeline(self, ed):
+        """Check inventory data pipeline: INVOICES → INV_DF → totals."""
+        invoices = _safe_getattr(ed, "INVOICES", [])
+        inv_df = _safe_getattr(ed, "INV_DF")
+        total_cost = _safe_getattr(ed, "total_inventory_cost", 0)
+
+        if not invoices:
+            return CheckResult(
+                name="inventory_pipeline", status="SKIP",
+                message="No invoices", severity="LOW",
+                citation="INVOICES is empty")
+
+        # INVOICES count should match INV_DF rows
+        inv_count = len(invoices)
+        df_count = len(inv_df) if inv_df is not None else 0
+        count_match = inv_count == df_count
+
+        # INV_DF sum should match total_inventory_cost
+        df_sum = round(inv_df["grand_total"].sum(), 2) if inv_df is not None and len(inv_df) > 0 else 0
+        sum_match = abs(round(total_cost, 2) - df_sum) <= 0.01
+
+        failures = []
+        if not count_match:
+            failures.append(f"INVOICES({inv_count}) != INV_DF({df_count})")
+        if not sum_match:
+            failures.append(f"total_inventory_cost({total_cost}) != INV_DF.sum({df_sum})")
+
+        status = "PASS" if not failures else "FAIL"
+        return CheckResult(
+            name="inventory_pipeline", status=status,
+            message=f"Pipeline: {inv_count} invoices → {df_count} rows → ${total_cost:,.2f}"
+                    + (f" ERRORS: {failures}" if failures else ""),
+            severity="HIGH" if failures else "INFO",
+            source_variable="INVOICES",
+            citation=f"INVOICES={inv_count}, INV_DF={df_count}, total_cost={total_cost}")
+
+    def _cash_flow_identity(self, ed):
+        """The fundamental accounting identity:
+        bank_net_cash = bank_total_deposits - bank_total_debits
+        bank_cash_on_hand = bank_net_cash + etsy_balance
+        real_profit = bank_cash_on_hand + bank_owner_draw_total"""
+        deposits = round(_safe_getattr(ed, "bank_total_deposits", 0), 2)
+        debits = round(_safe_getattr(ed, "bank_total_debits", 0), 2)
+        net_cash = round(_safe_getattr(ed, "bank_net_cash", 0), 2)
+        etsy_bal = round(_safe_getattr(ed, "etsy_balance", 0), 2)
+        cash_on_hand = round(_safe_getattr(ed, "bank_cash_on_hand", 0), 2)
+        draws = round(_safe_getattr(ed, "bank_owner_draw_total", 0), 2)
+        profit = round(_safe_getattr(ed, "real_profit", 0), 2)
+
+        checks_passed = []
+        failures = []
+
+        # Identity 1
+        expected_net = round(deposits - debits, 2)
+        if abs(net_cash - expected_net) <= 0.01:
+            checks_passed.append("deposits-debits=net_cash")
+        else:
+            failures.append(f"net_cash({net_cash}) != deposits({deposits})-debits({debits})={expected_net}")
+
+        # Identity 2
+        expected_coh = round(net_cash + etsy_bal, 2)
+        if abs(cash_on_hand - expected_coh) <= 0.01:
+            checks_passed.append("net_cash+etsy_bal=cash_on_hand")
+        else:
+            failures.append(f"cash_on_hand({cash_on_hand}) != net_cash({net_cash})+etsy_bal({etsy_bal})={expected_coh}")
+
+        # Identity 3
+        expected_profit = round(cash_on_hand + draws, 2)
+        if abs(profit - expected_profit) <= 0.01:
+            checks_passed.append("cash_on_hand+draws=profit")
+        else:
+            failures.append(f"profit({profit}) != cash_on_hand({cash_on_hand})+draws({draws})={expected_profit}")
+
+        status = "PASS" if not failures else "FAIL"
+        return CheckResult(
+            name="cash_flow_identity", status=status,
+            message=f"{'All 3 identities hold' if not failures else f'{len(failures)} broken: ' + '; '.join(failures)}",
+            severity="CRITICAL" if failures else "INFO",
+            source_variable="real_profit", source_value=profit,
+            citation=f"3 identities: {' | '.join(checks_passed + failures)}")
+
+    def _wrap(self, checks):
+        passed = sum(1 for c in checks if c.status == "PASS")
+        failed = sum(1 for c in checks if c.status == "FAIL")
+        warned = sum(1 for c in checks if c.status == "WARN")
+        skipped = sum(1 for c in checks if c.status == "SKIP")
+        findings = [f"[{c.status}] {c.name}: {c.message}" for c in checks if c.status in ("FAIL", "WARN")]
+        return GovernanceMessage(
+            agent_name=self.agent_name, agent_id=self.agent_id,
+            checks=[asdict(c) for c in checks],
+            summary={"total": len(checks), "passed": passed, "failed": failed,
+                     "warned": warned, "skipped": skipped},
+            findings=findings)
+
+
+# ---------------------------------------------------------------------------
 # Agent 1: CEO Governance (runs last, reviews all)
 # ---------------------------------------------------------------------------
 
 # Weight tables for scoring
 AGENT_WEIGHTS = {
-    2: {"total": 30, "breakdown": {
-        "etsy_net_parity": 15, "reverse_engineering_gone": 5, "profit_chain": 5,
-        "dedup_integrity": 5, "monthly_sum": 0, "bank_balance": 0,
+    # Financial Integrity — 25 pts (most critical: actual dollar accuracy)
+    2: {"total": 25, "breakdown": {
+        "etsy_net_parity": 10, "reverse_engineering_gone": 3, "profit_chain": 5,
+        "dedup_integrity": 4, "monthly_sum": 3, "bank_balance": 0,
         "draw_reconciliation": 0, "inventory_consistency": 0,
         "tax_year_completeness": 0, "none_estimates_intact": 0,
         "inferred_revenue_flagged": 0,
     }},
-    3: {"total": 25, "breakdown": {
-        "etsy_row_count": 3, "bank_row_count": 3, "inventory_row_count": 3,
-        "deposit_reconciliation": 4, "inventory_vs_bank": 0,
-        "missing_months": 4, "orphaned_records": 0,
-        "etsy_balance_gap": 4, "type_coverage": 4,
+    # Data Consistency — 15 pts
+    3: {"total": 15, "breakdown": {
+        "etsy_row_count": 2, "bank_row_count": 2, "inventory_row_count": 1,
+        "deposit_reconciliation": 3, "inventory_vs_bank": 0,
+        "missing_months": 2, "orphaned_records": 0,
+        "etsy_balance_gap": 3, "type_coverage": 2,
         "duplicate_bank_check": 0,
     }},
-    4: {"total": 15, "breakdown": {
-        "tax_year_splits": 5, "income_tax_function": 3, "draw_parity_across_years": 3,
-        "valuation_confidence_labels": 4, "tax_year_net_income": 0,
+    # Tax & Valuation — 10 pts
+    4: {"total": 10, "breakdown": {
+        "tax_year_splits": 3, "income_tax_function": 2, "draw_parity_across_years": 2,
+        "valuation_confidence_labels": 3, "tax_year_net_income": 0,
         "valuation_data_sufficiency": 0, "tax_logic_chain": 0,
     }},
-    5: {"total": 15, "breakdown": {
-        "money_function": 2, "parse_money_function": 3,
-        "none_propagation": 4, "negative_guards": 3,
-        "zero_division_guards": 0, "reconciliation_structure": 3,
+    # Self-Testing — 10 pts
+    5: {"total": 10, "breakdown": {
+        "money_function": 2, "parse_money_function": 2,
+        "none_propagation": 2, "negative_guards": 2,
+        "zero_division_guards": 0, "reconciliation_structure": 2,
         "empty_df_safety": 0, "config_key_types": 0,
     }},
-    6: {"total": 15, "breakdown": {
-        "supabase_connected": 3, "tables_exist": 4, "env_vars_present": 3,
-        "config_keys_valid": 3, "schema_snapshot": 2, "mutation_log_audit": 0,
+    # Deployment Guardian — 10 pts
+    6: {"total": 10, "breakdown": {
+        "supabase_connected": 2, "tables_exist": 3, "env_vars_present": 2,
+        "config_keys_valid": 2, "schema_snapshot": 1, "mutation_log_audit": 0,
+    }},
+    # Silent Error Sentinel — 10 pts
+    7: {"total": 10, "breakdown": {
+        "nan_in_financials": 3, "null_dates": 2, "bank_txn_integrity": 2,
+        "data_loading_coverage": 3, "invoice_field_completeness": 0,
+        "config_type_safety": 0, "amount_parse_quality": 0,
+    }},
+    # Trend Anomaly Detector — 10 pts
+    8: {"total": 10, "breakdown": {
+        "revenue_anomalies": 3, "fee_ratio_check": 2, "refund_rate": 2,
+        "margin_consistency": 3, "growth_trajectory": 0,
+        "seasonal_pattern": 0,
+    }},
+    # Cross-Source Reconciliation — 10 pts
+    9: {"total": 10, "breakdown": {
+        "etsy_deposit_vs_bank": 2, "profit_waterfall": 3,
+        "cash_flow_identity": 3, "draw_settlement_math": 2,
+        "expense_coverage": 0, "inventory_pipeline": 0,
     }},
 }
 
@@ -1501,13 +2200,16 @@ def run_governance(trigger="manual") -> dict:
     """Execute all 6 agents and return the full governance report."""
     t_start = time.time()
 
-    # Run agents 2-6
+    # Run agents 2-9
     agents = [
         FinancialIntegrityAgent(),
         DataConsistencyAgent(),
         TaxValuationAgent(),
         SelfTestingAgent(),
         DeploymentGuardianAgent(),
+        SilentErrorSentinelAgent(),
+        TrendAnomalyAgent(),
+        CrossSourceReconciliationAgent(),
     ]
 
     messages = []
@@ -1521,7 +2223,7 @@ def run_governance(trigger="manual") -> dict:
                 agent_id=agent.agent_id,
                 checks=[asdict(CheckResult(
                     name="agent_crash", status="FAIL",
-                    message=f"Agent crashed: {e}", severity="CRITICAL",
+                    message=f"Agent crashed: {e}", severity="HIGH",
                     citation=f"exception: {type(e).__name__}: {e}"))],
                 summary={"total": 1, "passed": 0, "failed": 1, "warned": 0, "skipped": 0},
                 findings=[f"[FAIL] Agent {agent.agent_name} crashed: {e}"],
@@ -1678,7 +2380,7 @@ def register_governance_routes(server):
             pass
         return flask.jsonify({
             "status": "ok",
-            "agents": 6,
+            "agents": 9,
             "last_run": last_run,
             "has_cached_report": bool(_LATEST_REPORT),
         })
