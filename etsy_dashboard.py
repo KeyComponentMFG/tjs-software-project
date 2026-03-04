@@ -338,6 +338,11 @@ def _fmt(val, prefix="$", fmt=",.2f", unknown="UNKNOWN"):
     return f"{prefix}{val:{fmt}}"
 
 
+def _safe(val, default=0.0):
+    """Return val if not None, else default. Use in arithmetic to avoid TypeError on None globals."""
+    return val if val is not None else default
+
+
 def _normalize_product_name(name, aliases=None):
     """Normalize Etsy product names that get truncated differently in CSVs.
     If aliases dict is provided, maps known variants to canonical names.
@@ -1383,16 +1388,16 @@ def _cascade_reload(source="etsy"):
     global bank_amazon_inv
 
     # bank_cash_on_hand depends on bank_net_cash + etsy_balance
-    bank_cash_on_hand = bank_net_cash + etsy_balance
+    bank_cash_on_hand = _safe(bank_net_cash) + _safe(etsy_balance)
     # real_profit depends on bank_cash_on_hand + bank_owner_draw_total
-    real_profit = bank_cash_on_hand + bank_owner_draw_total
-    real_profit_margin = (real_profit / gross_sales * 100) if gross_sales else 0
+    real_profit = bank_cash_on_hand + _safe(bank_owner_draw_total)
+    real_profit_margin = (real_profit / _safe(gross_sales) * 100) if _safe(gross_sales) else 0
 
     # All spending flows through the bank; CC balance is a liability, not expense
     bank_amazon_inv = bank_by_cat.get("Amazon Inventory", 0)
     receipt_cogs_outside_bank = 0
     profit = real_profit
-    profit_margin = (profit / gross_sales * 100) if gross_sales else 0
+    profit_margin = (profit / _safe(gross_sales) * 100) if _safe(gross_sales) else 0
 
     # Re-run accounting pipeline if available (Decimal precision + validation)
     if _acct_pipeline is not None:
@@ -3509,12 +3514,12 @@ def _recompute_valuation():
     _val_annualize = 12 / _val_months_operating
 
     # Annual metrics
-    val_annual_revenue = gross_sales * _val_annualize
-    val_annual_etsy_net = etsy_net * _val_annualize
-    val_annual_real_profit = real_profit * _val_annualize
+    val_annual_revenue = _safe(gross_sales) * _val_annualize
+    val_annual_etsy_net = _safe(etsy_net) * _val_annualize
+    val_annual_real_profit = _safe(real_profit) * _val_annualize
 
     # SDE = net cash flow + owner draws (profit already includes draws, so use cash_on_hand)
-    val_sde = bank_cash_on_hand + bank_owner_draw_total
+    val_sde = _safe(bank_cash_on_hand) + _safe(bank_owner_draw_total)
     val_annual_sde = val_sde * _val_annualize
 
     # Method 1: SDE Multiple (small Etsy biz = 1.0x-2.5x)
@@ -3528,8 +3533,8 @@ def _recompute_valuation():
     val_rev_high = val_annual_revenue * 1.0
 
     # Method 3: Asset-Based
-    val_total_assets = bank_cash_on_hand + bb_cc_asset_value + true_inventory_cost
-    val_total_liabilities = bb_cc_balance
+    val_total_assets = _safe(bank_cash_on_hand) + _safe(bb_cc_asset_value) + _safe(true_inventory_cost)
+    val_total_liabilities = _safe(bb_cc_balance)
     val_asset_val = val_total_assets - val_total_liabilities
 
     # Blended valuation (50% SDE + 25% Revenue + 25% Asset)
@@ -3538,8 +3543,8 @@ def _recompute_valuation():
     val_blended_high = val_sde_high * 0.50 + val_rev_high * 0.25 + val_asset_val * 0.25
 
     # Monthly run rate
-    val_monthly_run_rate = gross_sales / _val_months_operating
-    val_monthly_profit_rate = profit / _val_months_operating
+    val_monthly_run_rate = _safe(gross_sales) / _val_months_operating
+    val_monthly_profit_rate = _safe(profit) / _val_months_operating
 
     # Growth
     _val_growth_pct = analytics_projections.get("growth_pct", 0)
@@ -3555,12 +3560,12 @@ def _recompute_valuation():
     val_equity = val_total_assets - val_total_liabilities
 
     # Health Score (0-100)
-    _hs_profit = min(25, max(0, profit_margin / 2))  # 0-25 pts: 50%+ margin = full
+    _hs_profit = min(25, max(0, _safe(profit_margin) / 2))  # 0-25 pts: 50%+ margin = full
     _hs_growth = min(25, max(0, (_val_growth_pct + 10) * 1.25)) if _val_growth_pct > -10 else 0  # 0-25 pts
     _prod_count = len(product_revenue_est) if len(product_revenue_est) > 0 else 1
     _top3_conc = product_revenue_est.head(3).sum() / product_revenue_est.sum() * 100 if product_revenue_est.sum() > 0 else 100
     _hs_diversity = min(15, max(0, (100 - _top3_conc) / 3))  # 0-15 pts
-    _hs_cash = min(15, max(0, bank_cash_on_hand / val_monthly_run_rate * 5)) if val_monthly_run_rate > 0 else 0  # 0-15 pts: 3+ months runway = full
+    _hs_cash = min(15, max(0, _safe(bank_cash_on_hand) / val_monthly_run_rate * 5)) if val_monthly_run_rate > 0 else 0  # 0-15 pts: 3+ months runway = full
     _hs_debt = 10 if bb_cc_balance == 0 else max(0, 10 - bb_cc_balance / 500)  # 0-10 pts
     _hs_shipping = 5 if shipping_profit is None else (10 if shipping_profit >= 0 else max(0, 10 + shipping_profit / 100))  # 0-10 pts; None = neutral
     val_health_score = round(min(100, _hs_profit + _hs_growth + _hs_diversity + _hs_cash + _hs_debt + _hs_shipping))
@@ -3577,30 +3582,30 @@ def _recompute_valuation():
     if shipping_profit is not None and shipping_profit < 0:
         val_risks.append(("Shipping Loss", f"Losing ${abs(shipping_profit):,.0f} on shipping", "MED"))
     val_risks.append(("Platform Dependency", "100% revenue from Etsy — single platform risk", "MED"))
-    if gross_sales and total_refunds / gross_sales > 0.05:
-        val_risks.append(("Refund Rate", f"{total_refunds / gross_sales * 100:.1f}% refund rate", "MED"))
+    if _safe(gross_sales) > 0 and _safe(total_refunds) / _safe(gross_sales) > 0.05:
+        val_risks.append(("Refund Rate", f"{_safe(total_refunds) / _safe(gross_sales) * 100:.1f}% refund rate", "MED"))
 
     # Strengths list
     val_strengths = []
-    if profit_margin > 20:
-        val_strengths.append(("Strong Margins", f"{profit_margin:.1f}% profit margin"))
+    if _safe(profit_margin) > 20:
+        val_strengths.append(("Strong Margins", f"{_safe(profit_margin):.1f}% profit margin"))
     if _val_growth_pct > 5:
         val_strengths.append(("Growing Revenue", f"{_val_growth_pct:+.1f}% monthly growth"))
-    if bank_cash_on_hand > val_monthly_run_rate:
-        _runway = bank_cash_on_hand / val_monthly_run_rate if val_monthly_run_rate > 0 else 0
-        val_strengths.append(("Cash Reserves", f"${bank_cash_on_hand:,.0f} — {_runway:.1f} months runway"))
+    if _safe(bank_cash_on_hand) > val_monthly_run_rate:
+        _runway = _safe(bank_cash_on_hand) / val_monthly_run_rate if val_monthly_run_rate > 0 else 0
+        val_strengths.append(("Cash Reserves", f"${_safe(bank_cash_on_hand):,.0f} — {_runway:.1f} months runway"))
     if _prod_count > 10:
         val_strengths.append(("Product Diversity", f"{_prod_count} active products"))
-    if bb_cc_asset_value > 0:
-        val_strengths.append(("Equipment Assets", f"${bb_cc_asset_value:,.0f} in equipment"))
-    if bank_owner_draw_total > 0:
-        val_strengths.append(("Owner Compensation", f"${bank_owner_draw_total:,.0f} in draws taken"))
+    if _safe(bb_cc_asset_value) > 0:
+        val_strengths.append(("Equipment Assets", f"${_safe(bb_cc_asset_value):,.0f} in equipment"))
+    if _safe(bank_owner_draw_total) > 0:
+        val_strengths.append(("Owner Compensation", f"${_safe(bank_owner_draw_total):,.0f} in draws taken"))
 
     # Burn rate (monthly expenses) — Etsy costs + non-overlapping bank expenses only
     _val_non_etsy_cats = ["Craft Supplies", "Subscriptions", "AliExpress Supplies", "Business Credit Card"]
     _val_bank_additional = sum(bank_by_cat.get(c, 0) for c in _val_non_etsy_cats)
-    val_monthly_expenses = (total_fees + total_shipping_cost + total_marketing + total_refunds + total_taxes + total_buyer_fees + _val_bank_additional + true_inventory_cost) / _val_months_operating
-    val_runway_months = bank_cash_on_hand / val_monthly_expenses if val_monthly_expenses > 0 else 99
+    val_monthly_expenses = (_safe(total_fees) + _safe(total_shipping_cost) + _safe(total_marketing) + _safe(total_refunds) + _safe(total_taxes) + _safe(total_buyer_fees) + _val_bank_additional + _safe(true_inventory_cost)) / _val_months_operating
+    val_runway_months = _safe(bank_cash_on_hand) / val_monthly_expenses if val_monthly_expenses > 0 else 99
 
 
 _recompute_valuation()
@@ -4598,16 +4603,16 @@ def _rebuild_all_charts():
     )
 
     # --- SANKEY DIAGRAM (module level for reuse) ---
-    _etsy_took = total_fees + total_shipping_cost + total_marketing + total_taxes + total_refunds + total_buyer_fees
+    _etsy_took = _safe(total_fees) + _safe(total_shipping_cost) + _safe(total_marketing) + _safe(total_taxes) + _safe(total_refunds) + _safe(total_buyer_fees)
 
     sankey_node_labels = [
-        f"Customers Paid\n${gross_sales:,.0f}",
+        f"Customers Paid\n${_safe(gross_sales):,.0f}",
         f"Etsy Takes\n-${_etsy_took:,.0f}",
-        f"Deposited to Bank\n${etsy_net_earned:,.0f}",
-        f"Business Expenses\n${bank_all_expenses:,.0f}",
-        f"Owner Draws\n${bank_owner_draw_total:,.0f}",
-        f"Cash On Hand\n${bank_cash_on_hand:,.0f}",
-        f"Prior Bank Activity\n${old_bank_receipted + bank_unaccounted + etsy_csv_gap:,.0f}",
+        f"Deposited to Bank\n${_safe(etsy_net_earned):,.0f}",
+        f"Business Expenses\n${_safe(bank_all_expenses):,.0f}",
+        f"Owner Draws\n${_safe(bank_owner_draw_total):,.0f}",
+        f"Cash On Hand\n${_safe(bank_cash_on_hand):,.0f}",
+        f"Prior Bank Activity\n${_safe(old_bank_receipted) + _safe(bank_unaccounted) + _safe(etsy_csv_gap):,.0f}",
         f"Amazon Inventory\n${bank_by_cat.get('Amazon Inventory', 0):,.0f}",
         f"AliExpress\n${bank_by_cat.get('AliExpress Supplies', 0):,.0f}",
         f"Best Buy CC\n${bank_by_cat.get('Business Credit Card', 0):,.0f}",
@@ -4617,16 +4622,16 @@ def _rebuild_all_charts():
         f"Shipping Supplies\n${bank_by_cat.get('Shipping', 0):,.0f}",
         f"TJ (Owner)\n${bank_by_cat.get('Owner Draw - Tulsa', 0):,.0f}",
         f"Braden (Owner)\n${bank_by_cat.get('Owner Draw - Texas', 0):,.0f}",
-        f"Capital One Bank\n${bank_net_cash:,.0f}",
-        f"Etsy Account\n${etsy_balance:,.0f}",
-        f"Prior Bank Receipts\n${old_bank_receipted:,.0f}",
-        f"Untracked Etsy\n${etsy_csv_gap:,.0f}",
-        f"Unmatched Bank\n${bank_unaccounted:,.0f}",
-        f"Fees\n${abs(total_fees):,.0f}",
-        f"Shipping Labels\n${abs(total_shipping_cost):,.0f}",
-        f"Ads/Marketing\n${abs(total_marketing):,.0f}",
-        f"Sales Tax\n${abs(total_taxes):,.0f}",
-        f"Refunds\n${abs(total_refunds + total_buyer_fees):,.0f}",
+        f"Capital One Bank\n${_safe(bank_net_cash):,.0f}",
+        f"Etsy Account\n${_safe(etsy_balance):,.0f}",
+        f"Prior Bank Receipts\n${_safe(old_bank_receipted):,.0f}",
+        f"Untracked Etsy\n${_safe(etsy_csv_gap):,.0f}",
+        f"Unmatched Bank\n${_safe(bank_unaccounted):,.0f}",
+        f"Fees\n${abs(_safe(total_fees)):,.0f}",
+        f"Shipping Labels\n${abs(_safe(total_shipping_cost)):,.0f}",
+        f"Ads/Marketing\n${abs(_safe(total_marketing)):,.0f}",
+        f"Sales Tax\n${abs(_safe(total_taxes)):,.0f}",
+        f"Refunds\n${abs(_safe(total_refunds) + _safe(total_buyer_fees)):,.0f}",
     ]
     sankey_node_colors = [
         GREEN, RED, CYAN, "#ff5252", ORANGE, GREEN, "#b71c1c",
@@ -4637,17 +4642,17 @@ def _rebuild_all_charts():
     sankey_sources = [0, 0,  2, 2, 2, 2,  3, 3, 3, 3, 3, 3, 3,  4, 4,  5, 5,  6, 6, 6,  1, 1, 1, 1, 1]
     sankey_targets = [1, 2,  3, 4, 5, 6,  7, 8, 9,10,11,12,13, 14,15, 16,17, 18,25,19, 20,21,22,23,24]
     sankey_values = [
-        _etsy_took, etsy_net_earned,
-        bank_all_expenses, bank_owner_draw_total, bank_cash_on_hand, old_bank_receipted + bank_unaccounted + etsy_csv_gap,
+        _etsy_took, _safe(etsy_net_earned),
+        _safe(bank_all_expenses), _safe(bank_owner_draw_total), _safe(bank_cash_on_hand), _safe(old_bank_receipted) + _safe(bank_unaccounted) + _safe(etsy_csv_gap),
         bank_by_cat.get("Amazon Inventory", 0), bank_by_cat.get("AliExpress Supplies", 0),
         bank_by_cat.get("Business Credit Card", 0), bank_by_cat.get("Etsy Fees", 0),
         bank_by_cat.get("Craft Supplies", 0), bank_by_cat.get("Subscriptions", 0),
         bank_by_cat.get("Shipping", 0),
         bank_by_cat.get("Owner Draw - Tulsa", 0), bank_by_cat.get("Owner Draw - Texas", 0),
-        bank_net_cash, etsy_balance,
-        old_bank_receipted, max(bank_unaccounted, 0.01), max(etsy_csv_gap, 0.01),
-        abs(total_fees), abs(total_shipping_cost), abs(total_marketing),
-        abs(total_taxes), abs(total_refunds + total_buyer_fees),
+        _safe(bank_net_cash), _safe(etsy_balance),
+        _safe(old_bank_receipted), max(_safe(bank_unaccounted), 0.01), max(_safe(etsy_csv_gap), 0.01),
+        abs(_safe(total_fees)), abs(_safe(total_shipping_cost)), abs(_safe(total_marketing)),
+        abs(_safe(total_taxes)), abs(_safe(total_refunds) + _safe(total_buyer_fees)),
     ]
     sankey_link_colors = [
         "rgba(244,67,54,0.25)", "rgba(0,229,255,0.25)",
@@ -7030,9 +7035,9 @@ def _get_bank_computed():
         "Personal": PINK, "Pending": DARKGRAY, "Etsy Payout": GREEN,
         "Business Credit Card": BLUE,
     }
-    total_taken = bank_owner_draw_total + bank_personal
-    acct_total = bank_cash_on_hand + total_taken + bank_all_expenses + old_bank_receipted + bank_unaccounted + etsy_csv_gap
-    acct_gap = round(etsy_net_earned - acct_total, 2)
+    total_taken = _safe(bank_owner_draw_total) + _safe(bank_personal)
+    acct_total = _safe(bank_cash_on_hand) + total_taken + _safe(bank_all_expenses) + _safe(old_bank_receipted) + _safe(bank_unaccounted) + _safe(etsy_csv_gap)
+    acct_gap = round(_safe(etsy_net_earned) - acct_total, 2)
 
     # ── Missing receipts: per-transaction matching (amount + close date) ──
     # Every bank debit is checked. Nothing is skipped.
@@ -9653,10 +9658,10 @@ def _build_health_checks():
                       f"Gap: ${expense_gap:,.2f}. Upload receipts in Data Hub → Inventory Receipts."))
 
     # ── 10. Etsy balance gap ──
-    if abs(etsy_csv_gap) > 5:
+    if etsy_csv_gap is not None and abs(etsy_csv_gap) > 5:
         todos.append((2, "\U0001f4b1", ORANGE,
-                      f"Etsy balance gap: ${abs(etsy_csv_gap):,.2f}",
-                      f"Reported: ${etsy_balance:,.2f} vs Calculated: ${etsy_balance_calculated:,.2f}. "
+                      f"Etsy balance gap: {money(abs(etsy_csv_gap))}",
+                      f"Reported: {money(etsy_balance)} vs Calculated: {money(etsy_balance_calculated)}. "
                       f"May indicate a missing Etsy CSV or pending transactions."))
 
     # ── 11. Uncategorized bank transactions ──
@@ -9771,21 +9776,31 @@ def _build_pl_row(label, amount_str, color, bold=False, border=False):
 
 def build_tab1_overview():
     """Tab 1 - Overview: Business health at a glance. Single screen, no scrolling."""
+    _sm = strict_mode if isinstance(strict_mode, bool) else False
+
+    # Strict mode banner
+    _strict_banner = html.Div([
+        html.Span("STRICT MODE", style={"color": RED, "fontWeight": "bold", "fontSize": "13px", "letterSpacing": "1px"}),
+        html.Span(" — Only VERIFIED and DERIVED metrics shown. Estimates are hidden.", style={"color": GRAY, "fontSize": "12px"}),
+    ], style={"backgroundColor": "#1a0000", "border": f"1px solid {RED}44", "borderRadius": "6px",
+              "padding": "8px 14px", "marginBottom": "10px"}) if _sm else html.Div()
+
     return html.Div([
+        _strict_banner,
         # KPI Strip (4 pills)
         html.Div([
-            _build_kpi_pill("\U0001f4ca", "REVENUE", f"${gross_sales:,.2f}", TEAL,
-                            f"{order_count} orders, avg ${avg_order:,.2f}",
-                            f"Total from {order_count} orders, avg ${avg_order:,.2f} each.", status="verified"),
-            _build_kpi_pill("\U0001f4b0", "PROFIT", f"${profit:,.2f}", GREEN,
-                            f"{profit_margin:.1f}% margin",
-                            f"Revenue minus all costs -- {profit_margin:.1f}% margin.", status="verified"),
-            _build_kpi_pill("\U0001f3e6", "CASH", f"${bank_cash_on_hand:,.2f}", CYAN,
-                            f"Bank ${bank_net_cash:,.0f} + Etsy ${etsy_balance:,.0f}",
-                            f"Bank ${bank_net_cash:,.2f} + Etsy pending ${etsy_balance:,.2f}.", status="verified"),
-            _build_kpi_pill("\U0001f4b3", "DEBT", f"${bb_cc_balance:,.2f}", RED,
-                            f"Best Buy CC (${bb_cc_available:,.0f} avail)",
-                            f"Best Buy Citi CC -- ${bb_cc_available:,.0f} available of ${bb_cc_limit:,.0f} limit.", status="verified"),
+            _build_kpi_pill("\U0001f4ca", "REVENUE", money(gross_sales), TEAL,
+                            f"{order_count} orders, avg {money(avg_order)}",
+                            f"Total from {order_count} orders, avg {money(avg_order)} each.", status="verified"),
+            _build_kpi_pill("\U0001f4b0", "PROFIT", money(profit), GREEN,
+                            f"{_fmt(profit_margin, prefix='', fmt='.1f', unknown='?')}% margin",
+                            f"Revenue minus all costs -- {_fmt(profit_margin, prefix='', fmt='.1f', unknown='?')}% margin.", status="verified"),
+            _build_kpi_pill("\U0001f3e6", "CASH", money(bank_cash_on_hand), CYAN,
+                            f"Bank {money(bank_net_cash)} + Etsy {money(etsy_balance)}",
+                            f"Bank {money(bank_net_cash)} + Etsy pending {money(etsy_balance)}.", status="verified"),
+            _build_kpi_pill("\U0001f4b3", "DEBT", money(bb_cc_balance), RED,
+                            f"Best Buy CC ({money(bb_cc_available)} avail)",
+                            f"Best Buy Citi CC -- {money(bb_cc_available)} available of {money(bb_cc_limit)} limit.", status="verified"),
         ], style={"display": "flex", "gap": "8px", "marginBottom": "14px", "flexWrap": "wrap"}),
 
         # Dashboard Health / To-Do panel
@@ -11146,16 +11161,16 @@ def build_tab3_financials():
         "Fees", "Ship Labels", "Ads", "Refunds", "Taxes",
     ]
     _wf_values = [
-        gross_sales,
-        -total_fees, -total_shipping_cost, -total_marketing, -total_refunds, -total_taxes,
+        _safe(gross_sales),
+        -_safe(total_fees), -_safe(total_shipping_cost), -_safe(total_marketing), -_safe(total_refunds), -_safe(total_taxes),
     ]
     _wf_measures = [
         "absolute",
         "relative", "relative", "relative", "relative", "relative",
     ]
-    if total_buyer_fees > 0:
+    if _safe(total_buyer_fees) > 0:
         _wf_labels.append("CO Buyer Fee")
-        _wf_values.append(-total_buyer_fees)
+        _wf_values.append(-_safe(total_buyer_fees))
         _wf_measures.append("relative")
     _wf_labels += ["AFTER ETSY FEES"]
     _wf_values += [0]
@@ -11174,15 +11189,15 @@ def build_tab3_financials():
             _wf_labels.append(_lbl)
             _wf_values.append(-_val)
             _wf_measures.append("relative")
-    if bank_owner_draw_total > 0:
+    if _safe(bank_owner_draw_total) > 0:
         _wf_labels.append("Owner Draws")
-        _wf_values.append(-bank_owner_draw_total)
+        _wf_values.append(-_safe(bank_owner_draw_total))
         _wf_measures.append("relative")
     # Reconciliation items — only include non-zero
     for _lbl, _val in [
-        ("Prior Bank Inv.", old_bank_receipted),
-        ("Unmatched Bank", bank_unaccounted),
-        ("Untracked Etsy", etsy_csv_gap),
+        ("Prior Bank Inv.", _safe(old_bank_receipted)),
+        ("Unmatched Bank", _safe(bank_unaccounted)),
+        ("Untracked Etsy", _safe(etsy_csv_gap)),
     ]:
         if abs(_val) > 0.01:
             _wf_labels.append(_lbl)
@@ -11208,31 +11223,44 @@ def build_tab3_financials():
         xaxis_tickfont=dict(size=10),
     )
 
+    _sm = strict_mode if isinstance(strict_mode, bool) else False
+
+    # Strict mode banner (financials)
+    _strict_banner_fin = html.Div([
+        html.Span("STRICT MODE", style={"color": RED, "fontWeight": "bold", "fontSize": "13px", "letterSpacing": "1px"}),
+        html.Span(" — Only VERIFIED and DERIVED metrics shown. Estimates hidden.", style={"color": GRAY, "fontSize": "12px"}),
+    ], style={"backgroundColor": "#1a0000", "border": f"1px solid {RED}44", "borderRadius": "6px",
+              "padding": "8px 14px", "marginBottom": "10px"}) if _sm else html.Div()
+
+    _fee_pct = f"{net_fees_after_credits / gross_sales * 100:.1f}% of sales" if gross_sales and net_fees_after_credits is not None else ""
+    _refund_pct = f"{len(refund_df)} orders ({len(refund_df) / order_count * 100:.1f}%)" if order_count else ""
+
     return html.Div([
+        _strict_banner_fin,
         # KPI pills (always visible at top)
         html.Div([
-            _build_kpi_pill("\U0001f4b3", "DEBT", f"${bb_cc_balance:,.2f}", RED,
-                            f"Best Buy CC (${bb_cc_available:,.0f} avail)",
-                            f"Best Buy Citi CC for equipment. Charged: ${bb_cc_total_charged:,.2f}. Paid: ${bb_cc_total_paid:,.2f}. Balance: ${bb_cc_balance:,.2f}. Limit: ${bb_cc_limit:,.2f}. Asset value: ${bb_cc_asset_value:,.2f}.", status="verified"),
-            _build_kpi_pill("\U0001f4e5", "AFTER ETSY FEES", f"${etsy_net:,.2f}", ORANGE,
+            _build_kpi_pill("\U0001f4b3", "DEBT", money(bb_cc_balance), RED,
+                            f"Best Buy CC ({money(bb_cc_available)} avail)",
+                            f"Best Buy Citi CC for equipment. Charged: {money(bb_cc_total_charged)}. Paid: {money(bb_cc_total_paid)}. Balance: {money(bb_cc_balance)}. Limit: {money(bb_cc_limit)}. Asset value: {money(bb_cc_asset_value)}.", status="verified"),
+            _build_kpi_pill("\U0001f4e5", "AFTER ETSY FEES", money(etsy_net), ORANGE,
                             "What Etsy deposits to your bank",
-                            f"Gross (${gross_sales:,.2f}) minus fees (${total_fees:,.2f}), shipping (${total_shipping_cost:,.2f}), ads (${total_marketing:,.2f}), refunds (${total_refunds:,.2f}), taxes (${total_taxes:,.2f}), buyer fees (${total_buyer_fees:,.2f}).", status="verified"),
-            _build_kpi_pill("\U0001f4c9", "TOTAL FEES", f"${net_fees_after_credits:,.2f}", RED,
-                            f"{net_fees_after_credits / gross_sales * 100:.1f}% of sales" if gross_sales else "",
-                            f"Listing: ${listing_fees:,.2f}. Transaction (product): ${transaction_fees_product:,.2f}. Transaction (shipping): ${transaction_fees_shipping:,.2f}. Processing: ${processing_fees:,.2f}. Credits: ${abs(total_credits):,.2f}. Net: ${net_fees_after_credits:,.2f}.", status="verified"),
-            _build_kpi_pill("\u21a9\ufe0f", "REFUNDS", f"${total_refunds:,.2f}", PINK,
-                            f"{len(refund_df)} orders ({len(refund_df) / order_count * 100:.1f}%)" if order_count else "",
-                            f"{len(refund_df)} refunded of {order_count} total. Avg refund: ${total_refunds / max(len(refund_df), 1):,.2f}. Return labels: ${usps_return:,.2f} ({usps_return_count} labels).", status="verified"),
-            _build_kpi_pill("\U0001f4b0", "PROFIT", f"${profit:,.2f}", GREEN,
-                            f"{profit_margin:.1f}% margin",
+                            f"Gross ({money(gross_sales)}) minus fees ({money(total_fees)}), shipping ({money(total_shipping_cost)}), ads ({money(total_marketing)}), refunds ({money(total_refunds)}), taxes ({money(total_taxes)}), buyer fees ({money(total_buyer_fees)}).", status="verified"),
+            _build_kpi_pill("\U0001f4c9", "TOTAL FEES", money(net_fees_after_credits), RED,
+                            _fee_pct,
+                            f"Listing: {money(listing_fees)}. Transaction (product): {money(transaction_fees_product)}. Transaction (shipping): {money(transaction_fees_shipping)}. Processing: {money(processing_fees)}. Credits: {money(abs(total_credits) if total_credits is not None else None)}. Net: {money(net_fees_after_credits)}.", status="verified"),
+            _build_kpi_pill("\u21a9\ufe0f", "REFUNDS", money(total_refunds), PINK,
+                            _refund_pct,
+                            f"{len(refund_df)} refunded of {order_count} total. Avg refund: {money(total_refunds / max(len(refund_df), 1) if total_refunds is not None else None)}. Return labels: {money(usps_return)} ({usps_return_count} labels).", status="verified"),
+            _build_kpi_pill("\U0001f4b0", "PROFIT", money(profit), GREEN,
+                            f"{_fmt(profit_margin, prefix='', fmt='.1f', unknown='?')}% margin",
                             f"Revenue minus all costs. Cash ({money(bank_cash_on_hand)}) + draws ({money(bank_owner_draw_total)}).", status="verified"),
         ], style={"display": "flex", "gap": "8px", "marginBottom": "14px", "flexWrap": "wrap"}),
 
         # Business Snapshot banner
         html.Div([
-            html.Div(f"You've earned ${gross_sales:,.2f} in gross sales across {order_count} orders. "
-                     f"After all Etsy fees, shipping, and expenses, your profit is ${profit:,.2f} ({profit_margin:.1f}% margin). "
-                     f"You have ${bank_cash_on_hand:,.2f} cash on hand.",
+            html.Div(f"You've earned {money(gross_sales)} in gross sales across {order_count} orders. "
+                     f"After all Etsy fees, shipping, and expenses, your profit is {money(profit)} ({_fmt(profit_margin, prefix='', fmt='.1f', unknown='?')}% margin). "
+                     f"You have {money(bank_cash_on_hand)} cash on hand.",
                      style={"color": WHITE, "fontSize": "14px", "lineHeight": "1.6"}),
         ], style={"backgroundColor": CARD, "borderRadius": "8px", "marginBottom": "14px",
                    "borderLeft": f"4px solid {CYAN}", "padding": "16px 20px",
@@ -11296,13 +11324,13 @@ def build_tab3_financials():
             row_item("    Equipment Purchased (asset)", bb_cc_asset_value, indent=2, color=TEAL),
             row_item("  Owner Draws", -bank_owner_draw_total, indent=1, color=ORANGE),
             row_item("  Old bank inventory (receipted)", -old_bank_receipted, indent=1, color=ORANGE),
-            row_item("  Untracked (prior bank + Etsy gap)", -(bank_unaccounted + etsy_csv_gap), indent=1, color=RED),
+            row_item("  Untracked (prior bank + Etsy gap)", -(_safe(bank_unaccounted) + _safe(etsy_csv_gap)), indent=1, color=RED),
             html.Div(style={"borderTop": f"3px solid {GREEN}", "marginTop": "10px"}),
             html.Div([
                 html.Span("PROFIT", style={"color": GREEN, "fontWeight": "bold", "fontSize": "22px"}),
-                html.Span(f"${profit:,.2f}", style={"color": GREEN, "fontWeight": "bold", "fontSize": "22px", "fontFamily": "monospace"}),
+                html.Span(money(profit), style={"color": GREEN, "fontWeight": "bold", "fontSize": "22px", "fontFamily": "monospace"}),
             ], style={"display": "flex", "justifyContent": "space-between", "padding": "12px 0"}),
-            html.Div(f"= Cash On Hand ${bank_cash_on_hand:,.2f} + Owner Draws ${bank_owner_draw_total:,.2f}",
+            html.Div(f"= Cash On Hand {money(bank_cash_on_hand)} + Owner Draws {money(bank_owner_draw_total)}",
                      style={"color": GRAY, "fontSize": "12px", "textAlign": "center"}),
             html.Div([
                 html.Div([
@@ -11558,23 +11586,23 @@ def build_tab3_financials():
             kpi_card("NET SHIPPING P&L", "UNKNOWN", ORANGE,
                 "Requires buyer-paid shipping data",
                 f"Shipping P/L is UNKNOWN — Etsy CSVs do not include buyer-paid shipping amounts. "
-                f"Labels cost ${total_shipping_cost:,.2f}. Need: order-level CSV with shipping revenue.", status="na"),
-            kpi_card("TOTAL LABEL COST", money(-total_shipping_cost), RED,
+                f"Labels cost {money(total_shipping_cost)}. Need: order-level CSV with shipping revenue.", status="na"),
+            kpi_card("TOTAL LABEL COST", money(-total_shipping_cost if total_shipping_cost is not None else None), RED,
                 f"{total_label_count} labels purchased",
-                f"USPS outbound: {usps_outbound_count} labels (${usps_outbound:,.2f}). USPS return: {usps_return_count} labels (${usps_return:,.2f}). Asendia intl: {asendia_count} labels (${asendia_labels:,.2f}). Adjustments: ${ship_adjustments:,.2f}. Credits back: ${abs(ship_credits):,.2f}.", status="verified"),
+                f"USPS outbound: {usps_outbound_count} labels ({money(usps_outbound)}). USPS return: {usps_return_count} labels ({money(usps_return)}). Asendia intl: {asendia_count} labels ({money(asendia_labels)}). Adjustments: {money(ship_adjustments)}. Credits back: {money(abs(ship_credits) if ship_credits is not None else None)}.", status="verified"),
             kpi_card("BUYER PAID", "UNKNOWN", TEAL,
                 f"{paid_ship_count} paid-shipping orders",
                 f"Buyer-paid shipping amount is UNKNOWN. Etsy CSVs do not include per-order shipping revenue. "
                 f"Need: Etsy order-level CSV with 'Shipping charged to buyer' column.", status="na"),
             kpi_card("FREE ORDERS", str(free_ship_count), ORANGE,
-                f"Avg label: ${avg_outbound_label:.2f}",
-                f"{free_ship_count} orders shipped free (you absorbed the label cost). Avg label cost: ${avg_outbound_label:.2f}.", status="verified"),
+                f"Avg label: {money(avg_outbound_label)}",
+                f"{free_ship_count} orders shipped free (you absorbed the label cost). Avg label cost: {money(avg_outbound_label)}.", status="verified"),
             kpi_card("RETURN LABELS", str(usps_return_count), PINK,
-                money(-usps_return) + " in return label cost",
-                f"{usps_return_count} return shipping labels purchased for refunded orders. Total return label cost: ${usps_return:,.2f}. This is on top of the original outbound label cost and the refund amount -- returns are triple losses.", status="verified"),
-            kpi_card("AVG LABEL", f"${avg_outbound_label:.2f}", BLUE,
-                f"USPS ${usps_min:.2f}-${usps_max:.2f}" if usps_outbound_count else "No USPS labels",
-                f"Average cost of a USPS outbound label. Range: ${usps_min:.2f} (lightest) to ${usps_max:.2f} (heaviest). {usps_outbound_count} labels total. Heavier/larger items cost more to ship.", status="verified"),
+                money(-usps_return if usps_return is not None else None) + " in return label cost",
+                f"{usps_return_count} return shipping labels purchased for refunded orders. Total return label cost: {money(usps_return)}. This is on top of the original outbound label cost and the refund amount -- returns are triple losses.", status="verified"),
+            kpi_card("AVG LABEL", money(avg_outbound_label), BLUE,
+                f"USPS {money(usps_min)}-{money(usps_max)}" if usps_outbound_count else "No USPS labels",
+                f"Average cost of a USPS outbound label. Range: {money(usps_min)} (lightest) to {money(usps_max)} (heaviest). {usps_outbound_count} labels total. Heavier/larger items cost more to ship.", status="verified"),
         ], style={"display": "flex", "gap": "8px", "marginBottom": "14px", "flexWrap": "wrap"}),
 
         # Shipping charts — built inline so they always reflect current data
@@ -12522,9 +12550,10 @@ app.layout = serve_layout
 @app.callback(
     Output("tab-content", "children"),
     Input("main-tabs", "value"),
+    Input("strict-mode-store", "data"),
 )
-def render_active_tab(tab):
-    """Rebuild the active tab's content on every switch so uploads are reflected."""
+def render_active_tab(tab, _strict_flag):
+    """Rebuild the active tab's content on every tab switch or strict mode toggle."""
     _rebuild_all_charts()
     if tab == "tab-overview":
         return build_tab1_overview()
@@ -12553,15 +12582,21 @@ def render_active_tab(tab):
     prevent_initial_call=True,
 )
 def toggle_strict_mode(is_on):
-    """Toggle strict mode: rebuild pipeline with strict_mode flag."""
+    """Toggle strict mode: rebuild pipeline, refresh all charts + derived data."""
     global _acct_pipeline
     if _acct_pipeline is not None:
         try:
             _acct_pipeline.full_rebuild(DATA, BANK_TXNS, CONFIG,
                                         invoices=INVOICES, strict_mode=bool(is_on))
             _publish_to_globals(_acct_pipeline, __name__)
+            _recompute_analytics()
+            _recompute_tax_years()
+            _recompute_valuation()
+            _rebuild_all_charts()
             print(f"[Dashboard] Strict mode {'ON' if is_on else 'OFF'}: {_acct_pipeline.ledger.summary()}")
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             print(f"WARNING: Strict mode toggle failed: {e}")
 
     label = "ON" if is_on else "OFF"
