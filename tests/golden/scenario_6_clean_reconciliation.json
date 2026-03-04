@@ -1,0 +1,41 @@
+{
+  "_description": "Scenario 6: Clean reconciliation — full net deposited, zero balance, exact date match. Delta=0, reconciliation_confidence=VERIFIED. No pre-CapOne estimates.",
+  "etsy_rows": [
+    {"Date": "February 1, 2026", "Type": "Sale",     "Title": "Payment for Order #6001", "Info": "Order #6001", "Currency": "USD", "Amount": "$50.00", "Fees & Taxes": "--",      "Net": "$50.00"},
+    {"Date": "February 1, 2026", "Type": "Fee",      "Title": "Listing fee",              "Info": "Order #6001", "Currency": "USD", "Amount": "--",     "Fees & Taxes": "-$0.20", "Net": "-$0.20"},
+    {"Date": "February 1, 2026", "Type": "Fee",      "Title": "Transaction fee: Order #6001",  "Info": "Order #6001", "Currency": "USD", "Amount": "--", "Fees & Taxes": "-$3.25", "Net": "-$3.25"},
+    {"Date": "February 1, 2026", "Type": "Fee",      "Title": "Processing fee",           "Info": "Order #6001", "Currency": "USD", "Amount": "--",     "Fees & Taxes": "-$2.20", "Net": "-$2.20"},
+    {"Date": "February 1, 2026", "Type": "Shipping", "Title": "USPS shipping label",      "Info": "Order #6001", "Currency": "USD", "Amount": "--",     "Fees & Taxes": "-$5.70", "Net": "-$5.70"},
+
+    {"Date": "February 5, 2026", "Type": "Deposit",  "Title": "$38.65 sent to your bank account", "Info": "", "Currency": "USD", "Amount": "--", "Fees & Taxes": "--", "Net": "--"}
+  ],
+  "bank_txns": [
+    {"date": "02/05/2026", "desc": "ETSY PAYOUT",           "amount": 38.65, "type": "deposit", "category": "Etsy Payout", "source_file": "test_feb.pdf", "raw_desc": "ACH deposit ETSY, INC. PAYOUT"}
+  ],
+  "invoices": [],
+  "config": {
+    "etsy_pre_capone_deposits": 0,
+    "pre_capone_detail": []
+  },
+  "expected": {
+    "gross_sales": 50.00,
+    "total_refunds": 0.00,
+    "total_fees": 5.65,
+    "total_shipping_cost": 5.70,
+    "etsy_net_earned": 38.65,
+    "order_count": 1,
+    "bank_total_deposits": 38.65,
+    "bank_total_debits": 0.00,
+    "bank_net_cash": 38.65,
+    "etsy_balance": 0.00,
+    "reconciliation_matched": 1,
+    "reconciliation_delta": 0.00,
+    "reconciliation_confidence": "verified",
+    "expense_receipt_verified": 0.00,
+    "expense_bank_recorded": 0.00,
+    "expense_gap": 0.00,
+    "expense_missing_count": 0,
+    "expense_matched_count": 0,
+    "_notes": "fees=0.20+3.25+2.20=5.65. ship=5.70. net=50-5.65-5.70=38.65. deposit=38.65. balance=38.65-38.65=0. Bank deposit on same date as Etsy deposit → exact match. Delta=0 → VERIFIED."
+  }
+}

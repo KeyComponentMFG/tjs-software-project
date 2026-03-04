@@ -234,6 +234,12 @@ def parse_bank_pdf(filepath):
         else:
             txn_type = "debit"
 
+        # Warn about potential misclassified deposits (large debits that might be deposits)
+        if txn_type == "debit" and deposit_amt > 100:
+            # Check for any deposit-like keywords we might have missed
+            if any(kw in desc_upper for kw in ["CREDIT", "TRANSFER", "REFUND", "REBATE"]):
+                print(f"  WARNING: Potential misclassified deposit: {raw_desc[:60]} ${deposit_amt:.2f}")
+
         # Build a short description matching the hardcoded style
         short_desc = _build_short_desc(raw_desc)
 
@@ -528,11 +534,16 @@ def main():
     # Dedup CSV transactions by (date, amount, type, description)
     if csv_txns:
         seen = {}
+        _dedup_dropped = 0
         for t in csv_txns:
             key = (t["date"], t["amount"], t["type"], t.get("raw_desc", t["desc"]))
+            if key in seen:
+                _dedup_dropped += 1
             seen[key] = t
         csv_deduped = list(seen.values())
         print(f"    CSV dedup: {len(csv_txns)} raw -> {len(csv_deduped)} unique")
+        if _dedup_dropped:
+            print(f"  Bank dedup: dropped {_dedup_dropped} duplicate transaction(s)")
 
         # Only use CSV data for months NOT already covered by PDFs
         new_months = csv_covered - all_covered_months

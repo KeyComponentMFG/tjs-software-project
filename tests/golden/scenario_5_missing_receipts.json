@@ -1,0 +1,53 @@
+{
+  "_description": "Scenario 5: Missing receipt scenario. 5 bank debits across 4 categories: 2 matched by receipts, 3 missing. Tests expense completeness gap calculation, vendor normalization, and priority scoring.",
+  "etsy_rows": [
+    {"Date": "May 1, 2026", "Type": "Sale",     "Title": "Payment for Order #5001", "Info": "Order #5001", "Currency": "USD", "Amount": "$45.00", "Fees & Taxes": "--",      "Net": "$45.00"},
+    {"Date": "May 1, 2026", "Type": "Fee",      "Title": "Listing fee",              "Info": "Order #5001", "Currency": "USD", "Amount": "--",     "Fees & Taxes": "-$0.20", "Net": "-$0.20"},
+    {"Date": "May 1, 2026", "Type": "Fee",      "Title": "Transaction fee: Order #5001",  "Info": "Order #5001", "Currency": "USD", "Amount": "--", "Fees & Taxes": "-$2.93", "Net": "-$2.93"},
+    {"Date": "May 1, 2026", "Type": "Fee",      "Title": "Processing fee",           "Info": "Order #5001", "Currency": "USD", "Amount": "--",     "Fees & Taxes": "-$1.98", "Net": "-$1.98"},
+    {"Date": "May 1, 2026", "Type": "Shipping", "Title": "USPS shipping label",      "Info": "Order #5001", "Currency": "USD", "Amount": "--",     "Fees & Taxes": "-$4.75", "Net": "-$4.75"},
+
+    {"Date": "May 5, 2026", "Type": "Sale",     "Title": "Payment for Order #5002", "Info": "Order #5002", "Currency": "USD", "Amount": "$55.00", "Fees & Taxes": "--",      "Net": "$55.00"},
+    {"Date": "May 5, 2026", "Type": "Fee",      "Title": "Listing fee",              "Info": "Order #5002", "Currency": "USD", "Amount": "--",     "Fees & Taxes": "-$0.20", "Net": "-$0.20"},
+    {"Date": "May 5, 2026", "Type": "Fee",      "Title": "Transaction fee: Order #5002",  "Info": "Order #5002", "Currency": "USD", "Amount": "--", "Fees & Taxes": "-$3.58", "Net": "-$3.58"},
+    {"Date": "May 5, 2026", "Type": "Fee",      "Title": "Processing fee",           "Info": "Order #5002", "Currency": "USD", "Amount": "--",     "Fees & Taxes": "-$2.42", "Net": "-$2.42"},
+    {"Date": "May 5, 2026", "Type": "Shipping", "Title": "USPS shipping label",      "Info": "Order #5002", "Currency": "USD", "Amount": "--",     "Fees & Taxes": "-$5.25", "Net": "-$5.25"},
+
+    {"Date": "May 10, 2026", "Type": "Deposit",  "Title": "$78.69 sent to your bank account", "Info": "", "Currency": "USD", "Amount": "--", "Fees & Taxes": "--", "Net": "--"}
+  ],
+  "bank_txns": [
+    {"date": "05/11/2026", "desc": "ETSY PAYOUT",           "amount": 78.69,  "type": "deposit", "category": "Etsy Payout",      "source_file": "test_may.pdf", "raw_desc": "ACH deposit ETSY, INC. PAYOUT"},
+    {"date": "05/03/2026", "desc": "AMAZON MKTPL QRS456",   "amount": 35.47,  "type": "debit",   "category": "Amazon Inventory",  "source_file": "test_may.pdf", "raw_desc": "AMAZON MKTPL QRS456"},
+    {"date": "05/07/2026", "desc": "AMAZON MKTPL TUV789",   "amount": 18.99,  "type": "debit",   "category": "Amazon Inventory",  "source_file": "test_may.pdf", "raw_desc": "AMAZON MKTPL TUV789"},
+    {"date": "05/04/2026", "desc": "HOBBYLOBBY 452",        "amount": 12.50,  "type": "debit",   "category": "Craft Supplies",    "source_file": "test_may.pdf", "raw_desc": "HOBBYLOBBY 452 TULSA OK"},
+    {"date": "05/09/2026", "desc": "PAYPAL THANGS 3D",      "amount": 9.99,   "type": "debit",   "category": "Subscriptions",     "source_file": "test_may.pdf", "raw_desc": "PAYPAL THANGS 3D SUBSCRIPTION"},
+    {"date": "05/12/2026", "desc": "UPS STORE 1234",        "amount": 22.00,  "type": "debit",   "category": "Shipping",          "source_file": "test_may.pdf", "raw_desc": "UPS STORE 1234 TULSA OK"}
+  ],
+  "invoices": [
+    {"order_num": "AMZ-005A", "date": "May 2, 2026",  "grand_total": 35.47, "subtotal": 32.84, "tax": 2.63, "source": "Key Component Mfg", "file": "order-test5a.pdf", "items": []},
+    {"order_num": "HL-005",   "date": "May 3, 2026",  "grand_total": 12.50, "subtotal": 11.57, "tax": 0.93, "source": "Hobby Lobby",       "file": "receipt-hl-005.pdf", "items": []},
+    {"order_num": "AMZ-005X", "date": "June 1, 2026", "grand_total": 18.99, "subtotal": 17.58, "tax": 1.41, "source": "Key Component Mfg", "file": "order-test5x.pdf", "items": []}
+  ],
+  "config": {
+    "etsy_pre_capone_deposits": 0,
+    "pre_capone_detail": []
+  },
+  "expected": {
+    "gross_sales": 100.00,
+    "total_refunds": 0.00,
+    "total_fees": 11.31,
+    "total_shipping_cost": 10.00,
+    "etsy_net_earned": 78.69,
+    "order_count": 2,
+    "bank_total_deposits": 78.69,
+    "bank_total_debits": 98.95,
+    "bank_net_cash": -20.26,
+    "etsy_balance": 0.00,
+    "expense_receipt_verified": 47.97,
+    "expense_bank_recorded": 98.95,
+    "expense_gap": 50.98,
+    "expense_missing_count": 3,
+    "expense_matched_count": 2,
+    "_notes": "fees=abs(-0.20-2.93-1.98-0.20-3.58-2.42)=11.31. ship=4.75+5.25=10.00. net=100-11.31-10.00=78.69. Amazon#1(35.47) matched by receipt. Amazon#2(18.99) NOT matched — receipt date June 1 is 25 days after bank date May 7, exceeds ±14 day tolerance. Hobby Lobby(12.50) matched. Subscriptions(9.99) + Shipping(22.00) have no receipt source → always missing. Verified=35.47+12.50=47.97. Gap=98.95-47.97=50.98. Missing: Amazon#2, Subscriptions, Shipping."
+  }
+}

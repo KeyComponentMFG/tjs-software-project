@@ -170,6 +170,8 @@ if os.path.isdir(_etsy_dir):
         except Exception as _e:
             print(f"WARNING: Failed to parse Etsy CSV {os.path.basename(_ef)}: {_e}")
 
+_parse_warnings = []  # Track parse failures for visibility
+
 def _pm(val):
     if pd.isna(val) or val == "--" or val == "":
         return 0.0
@@ -177,6 +179,7 @@ def _pm(val):
     try:
         return float(val)
     except Exception:
+        _parse_warnings.append(f"Could not parse money value: {val!r}")
         return 0.0
 
 if _etsy_frames:
@@ -196,6 +199,12 @@ if _etsy_frames:
         DATA["Month"] = DATA["Date_Parsed"].dt.to_period("M").astype(str)
         DATA["Week"] = DATA["Date_Parsed"].dt.to_period("W").apply(lambda p: p.start_time)
         print(f"Loaded {len(DATA)} Etsy transactions from local CSVs")
+        if _parse_warnings:
+            print(f"WARNING: {len(_parse_warnings)} money values failed to parse (treated as $0.00)")
+            for w in _parse_warnings[:5]:  # Show first 5
+                print(f"  {w}")
+            if len(_parse_warnings) > 5:
+                print(f"  ... and {len(_parse_warnings) - 5} more")
 else:
     DATA = _sb["DATA"]
     print("Using Etsy data from Supabase (no local CSVs found)")
@@ -212,7 +221,7 @@ for _, _dr in _deposit_rows.iterrows():
 _etsy_all_net = DATA["Net_Clean"].sum()
 # Auto-calculated balance = total earnings - total deposited to bank
 # Small negative values (< $50) are rounding/timing differences — clamp to 0
-_etsy_balance_auto = max(0, round(_etsy_all_net - _etsy_deposit_total, 2))
+_etsy_balance_auto = round(_etsy_all_net - _etsy_deposit_total, 2)
 
 # Always re-parse bank data from local files (PDFs + CSVs) so new uploads are picked up
 from _parse_bank_statements import parse_bank_pdf as _init_parse_bank
@@ -276,9 +285,8 @@ else:
     print(f"Using local bank data ({len(_init_bank_txns)} txns, Supabase empty)")
 
 # ── Extract config values ───────────────────────────────────────────────────
-# Etsy balance = auto-calc + pre-CSV starting balance (earnings before Oct 2025)
-_etsy_starting_balance = float(CONFIG.get("etsy_starting_balance", 0))
-etsy_balance = max(0, round(_etsy_balance_auto + _etsy_starting_balance, 2))
+# Etsy balance = auto-calc from deposit titles (no hardcoded offset)
+etsy_balance = _etsy_balance_auto
 etsy_pre_capone_deposits = CONFIG.get("etsy_pre_capone_deposits", 0)
 pre_capone_detail = [tuple(row) for row in CONFIG.get("pre_capone_detail", [])]
 draw_reasons = CONFIG.get("draw_reasons", {})
@@ -318,6 +326,7 @@ def parse_money(val):
     try:
         return float(val)
     except Exception:
+        _parse_warnings.append(f"Could not parse money value: {val!r}")
         return 0.0
 
 
@@ -553,7 +562,9 @@ _UPLOADED_INVENTORY: dict[tuple[str, str, str], int] = {}
 
 def _norm_loc(loc_str):
     """Normalize location string to 'Tulsa' or 'Texas' or ''."""
-    loc_str = (loc_str or "").strip().lower()
+    if not isinstance(loc_str, str):
+        loc_str = ""
+    loc_str = loc_str.strip().lower()
     if "tulsa" in loc_str or "tj" in loc_str or loc_str in ("ok", "oklahoma"):
         return "Tulsa"
     elif "texas" in loc_str or "braden" in loc_str or loc_str in ("tx", "celina", "prosper"):
@@ -772,24 +783,69 @@ for t in bank_txns_sorted:
         _bal -= t["amount"]
     bank_running.append({**t, "_balance": round(_bal, 2)})
 
+# ── Accounting Pipeline (replaces hardcoded balance, validates all metrics) ──
+_acct_pipeline = None
+try:
+    from accounting import get_pipeline as _get_pipeline
+    from accounting.compat import publish_to_globals as _publish_to_globals
+    _acct_pipeline = _get_pipeline()
+    _acct_pipeline.full_rebuild(DATA, BANK_TXNS, CONFIG, invoices=INVOICES)
+    _publish_to_globals(_acct_pipeline, __name__)
+    print(f"[Dashboard] Accounting pipeline active: {_acct_pipeline.ledger.summary()}")
+except Exception as _pipe_err:
+    print(f"WARNING: Accounting pipeline failed, using legacy calculations: {_pipe_err}")
+    import traceback
+    traceback.print_exc()
+    _acct_pipeline = None
+
+# ── Expense completeness globals (defaults if pipeline didn't set them) ──
+try:
+    expense_receipt_verified
+except NameError:
+    expense_receipt_verified = 0.0
+try:
+    expense_bank_recorded
+except NameError:
+    expense_bank_recorded = 0.0
+try:
+    expense_gap
+except NameError:
+    expense_gap = 0.0
+try:
+    expense_by_category
+except NameError:
+    expense_by_category = {}
+try:
+    expense_missing_receipts
+except NameError:
+    expense_missing_receipts = []
+try:
+    strict_mode
+except NameError:
+    strict_mode = False
+try:
+    ledger_ref
+except NameError:
+    ledger_ref = None
+
 # ── Hot-Reload Functions (Data Hub) ──────────────────────────────────────────
 
 _RECENT_UPLOADS: set = set()  # Order numbers uploaded this session via Data Hub
 
 
-def _reload_etsy_data():
-    """Re-read all Etsy CSVs from local files and rebuild every Etsy-derived metric.
+def _rebuild_etsy_derived():
+    """Rebuild all Etsy-derived DataFrames and aggregations from the current DATA global.
 
-    Returns dict with summary stats for the UI status message.
+    Call this after DATA has been set (from local CSVs or Supabase) to refresh:
+    - Filtered DataFrames (sales_df, fee_df, etc.)
+    - Product performance metrics
+    - Monthly / daily / weekly aggregations
+    - Fee, marketing, and shipping breakdowns
+
+    Financial metrics (gross_sales, etsy_balance, real_profit, etc.) are set by the pipeline in _cascade_reload().
     """
-    global DATA, sales_df, fee_df, ship_df, mkt_df, refund_df, tax_df
+    global sales_df, fee_df, ship_df, mkt_df, refund_df, tax_df
     global deposit_df, buyer_fee_df, payment_df
-    global gross_sales, total_refunds, net_sales, total_fees, total_fees_gross
-    global total_shipping_cost, total_marketing, total_taxes, total_payments
-    global etsy_net, order_count, avg_order, etsy_net_margin
-    global total_buyer_fees, etsy_net_earned, etsy_total_deposited
-    global etsy_balance_calculated, etsy_csv_gap, real_profit, real_profit_margin
-    global bank_all_expenses, bank_cash_on_hand, etsy_balance
     global monthly_sales, monthly_fees, monthly_shipping, monthly_marketing
     global monthly_refunds, monthly_taxes, monthly_raw_fees, monthly_raw_shipping
     global monthly_raw_marketing, monthly_raw_refunds, monthly_net_revenue
@@ -797,34 +853,16 @@ def _reload_etsy_data():
     global daily_sales, daily_orders, daily_df, weekly_aov
     global monthly_order_counts, monthly_aov, monthly_profit_per_order
     global months_sorted, days_active
+    global product_fee_totals, product_revenue_est
     global listing_fees, transaction_fees_product, transaction_fees_shipping
     global processing_fees, credit_transaction, credit_listing, credit_processing
-    global share_save, total_credits
+    global share_save, total_credits, total_fees_gross
     global etsy_ads, offsite_ads_fees, offsite_ads_credits
     global usps_outbound, usps_outbound_count, usps_return, usps_return_count
     global asendia_labels, asendia_count, ship_adjustments, ship_adjust_count
     global ship_credits, ship_credit_count, ship_insurance, ship_insurance_count
     global buyer_paid_shipping, shipping_profit, shipping_margin
     global paid_ship_count, free_ship_count, avg_outbound_label
-    global product_fee_totals, product_revenue_est
-
-    # Read from local CSV files
-    import glob as _gl
-    _ed = os.path.join(BASE_DIR, "data", "etsy_statements")
-    _frames = []
-    for _f in sorted(_gl.glob(os.path.join(_ed, "etsy_statement*.csv"))):
-        try:
-            _frames.append(pd.read_csv(_f))
-        except Exception:
-            pass
-    if _frames:
-        DATA = pd.concat(_frames, ignore_index=True)
-        DATA["Amount_Clean"] = DATA["Amount"].apply(parse_money)
-        DATA["Net_Clean"] = DATA["Net"].apply(parse_money)
-        DATA["Fees_Clean"] = DATA["Fees & Taxes"].apply(parse_money)
-        DATA["Date_Parsed"] = pd.to_datetime(DATA["Date"], format="%B %d, %Y", errors="coerce")
-        DATA["Month"] = DATA["Date_Parsed"].dt.to_period("M").astype(str)
-        DATA["Week"] = DATA["Date_Parsed"].dt.to_period("W").apply(lambda p: p.start_time)
 
     # Rebuild filtered DataFrames
     sales_df = DATA[DATA["Type"] == "Sale"]
@@ -836,105 +874,6 @@ def _reload_etsy_data():
     deposit_df = DATA[DATA["Type"] == "Deposit"]
     buyer_fee_df = DATA[DATA["Type"] == "Buyer Fee"]
     payment_df = DATA[DATA["Type"] == "Payment"]
-
-    # Top-level numbers
-    gross_sales = sales_df["Net_Clean"].sum()
-    total_refunds = abs(refund_df["Net_Clean"].sum())
-    net_sales = gross_sales - total_refunds
-    total_fees = abs(fee_df["Net_Clean"].sum())
-    total_shipping_cost = abs(ship_df["Net_Clean"].sum())
-    total_marketing = abs(mkt_df["Net_Clean"].sum())
-    total_taxes = abs(tax_df["Net_Clean"].sum())
-    total_payments = payment_df["Net_Clean"].sum()
-    order_count = len(sales_df)
-    avg_order = gross_sales / order_count if order_count else 0
-
-    # Full accounting
-    total_buyer_fees = abs(buyer_fee_df["Net_Clean"].sum()) if len(buyer_fee_df) else 0.0
-    etsy_net_earned = (gross_sales - total_fees - total_shipping_cost
-                       - total_marketing - total_refunds - total_taxes - total_buyer_fees + total_payments)
-    etsy_net = etsy_net_earned
-    etsy_net_margin = (etsy_net / gross_sales * 100) if gross_sales else 0
-
-    # Etsy balance = auto-calc + pre-CSV starting balance
-    import re as _re
-    _dep_total = 0.0
-    for _, _dr in deposit_df.iterrows():
-        _m = _re.search(r'([\d,]+\.\d+)', str(_dr.get("Title", "")))
-        if _m:
-            _dep_total += float(_m.group(1).replace(",", ""))
-    _starting_bal = float(CONFIG.get("etsy_starting_balance", 0))
-    etsy_balance = max(0, round(DATA["Net_Clean"].sum() - _dep_total + _starting_bal, 2))
-
-    etsy_total_deposited = etsy_pre_capone_deposits + bank_total_deposits
-    etsy_balance_calculated = etsy_net_earned - etsy_total_deposited
-    etsy_csv_gap = round(etsy_balance_calculated - etsy_balance, 2)
-
-    # Recalculate cross-source metrics that depend on Etsy data
-    bank_cash_on_hand = bank_net_cash + etsy_balance
-    real_profit = bank_cash_on_hand + bank_owner_draw_total
-    real_profit_margin = (real_profit / gross_sales * 100) if gross_sales else 0
-
-    # ── Recompute all daily/monthly/fee/shipping/product metrics ──
-
-    # Fee breakdown
-    listing_fees = abs(fee_df[fee_df["Title"].str.contains("Listing fee", na=False)]["Net_Clean"].sum())
-    transaction_fees_product = abs(
-        fee_df[
-            fee_df["Title"].str.startswith("Transaction fee:", na=False)
-            & ~fee_df["Title"].str.contains("Shipping", na=False)
-        ]["Net_Clean"].sum()
-    )
-    transaction_fees_shipping = abs(
-        fee_df[fee_df["Title"].str.contains("Transaction fee: Shipping", na=False)]["Net_Clean"].sum()
-    )
-    processing_fees = abs(fee_df[fee_df["Title"].str.contains("Processing fee", na=False)]["Net_Clean"].sum())
-
-    # Fee credits
-    credit_transaction = fee_df[fee_df["Title"].str.startswith("Credit for transaction fee", na=False)]["Net_Clean"].sum()
-    credit_listing = fee_df[fee_df["Title"].str.startswith("Credit for listing fee", na=False)]["Net_Clean"].sum()
-    credit_processing = fee_df[fee_df["Title"].str.startswith("Credit for processing fee", na=False)]["Net_Clean"].sum()
-    share_save = fee_df[fee_df["Title"].str.contains("Share & Save", na=False)]["Net_Clean"].sum()
-    total_credits = credit_transaction + credit_listing + credit_processing + share_save
-    total_fees_gross = listing_fees + transaction_fees_product + transaction_fees_shipping + processing_fees
-
-    # Marketing breakdown
-    etsy_ads = abs(mkt_df[mkt_df["Title"].str.contains("Etsy Ads", na=False)]["Net_Clean"].sum())
-    offsite_ads_fees = abs(
-        mkt_df[
-            mkt_df["Title"].str.contains("Offsite Ads", na=False)
-            & ~mkt_df["Title"].str.contains("Credit", na=False)
-        ]["Net_Clean"].sum()
-    )
-    offsite_ads_credits = mkt_df[mkt_df["Title"].str.contains("Credit for Offsite", na=False)]["Net_Clean"].sum()
-
-    # Shipping subcategories
-    usps_outbound = abs(ship_df[ship_df["Title"] == "USPS shipping label"]["Net_Clean"].sum())
-    usps_outbound_count = len(ship_df[ship_df["Title"] == "USPS shipping label"])
-    usps_return = abs(ship_df[ship_df["Title"] == "USPS return shipping label"]["Net_Clean"].sum())
-    usps_return_count = len(ship_df[ship_df["Title"] == "USPS return shipping label"])
-    asendia_labels = abs(ship_df[ship_df["Title"].str.contains("Asendia", na=False)]["Net_Clean"].sum())
-    asendia_count = len(ship_df[ship_df["Title"].str.contains("Asendia", na=False)])
-    ship_adjustments = abs(ship_df[ship_df["Title"].str.contains("Adjustment", na=False)]["Net_Clean"].sum())
-    ship_adjust_count = len(ship_df[ship_df["Title"].str.contains("Adjustment", na=False)])
-    ship_credits = ship_df[ship_df["Title"].str.contains("Credit for", na=False)]["Net_Clean"].sum()
-    ship_credit_count = len(ship_df[ship_df["Title"].str.contains("Credit for", na=False)])
-    ship_insurance = abs(ship_df[ship_df["Title"].str.contains("insurance", case=False, na=False)]["Net_Clean"].sum())
-    ship_insurance_count = len(ship_df[ship_df["Title"].str.contains("insurance", case=False, na=False)])
-
-    # Buyer paid shipping — NOT available in Etsy CSV (only fee amount exists)
-    buyer_paid_shipping = None  # was: net_ship_tx_fees / 0.065 — reverse-engineered guess removed
-    shipping_profit = None      # depends on buyer_paid_shipping
-    shipping_margin = None      # depends on buyer_paid_shipping
-
-    # Paid vs free shipping orders (counts are still real)
-    ship_fee_rows = fee_df[fee_df["Title"].str.contains("Transaction fee: Shipping", na=False)].copy()
-    orders_with_paid_shipping = set(ship_fee_rows["Info"].dropna())
-    all_order_ids = set(sales_df["Title"].str.extract(r"(Order #\d+)", expand=False).dropna())
-    orders_free_shipping = all_order_ids - orders_with_paid_shipping
-    paid_ship_count = len(orders_with_paid_shipping & all_order_ids)
-    free_ship_count = len(orders_free_shipping)
-    avg_outbound_label = usps_outbound / usps_outbound_count if usps_outbound_count else 0
 
     # Product performance — use actual sale amounts joined via order number
     _listing_aliases = CONFIG.get("listing_aliases", {})
@@ -1046,27 +985,110 @@ def _reload_etsy_data():
     else:
         days_active = 1
 
+    # Fee breakdown
+    listing_fees = abs(fee_df[fee_df["Title"].str.contains("Listing fee", na=False)]["Net_Clean"].sum())
+    transaction_fees_product = abs(
+        fee_df[
+            fee_df["Title"].str.startswith("Transaction fee:", na=False)
+            & ~fee_df["Title"].str.contains("Shipping", na=False)
+        ]["Net_Clean"].sum()
+    )
+    transaction_fees_shipping = abs(
+        fee_df[fee_df["Title"].str.contains("Transaction fee: Shipping", na=False)]["Net_Clean"].sum()
+    )
+    processing_fees = abs(fee_df[fee_df["Title"].str.contains("Processing fee", na=False)]["Net_Clean"].sum())
+    credit_transaction = fee_df[fee_df["Title"].str.startswith("Credit for transaction fee", na=False)]["Net_Clean"].sum()
+    credit_listing = fee_df[fee_df["Title"].str.startswith("Credit for listing fee", na=False)]["Net_Clean"].sum()
+    credit_processing = fee_df[fee_df["Title"].str.startswith("Credit for processing fee", na=False)]["Net_Clean"].sum()
+    share_save = fee_df[fee_df["Title"].str.contains("Share & Save", na=False)]["Net_Clean"].sum()
+    total_credits = credit_transaction + credit_listing + credit_processing + share_save
+    total_fees_gross = listing_fees + transaction_fees_product + transaction_fees_shipping + processing_fees
+
+    # Marketing breakdown
+    etsy_ads = abs(mkt_df[mkt_df["Title"].str.contains("Etsy Ads", na=False)]["Net_Clean"].sum())
+    offsite_ads_fees = abs(
+        mkt_df[
+            mkt_df["Title"].str.contains("Offsite Ads", na=False)
+            & ~mkt_df["Title"].str.contains("Credit", na=False)
+        ]["Net_Clean"].sum()
+    )
+    offsite_ads_credits = mkt_df[mkt_df["Title"].str.contains("Credit for Offsite", na=False)]["Net_Clean"].sum()
+
+    # Shipping subcategories
+    usps_outbound = abs(ship_df[ship_df["Title"] == "USPS shipping label"]["Net_Clean"].sum())
+    usps_outbound_count = len(ship_df[ship_df["Title"] == "USPS shipping label"])
+    usps_return = abs(ship_df[ship_df["Title"] == "USPS return shipping label"]["Net_Clean"].sum())
+    usps_return_count = len(ship_df[ship_df["Title"] == "USPS return shipping label"])
+    asendia_labels = abs(ship_df[ship_df["Title"].str.contains("Asendia", na=False)]["Net_Clean"].sum())
+    asendia_count = len(ship_df[ship_df["Title"].str.contains("Asendia", na=False)])
+    ship_adjustments = abs(ship_df[ship_df["Title"].str.contains("Adjustment", na=False)]["Net_Clean"].sum())
+    ship_adjust_count = len(ship_df[ship_df["Title"].str.contains("Adjustment", na=False)])
+    ship_credits = ship_df[ship_df["Title"].str.contains("Credit for", na=False)]["Net_Clean"].sum()
+    ship_credit_count = len(ship_df[ship_df["Title"].str.contains("Credit for", na=False)])
+    ship_insurance = abs(ship_df[ship_df["Title"].str.contains("insurance", case=False, na=False)]["Net_Clean"].sum())
+    ship_insurance_count = len(ship_df[ship_df["Title"].str.contains("insurance", case=False, na=False)])
+
+    # Buyer paid shipping: UNKNOWN — /0.065 back-solve REMOVED.
+    # Requires Etsy order-level CSV with "Shipping charged to buyer" column.
+    buyer_paid_shipping = None  # was: transaction_fees_shipping / 0.065
+    shipping_profit = None      # was: buyer_paid_shipping - total_shipping_cost
+    shipping_margin = None      # was: (shipping_profit / buyer_paid_shipping * 100)
+
+    # Paid vs free shipping orders (counts are still real)
+    ship_fee_rows = fee_df[fee_df["Title"].str.contains("Transaction fee: Shipping", na=False)].copy()
+    orders_with_paid_shipping = set(ship_fee_rows["Info"].dropna())
+    all_order_ids = set(sales_df["Title"].str.extract(r"(Order #\d+)", expand=False).dropna())
+    orders_free_shipping = all_order_ids - orders_with_paid_shipping
+    paid_ship_count = len(orders_with_paid_shipping & all_order_ids)
+    free_ship_count = len(orders_free_shipping)
+    avg_outbound_label = usps_outbound / usps_outbound_count if usps_outbound_count else 0
+
+
+def _reload_etsy_data():
+    """Re-read all Etsy CSVs from local files and rebuild DataFrames and aggregations.
+
+    Financial metrics (gross_sales, etsy_balance, real_profit, etc.) are set by the pipeline in _cascade_reload().
+
+    Returns dict with summary stats for the UI status message.
+    """
+    global DATA
+
+    # Read from local CSV files
+    import glob as _gl
+    _ed = os.path.join(BASE_DIR, "data", "etsy_statements")
+    _frames = []
+    for _f in sorted(_gl.glob(os.path.join(_ed, "etsy_statement*.csv"))):
+        try:
+            _frames.append(pd.read_csv(_f))
+        except Exception:
+            pass
+    if _frames:
+        DATA = pd.concat(_frames, ignore_index=True)
+        DATA["Amount_Clean"] = DATA["Amount"].apply(parse_money)
+        DATA["Net_Clean"] = DATA["Net"].apply(parse_money)
+        DATA["Fees_Clean"] = DATA["Fees & Taxes"].apply(parse_money)
+        DATA["Date_Parsed"] = pd.to_datetime(DATA["Date"], format="%B %d, %Y", errors="coerce")
+        DATA["Month"] = DATA["Date_Parsed"].dt.to_period("M").astype(str)
+        DATA["Week"] = DATA["Date_Parsed"].dt.to_period("W").apply(lambda p: p.start_time)
+
+    _rebuild_etsy_derived()
+
     return {
         "transactions": len(DATA),
-        "orders": order_count,
-        "gross_sales": gross_sales,
-        "etsy_net": etsy_net,
+        "orders": len(sales_df),
+        "gross_sales": sales_df["Net_Clean"].sum(),
     }
 
 
 def _reload_bank_data():
     """Re-parse all bank PDFs and rebuild bank-derived metrics in-place.
 
+    Financial metrics (bank_net_cash, bank_by_cat, real_profit, etc.) are set by the pipeline in _cascade_reload().
+
     Returns dict with summary stats for the UI status message.
     """
     global BANK_TXNS, bank_deposits, bank_debits
-    global bank_total_deposits, bank_total_debits, bank_net_cash
-    global bank_by_cat, bank_monthly, bank_statement_count
-    global bank_tax_deductible, bank_personal, bank_pending
-    global bank_biz_expense_total, bank_all_expenses, bank_cash_on_hand
-    global bank_owner_draw_total, real_profit, real_profit_margin
-    global tulsa_draws, texas_draws, tulsa_draw_total, texas_draw_total
-    global draw_diff, draw_owed_to
+    global bank_statement_count
     global bank_txns_sorted, bank_running
     global bb_cc_payments, bb_cc_total_paid, bb_cc_balance, bb_cc_available
     global _bank_cat_color_map, _bank_acct_gap, _bank_no_receipt, _bank_amazon_txns
@@ -1150,49 +1172,36 @@ def _reload_bank_data():
     BANK_TXNS = all_txns
     bank_statement_count = len(source_files)
 
-    # Rebuild aggregates (mirrors lines 407-474)
+    _rebuild_bank_derived()
+
+    # net_cash for the status message — use bank_running final balance
+    _final_bal = bank_running[-1]["_balance"] if bank_running else 0.0
+    return {
+        "transactions": len(BANK_TXNS),
+        "statements": bank_statement_count,
+        "net_cash": round(_final_bal, 2),
+    }
+
+
+def _rebuild_bank_derived():
+    """Rebuild bank-derived globals from the current BANK_TXNS global.
+
+    Call this after BANK_TXNS has been set (from PDF parsing or Supabase) to refresh:
+    - Deposit/debit lists
+    - Sorted transactions with running balance
+    - Bank category color map, accounting gap, no-receipt list, Amazon transactions
+    - Best Buy credit card tracking
+
+    Financial metrics (bank_net_cash, bank_by_cat, real_profit, etc.) are set by the pipeline in _cascade_reload().
+    """
+    global bank_deposits, bank_debits
+    global bank_txns_sorted, bank_running
+    global bb_cc_payments, bb_cc_total_paid, bb_cc_balance, bb_cc_available
+    global _bank_cat_color_map, _bank_acct_gap, _bank_no_receipt, _bank_amazon_txns
+
+    # Build deposit/debit lists
     bank_deposits = [t for t in BANK_TXNS if t["type"] == "deposit"]
     bank_debits = [t for t in BANK_TXNS if t["type"] == "debit"]
-    bank_total_deposits = sum(t["amount"] for t in bank_deposits)
-    bank_total_debits = sum(t["amount"] for t in bank_debits)
-    bank_net_cash = bank_total_deposits - bank_total_debits
-
-    bank_by_cat = {}
-    for t in bank_debits:
-        cat = t["category"]
-        bank_by_cat[cat] = bank_by_cat.get(cat, 0) + t["amount"]
-    bank_by_cat = dict(sorted(bank_by_cat.items(), key=lambda x: -x[1]))
-
-    bank_monthly = {}
-    for t in BANK_TXNS:
-        parts = t["date"].split("/")
-        month_key = f"{parts[2]}-{parts[0]}"
-        if month_key not in bank_monthly:
-            bank_monthly[month_key] = {"deposits": 0, "debits": 0}
-        if t["type"] == "deposit":
-            bank_monthly[month_key]["deposits"] += t["amount"]
-        else:
-            bank_monthly[month_key]["debits"] += t["amount"]
-
-    bank_tax_deductible = sum(amt for cat, amt in bank_by_cat.items() if cat in BANK_TAX_DEDUCTIBLE)
-    bank_personal = bank_by_cat.get("Personal", 0)
-    bank_pending = bank_by_cat.get("Pending", 0)
-
-    _biz_expense_cats = ["Shipping", "Craft Supplies", "Etsy Fees", "Subscriptions",
-                         "AliExpress Supplies", "Business Credit Card"]
-    bank_biz_expense_total = sum(bank_by_cat.get(c, 0) for c in _biz_expense_cats)
-    bank_all_expenses = bank_by_cat.get("Amazon Inventory", 0) + bank_biz_expense_total
-    bank_cash_on_hand = bank_net_cash + etsy_balance
-    bank_owner_draw_total = sum(bank_by_cat.get(c, 0) for c in bank_by_cat if c.startswith("Owner Draw"))
-    real_profit = bank_cash_on_hand + bank_owner_draw_total
-    real_profit_margin = (real_profit / gross_sales * 100) if gross_sales else 0
-
-    tulsa_draws = [t for t in bank_debits if t["category"] == "Owner Draw - Tulsa"]
-    texas_draws = [t for t in bank_debits if t["category"] == "Owner Draw - Texas"]
-    tulsa_draw_total = sum(t["amount"] for t in tulsa_draws)
-    texas_draw_total = sum(t["amount"] for t in texas_draws)
-    draw_diff = abs(tulsa_draw_total - texas_draw_total)
-    draw_owed_to = "Braden" if tulsa_draw_total > texas_draw_total else "TJ"
 
     # Rebuild running balance
     bank_txns_sorted = sorted(BANK_TXNS, key=lambda x: (_parse_bank_date(x["date"]),
@@ -1216,12 +1225,6 @@ def _reload_bank_data():
     bb_cc_total_paid = sum(p["amount"] for p in bb_cc_payments)
     bb_cc_balance = bb_cc_total_charged - bb_cc_total_paid
     bb_cc_available = bb_cc_limit - bb_cc_balance
-
-    return {
-        "transactions": len(BANK_TXNS),
-        "statements": bank_statement_count,
-        "net_cash": bank_net_cash,
-    }
 
 
 def _reload_inventory_data(new_order):
@@ -1330,8 +1333,8 @@ def _reload_inventory_data(new_order):
     inv_order_count = len(INV_DF)
 
     if len(INV_ITEMS) > 0:
-        personal_total = INV_ITEMS[INV_ITEMS["category"] == "Personal/Gift"]["total"].sum()
-        biz_fee_total = INV_ITEMS[INV_ITEMS["category"] == "Business Fees"]["total"].sum()
+        personal_total = INV_ITEMS[INV_ITEMS["category"] == "Personal/Gift"]["total_with_tax"].sum()
+        biz_fee_total = INV_ITEMS[INV_ITEMS["category"] == "Business Fees"]["total_with_tax"].sum()
         true_inventory_cost = total_inventory_cost - personal_total - biz_fee_total
     else:
         true_inventory_cost = total_inventory_cost
@@ -1389,6 +1392,16 @@ def _cascade_reload(source="etsy"):
     receipt_cogs_outside_bank = 0
     profit = real_profit
     profit_margin = (profit / gross_sales * 100) if gross_sales else 0
+
+    # Re-run accounting pipeline if available (Decimal precision + validation)
+    if _acct_pipeline is not None:
+        try:
+            _sm = getattr(_acct_pipeline, '_strict_mode', False)
+            _acct_pipeline.full_rebuild(DATA, BANK_TXNS, CONFIG, invoices=INVOICES, strict_mode=_sm)
+            _publish_to_globals(_acct_pipeline, __name__)
+            print(f"[Dashboard] Pipeline rebuilt after {source} reload: {_acct_pipeline.ledger.summary()}")
+        except Exception as e:
+            print(f"WARNING: Pipeline rebuild failed after {source} reload: {e}")
 
     # Recompute all derived metrics and charts
     _recompute_shipping_details()
@@ -1543,8 +1556,8 @@ else:
 
 # Now calculate personal_total based on actual item categories (not payment source)
 if len(INV_ITEMS) > 0:
-    personal_total = INV_ITEMS[INV_ITEMS["category"] == "Personal/Gift"]["total"].sum()
-    biz_fee_total = INV_ITEMS[INV_ITEMS["category"] == "Business Fees"]["total"].sum()
+    personal_total = INV_ITEMS[INV_ITEMS["category"] == "Personal/Gift"]["total_with_tax"].sum()
+    biz_fee_total = INV_ITEMS[INV_ITEMS["category"] == "Business Fees"]["total_with_tax"].sum()
     true_inventory_cost = total_inventory_cost - personal_total - biz_fee_total
 else:
     personal_total = 0.0
@@ -1909,10 +1922,11 @@ ship_credit_count = len(ship_df[ship_df["Title"].str.contains("Credit for", na=F
 ship_insurance = abs(ship_df[ship_df["Title"].str.contains("insurance", case=False, na=False)]["Net_Clean"].sum())
 ship_insurance_count = len(ship_df[ship_df["Title"].str.contains("insurance", case=False, na=False)])
 
-# Buyer paid shipping — NOT available in Etsy CSV (only fee amount exists)
-buyer_paid_shipping = None   # was: net_ship_tx_fees / 0.065 — reverse-engineered guess removed
-shipping_profit = None       # depends on buyer_paid_shipping
-shipping_margin = None       # depends on buyer_paid_shipping
+# Buyer paid shipping: UNKNOWN — /0.065 back-solve REMOVED.
+# Requires Etsy order-level CSV with "Shipping charged to buyer" column.
+buyer_paid_shipping = None  # was: transaction_fees_shipping / 0.065
+shipping_profit = None      # was: buyer_paid_shipping - total_shipping_cost
+shipping_margin = None      # was: (shipping_profit / buyer_paid_shipping * 100)
 
 # Paid vs free shipping orders (counts are still real)
 ship_fee_rows = fee_df[fee_df["Title"].str.contains("Transaction fee: Shipping", na=False)].copy()
@@ -2264,14 +2278,14 @@ def run_analytics():
                 "good" if margin_trend > 2 else "bad" if margin_trend < -2 else "info"))
 
     # 3. SHIPPING OVERVIEW (buyer-paid amount unavailable — focus on known costs)
-    free_cost = free_ship_count * avg_outbound_label if avg_outbound_label else 0
+    # free_cost estimate REMOVED — was free_ship_count * avg_outbound_label (count * avg violates no-estimates rule)
+    # Missing data: per-order label matching (which label goes to which order)
     insights.append((3, "SHIPPING COSTS",
         f"Total label costs: ${total_shipping_cost:,.2f} ({paid_ship_count} paid + {free_ship_count} free shipping orders)",
         f"Actual label spend: ${total_shipping_cost:,.2f}. "
         f"Avg outbound label: ${avg_outbound_label:.2f}. "
-        f"{free_ship_count} free-shipping orders cost ~${free_cost:,.0f} in absorbed labels. "
-        f"Buyer-paid shipping amount is NOT available in the Etsy CSV — profit/loss on shipping cannot be calculated. "
-        f"TIP: Raise free-shipping listing prices by ${avg_outbound_label:.0f}-${avg_outbound_label + 3:.0f} to offset label costs.",
+        f"Free-shipping orders absorbed label costs (exact total UNKNOWN without per-order label matching). "
+        f"Buyer-paid shipping amount is NOT available in the Etsy CSV — profit/loss on shipping cannot be calculated.",
         "info"))
 
     # 4. MARKETING DEEP DIVE
@@ -2281,8 +2295,9 @@ def run_analytics():
         mkt_pcts = {m: (v / monthly_sales.get(m, 1) * 100) for m, v in mkt_by_month.items()}
         mkt_trend_text = " -> ".join(f"{m}: {mkt_pcts[m]:.0f}%" for m in months_sorted if m in mkt_pcts)
 
-        offsite_sales_est = offsite_ads_fees / 0.15 if offsite_ads_fees else 0
-        offsite_roi = (offsite_sales_est - offsite_ads_fees) / offsite_ads_fees if offsite_ads_fees else 0
+        # offsite_sales_est REMOVED — was offsite_ads_fees / 0.15 (fee / % back-solve violates no-estimates rule)
+        # offsite_roi REMOVED — depended on offsite_sales_est
+        # Missing data: Etsy "Offsite Ads" dashboard CSV export showing attributed sales per ad
 
         etsy_ads_months = DATA[
             (DATA["Type"] == "Marketing") & DATA["Title"].str.contains("Etsy Ads", na=False)
@@ -2295,9 +2310,9 @@ def run_analytics():
         )
         if offsite_ads_fees > 0:
             ad_analysis += (
-                f"OFFSITE ADS: ${offsite_ads_fees:,.2f} in fees = Etsy drove ~${offsite_sales_est:,.0f} in sales "
-                f"from Google/social ads (ROI: {offsite_roi:.1f}x). "
-                f"{'Good return -- offsite ads are profitable.' if offsite_roi > 2 else 'Marginal -- the 15% fee is steep but you cant opt out under $10k/yr.'} "
+                f"OFFSITE ADS: ${offsite_ads_fees:,.2f} in fees paid. "
+                f"Revenue generated by offsite ads: UNKNOWN (requires Etsy Offsite Ads report). "
+                f"You can't opt out under $10k/yr. "
             )
         insights.append((4, "MARKETING & ADS",
             f"${total_marketing:,.2f} on ads ({marketing_pct:.1f}% of sales) -- monthly trend: {mkt_trend_text}",
@@ -2332,7 +2347,9 @@ def run_analytics():
 
     worst = sorted(refund_products.items(), key=lambda x: -x[1])
     avg_return_label = usps_return / usps_return_count if usps_return_count else 0
-    true_cost_per_refund = avg_refund + avg_outbound_label + avg_return_label
+    # true_cost_per_refund REMOVED — was avg_refund + avg_outbound_label + avg_return_label
+    # (sum of averages applied per-unit violates no-estimates rule)
+    # Missing data: per-refund label matching (which return label belongs to which refund)
 
     ref_by_month = {m: monthly_refunds.get(m, 0) for m in months_sorted}
     ref_trend = " -> ".join(f"${ref_by_month.get(m, 0):,.0f}" for m in months_sorted)
@@ -2358,11 +2375,10 @@ def run_analytics():
         )
 
     insights.append((5, "REFUNDS",
-        f"${total_refunds:,.2f} refunded ({len(refund_df)} orders, {refund_rate:.1f}% rate) -- true cost ~${true_cost_per_refund * len(refund_df):,.0f}",
+        f"${total_refunds:,.2f} refunded ({len(refund_df)} orders, {refund_rate:.1f}% rate)",
         f"Refund trend by month: {ref_trend}. "
-        f"Each refund truly costs ~${true_cost_per_refund:,.0f} "
-        f"(${avg_refund:.0f} refund + ${avg_outbound_label:.0f} wasted outbound label + ~${avg_return_label:.0f} return label). "
-        f"Total true cost of all refunds: ~${true_cost_per_refund * len(refund_df):,.0f}. "
+        f"Average refund amount: ${avg_refund:,.0f}. "
+        f"Shipping label costs per refund: UNKNOWN (no per-refund label matching). "
         f"{problem_products_text}"
         + (f"Your {refund_rate:.1f}% rate is {'excellent (under 3%)' if refund_rate < 3 else 'normal for Etsy (3-5%)' if refund_rate < 5 else 'above average -- worth investigating' if refund_rate < 8 else 'high -- this needs attention'}. "
            f"Industry average for handmade goods is ~3-5%."),
@@ -2467,7 +2483,7 @@ def run_analytics():
         "good" if fee_rate < 12 else "info" if fee_rate < 15 else "warning"))
 
     # 10. GOALS & TARGETS
-    daily_profit_avg = etsy_net / days_active
+    daily_etsy_net_avg = etsy_net / days_active
     daily_revenue_avg = gross_sales / days_active
     orders_per_day = order_count / days_active
 
@@ -2477,15 +2493,14 @@ def run_analytics():
     extra_per_day = extra_orders_needed / days_active
 
     insights.append((10, "GOALS & TARGETS",
-        f"${daily_profit_avg:,.0f}/day profit | ${daily_revenue_avg:,.0f}/day revenue | {orders_per_day:.1f} orders/day",
-        f"Current monthly run rate: ${daily_revenue_avg * 30:,.0f} revenue, ${daily_profit_avg * 30:,.0f} profit. "
-        f"To double profit to ${etsy_net * 2:,.0f}, you'd need ~${revenue_to_double:,.0f} in total sales "
+        f"${daily_etsy_net_avg:,.0f}/day Etsy net | ${daily_revenue_avg:,.0f}/day revenue | {orders_per_day:.1f} orders/day",
+        f"Current monthly run rate: ${daily_revenue_avg * 30:,.0f} revenue, ${daily_etsy_net_avg * 30:,.0f} Etsy net. "
+        f"To double Etsy net to ${etsy_net * 2:,.0f}, you'd need ~${revenue_to_double:,.0f} in total sales "
         f"(~{extra_per_day:.1f} more orders/day at current avg order of ${avg_order:.0f}). "
         f"FASTEST PATHS: 1) Raise prices 10% = instant ~${gross_sales * 0.10:,.0f} more revenue with same orders. "
-        f"2) Cut free shipping = save ~${free_ship_count * avg_outbound_label:,.0f}. "
+        f"2) Cut free shipping (absorbed label cost UNKNOWN without per-order data). "
         f"3) Reduce refunds by 50% = save ~${total_refunds / 2:,.0f}. "
-        f"Combined that's ~${gross_sales * 0.10 + free_ship_count * avg_outbound_label + total_refunds / 2:,.0f} extra -- "
-        f"roughly {((gross_sales * 0.10 + free_ship_count * avg_outbound_label + total_refunds / 2) / etsy_net * 100):.0f}% profit increase without a single extra sale." if etsy_net > 0 else
+        f"Price increase + refund reduction alone = ~${gross_sales * 0.10 + total_refunds / 2:,.0f} extra." if etsy_net > 0 else
         f"Focus on reducing costs first -- shipping and refunds are the biggest levers.",
         "info"))
 
@@ -2589,8 +2604,8 @@ def _build_chat_context():
     # Shipping
     lines.append("\n=== SHIPPING ===")
     lines.append(f"Total shipping cost: ${total_shipping_cost:,.2f}")
-    lines.append(f"Buyers paid: UNKNOWN (not in Etsy CSV)")
-    lines.append(f"Shipping P/L: UNKNOWN (depends on buyer-paid shipping amount)")
+    lines.append(f"Buyers paid for shipping: UNKNOWN (Etsy CSV does not include this)")
+    lines.append(f"Shipping P/L: UNKNOWN (requires buyer-paid shipping data)")
     lines.append(f"USPS outbound: {usps_outbound_count} labels, ${usps_outbound:,.2f} (avg ${avg_outbound_label:.2f})")
     lines.append(f"USPS returns: {usps_return_count} labels, ${usps_return:,.2f}")
     lines.append(f"Asendia (intl): {asendia_count} labels, ${asendia_labels:,.2f}")
@@ -2718,9 +2733,6 @@ def _build_chat_context():
     # UNAVAILABLE section
     lines.append("\n\n=== UNAVAILABLE DATA (do NOT make up values for these) ===")
     lines.append("")
-    lines.append("Buyer-Paid Shipping: NOT in Etsy Payments CSV (only the 6.5% fee is recorded)")
-    lines.append("Shipping Profit/Loss: Cannot be calculated without buyer-paid amounts")
-    lines.append("Shipping Margin: Cannot be calculated without buyer-paid amounts")
     lines.append("Refund Buyer Shipping: NOT in Etsy Payments CSV")
     lines.append("Per-Order Label Costs: Labels don't carry order numbers")
     lines.append("Per-Order COGS: No link between inventory purchases and specific orders")
@@ -2878,20 +2890,19 @@ def _chatbot_answer_inner(question):
                 f"**Paid vs Free Shipping:**\n\n"
                 f"- Orders with paid shipping: {paid_ship_count}\n"
                 f"- Orders with free shipping: {free_ship_count}\n\n"
-                f"**Note:** Buyer-paid shipping amounts are NOT available in the Etsy CSV. "
-                f"Only the transaction fee on shipping is recorded — the actual amount buyers paid is unknown.\n\n"
-                f"**Known costs:**\n"
+                f"**Buyer-paid shipping:** UNKNOWN (Etsy CSV does not include this data)\n\n"
+                f"**Costs:**\n"
                 f"- Avg outbound label: ${avg_outbound_label:.2f}\n"
-                f"- Total label spend: ${total_shipping_cost:,.2f}"
+                f"- Total label spend: ${total_shipping_cost:,.2f}\n\n"
+                f"**P/L:** UNKNOWN (requires buyer-paid shipping data)"
             )
 
         if any(w in q for w in ["profit", "loss", "making", "losing"]):
             return (
-                f"**Shipping Profit/Loss:** UNKNOWN\n\n"
-                f"Buyer-paid shipping amounts are not available in the Etsy Payments CSV. "
-                f"We can only see the fee Etsy charged on shipping, not what the buyer paid.\n\n"
-                f"**What we DO know (verified from source records):**\n"
-                f"- Total label costs: ${total_shipping_cost:,.2f}\n"
+                f"**Shipping Profit/Loss:** UNKNOWN (requires buyer-paid shipping data)\n\n"
+                f"Buyer-paid shipping amount is not available in Etsy CSV. "
+                f"Labels cost ${total_shipping_cost:,.2f}.\n\n"
+                f"**Label breakdown:**\n"
                 f"- USPS outbound: ${usps_outbound:,.2f} ({usps_outbound_count} labels, avg ${avg_outbound_label:.2f})\n"
                 f"- USPS returns: ${usps_return:,.2f} ({usps_return_count} labels)\n"
                 f"- Asendia (intl): ${asendia_labels:,.2f} ({asendia_count} labels)\n"
@@ -2901,10 +2912,10 @@ def _chatbot_answer_inner(question):
 
         return (
             f"**Shipping Overview:**\n\n"
-            f"- Total shipping cost (VERIFIED): ${total_shipping_cost:,.2f}\n"
-            f"- Buyers paid for shipping: UNKNOWN (not in Etsy CSV)\n"
-            f"- Shipping P/L: UNKNOWN\n\n"
-            f"**Label breakdown (VERIFIED):**\n"
+            f"- Buyer-paid shipping: UNKNOWN (not in Etsy CSV)\n"
+            f"- Total label cost: ${total_shipping_cost:,.2f}\n"
+            f"- Shipping P/L: UNKNOWN (requires buyer-paid shipping data)\n\n"
+            f"**Label breakdown:**\n"
             f"- USPS outbound: {usps_outbound_count} labels, ${usps_outbound:,.2f} (avg ${avg_outbound_label:.2f})\n"
             f"- USPS returns: {usps_return_count} labels, ${usps_return:,.2f}\n"
             f"- Asendia (intl): {asendia_count} labels, ${asendia_labels:,.2f}\n"
@@ -3492,7 +3503,8 @@ _recompute_tax_years()
 def _recompute_valuation():
     global _hs_cash, _hs_debt, _hs_diversity, _hs_growth, _hs_profit, _hs_shipping, _prod_count, _top3_conc, _val_annualize, _val_growth_pct, _val_months_operating, _val_r2, _val_sales_trend, val_annual_etsy_net, val_annual_real_profit, val_annual_revenue, val_annual_sde, val_asset_val, val_blended_high, val_blended_low, val_blended_mid, val_equity, val_health_color, val_health_grade, val_health_score, val_monthly_expenses, val_monthly_profit_rate, val_monthly_run_rate, val_proj_12mo_revenue, val_rev_high, val_rev_low, val_rev_mid, val_risks, val_runway_months, val_sde, val_sde_high, val_sde_low, val_sde_mid, val_strengths, val_total_assets, val_total_liabilities
 
-    _val_months_operating = max(len(months_sorted), 1)
+    # Use actual days of data for accurate annualization (avoids partial-month bias)
+    _val_months_operating = round(max(days_active / 30.44, 1), 1)  # 30.44 = avg days/month
     _val_annualize = 12 / _val_months_operating
 
     # Annual metrics
@@ -3549,7 +3561,7 @@ def _recompute_valuation():
     _hs_diversity = min(15, max(0, (100 - _top3_conc) / 3))  # 0-15 pts
     _hs_cash = min(15, max(0, bank_cash_on_hand / val_monthly_run_rate * 5)) if val_monthly_run_rate > 0 else 0  # 0-15 pts: 3+ months runway = full
     _hs_debt = 10 if bb_cc_balance == 0 else max(0, 10 - bb_cc_balance / 500)  # 0-10 pts
-    _hs_shipping = 5 if shipping_profit is None else (10 if shipping_profit >= 0 else max(0, 10 + shipping_profit / 100))  # 0-10 pts
+    _hs_shipping = 5 if shipping_profit is None else (10 if shipping_profit >= 0 else max(0, 10 + shipping_profit / 100))  # 0-10 pts; None = neutral
     val_health_score = round(min(100, _hs_profit + _hs_growth + _hs_diversity + _hs_cash + _hs_debt + _hs_shipping))
     val_health_grade = "A" if val_health_score >= 80 else "B" if val_health_score >= 60 else "C" if val_health_score >= 40 else "D"
     val_health_color = GREEN if val_health_score >= 80 else TEAL if val_health_score >= 60 else ORANGE if val_health_score >= 40 else RED
@@ -3586,7 +3598,7 @@ def _recompute_valuation():
     # Burn rate (monthly expenses) — Etsy costs + non-overlapping bank expenses only
     _val_non_etsy_cats = ["Craft Supplies", "Subscriptions", "AliExpress Supplies", "Business Credit Card"]
     _val_bank_additional = sum(bank_by_cat.get(c, 0) for c in _val_non_etsy_cats)
-    val_monthly_expenses = (total_fees + total_shipping_cost + total_marketing + total_refunds + total_taxes + total_buyer_fees + _val_bank_additional + total_inventory_cost) / _val_months_operating
+    val_monthly_expenses = (total_fees + total_shipping_cost + total_marketing + total_refunds + total_taxes + total_buyer_fees + _val_bank_additional + true_inventory_cost) / _val_months_operating
     val_runway_months = bank_cash_on_hand / val_monthly_expenses if val_monthly_expenses > 0 else 99
 
 
@@ -3604,8 +3616,18 @@ def money(val, sign=True):
 
 
 def _compute_income_tax(taxable_income, year=2026):
-    """Compute federal income tax using progressive brackets (single filer, 2026).
-    Still ESTIMATED — doesn't know filing status, household income, state taxes, deductions."""
+    """ESTIMATE: Federal income tax using progressive brackets.
+
+    ASSUMPTIONS (may not match your situation):
+    - Single filer (could be MFJ, HoH, etc.)
+    - No other household income
+    - Standard deduction only
+    - Federal only (no state/local tax)
+    - 2026 bracket amounts
+
+    Missing data needed for accuracy: filing status, total household income,
+    state of residence, itemized deductions. Use actual 1040 or tax software.
+    """
     if taxable_income <= 0:
         return 0.0
     brackets = [
@@ -3678,6 +3700,19 @@ def section(title, children, color=ORANGE):
 
 
 def row_item(label, amount, indent=0, bold=False, color=WHITE, neg_color=RED):
+    if amount is None:
+        # Show UNKNOWN for metrics that can't be computed
+        style = {"display": "flex", "justifyContent": "space-between",
+                 "padding": "4px 0", "borderBottom": "1px solid #ffffff10",
+                 "marginLeft": f"{indent * 24}px"}
+        if bold:
+            style["fontWeight"] = "bold"
+            style["borderBottom"] = "2px solid #ffffff30"
+            style["padding"] = "8px 0"
+        return html.Div([
+            html.Span(label, style={"color": color, "fontSize": "13px"}),
+            html.Span("UNKNOWN", style={"color": ORANGE, "fontFamily": "monospace", "fontSize": "13px"}),
+        ], style=style)
     display_color = neg_color if amount < 0 else color
     style = {
         "display": "flex", "justifyContent": "space-between",
@@ -4263,8 +4298,11 @@ def _rebuild_all_charts():
         textposition="top center", textfont=dict(color=CYAN, size=10),
         line=dict(color=CYAN, width=3), marker=dict(size=8)))
     make_chart(cashflow_fig, 340)
-    cashflow_fig.update_layout(title="Cash Flow by Month (Bank Deposits vs Expenses)", barmode="relative",
+    cashflow_fig.update_layout(title="CASH BASIS — Bank Deposits vs Expenses by Month", barmode="relative",
                                yaxis_title="Amount ($)")
+    cashflow_fig.add_annotation(text="Cash flow = actual bank deposits minus actual bank debits. Not accrual-basis profit.",
+                                xref="paper", yref="paper", x=0.5, y=1.08, showarrow=False,
+                                font=dict(size=10, color=GRAY), xanchor="center")
 
     # 17) Break-even analysis
     _monthly_fixed = (bank_biz_expense_total + total_marketing) / _val_months_operating if _val_months_operating else 0
@@ -7454,9 +7492,9 @@ def api_pnl():
             "total_fees": round(total_fees, 2),
         },
         "shipping": {
-            "buyer_paid": round(buyer_paid_shipping, 2),
+            "buyer_paid": None,  # UNKNOWN — not in Etsy CSV
             "label_costs": round(total_shipping_cost, 2),
-            "profit_loss": round(shipping_profit, 2),
+            "profit_loss": None,  # UNKNOWN — depends on buyer_paid
         },
         "marketing": {
             "etsy_ads": round(etsy_ads, 2),
@@ -7699,10 +7737,10 @@ def api_shipping():
     """Return detailed shipping analysis."""
     return _add_cors_headers(flask.jsonify({
         "summary": {
-            "buyer_paid": round(buyer_paid_shipping, 2),
+            "buyer_paid": None,  # UNKNOWN — not in Etsy CSV
             "label_costs": round(total_shipping_cost, 2),
-            "profit_loss": round(shipping_profit, 2),
-            "margin": round(shipping_margin, 1),
+            "profit_loss": None,  # UNKNOWN — depends on buyer_paid
+            "margin": None,  # UNKNOWN — depends on buyer_paid
         },
         "labels": {
             "usps_outbound": round(usps_outbound, 2),
@@ -7914,44 +7952,12 @@ def api_reconciliation():
 
 @server.route("/api/reload")
 def api_reload():
-    """Force-reload all data from Supabase. Use after migrating data to refresh Railway."""
+    """Force-reload all data from Supabase. Use after migrating data to refresh Railway.
+
+    Delegates to the shared rebuild helpers (_rebuild_etsy_derived, _rebuild_bank_derived)
+    and _cascade_reload so financial metric computation is not duplicated here.
+    """
     global DATA, CONFIG, INVOICES, BANK_TXNS
-    global sales_df, fee_df, ship_df, mkt_df, refund_df, tax_df
-    global deposit_df, buyer_fee_df
-    global gross_sales, total_refunds, net_sales, total_fees, total_fees_gross
-    global total_shipping_cost, total_marketing, total_taxes, total_payments
-    global etsy_net, order_count, avg_order, etsy_net_margin
-    global total_buyer_fees, etsy_net_earned, etsy_total_deposited
-    global etsy_balance_calculated, etsy_csv_gap, etsy_balance
-    global bank_deposits, bank_debits
-    global bank_total_deposits, bank_total_debits, bank_net_cash
-    global bank_by_cat, bank_monthly, bank_statement_count
-    global bank_tax_deductible, bank_personal, bank_pending
-    global bank_biz_expense_total, bank_all_expenses, bank_cash_on_hand
-    global bank_owner_draw_total, real_profit, real_profit_margin
-    global tulsa_draws, texas_draws, tulsa_draw_total, texas_draw_total
-    global draw_diff, draw_owed_to
-    global bank_txns_sorted, bank_running
-    global bb_cc_payments, bb_cc_total_paid, bb_cc_balance, bb_cc_available
-    global _bank_cat_color_map, _bank_acct_gap, _bank_no_receipt, _bank_amazon_txns
-    global monthly_sales, monthly_fees, monthly_shipping, monthly_marketing
-    global monthly_refunds, monthly_taxes, monthly_raw_fees, monthly_raw_shipping
-    global monthly_raw_marketing, monthly_raw_refunds, monthly_net_revenue
-    global monthly_raw_taxes, monthly_raw_buyer_fees, monthly_raw_payments
-    global daily_sales, daily_orders, daily_df, weekly_aov
-    global monthly_order_counts, monthly_aov, monthly_profit_per_order
-    global months_sorted, days_active
-    global listing_fees, transaction_fees_product, transaction_fees_shipping
-    global processing_fees, credit_transaction, credit_listing, credit_processing
-    global share_save, total_credits
-    global etsy_ads, offsite_ads_fees, offsite_ads_credits
-    global usps_outbound, usps_outbound_count, usps_return, usps_return_count
-    global asendia_labels, asendia_count, ship_adjustments, ship_adjust_count
-    global ship_credits, ship_credit_count, ship_insurance, ship_insurance_count
-    global buyer_paid_shipping, shipping_profit, shipping_margin
-    global paid_ship_count, free_ship_count, avg_outbound_label
-    global product_fee_totals, product_revenue_est
-    global profit, profit_margin, receipt_cogs_outside_bank, bank_amazon_inv
 
     try:
         # 1. Reload raw data from Supabase
@@ -7961,258 +7967,14 @@ def api_reload():
         INVOICES = sb["INVOICES"]
         BANK_TXNS = sb["BANK_TXNS"]
 
-        # 2. Rebuild Etsy derived metrics (mirrors _reload_etsy_data logic)
-        sales_df = DATA[DATA["Type"] == "Sale"]
-        fee_df = DATA[DATA["Type"] == "Fee"]
-        ship_df = DATA[DATA["Type"] == "Shipping"]
-        mkt_df = DATA[DATA["Type"] == "Marketing"]
-        refund_df = DATA[DATA["Type"] == "Refund"]
-        tax_df = DATA[DATA["Type"] == "Tax"]
-        deposit_df = DATA[DATA["Type"] == "Deposit"]
-        buyer_fee_df = DATA[DATA["Type"] == "Buyer Fee"]
-        payment_df = DATA[DATA["Type"] == "Payment"]
+        # 2. Rebuild Etsy-derived DataFrames, aggregations, and fee/shipping breakdowns
+        _rebuild_etsy_derived()
 
-        gross_sales = sales_df["Net_Clean"].sum()
-        total_refunds = abs(refund_df["Net_Clean"].sum())
-        net_sales = gross_sales - total_refunds
-        total_fees = abs(fee_df["Net_Clean"].sum())
-        total_shipping_cost = abs(ship_df["Net_Clean"].sum())
-        total_marketing = abs(mkt_df["Net_Clean"].sum())
-        total_taxes = abs(tax_df["Net_Clean"].sum())
-        total_buyer_fees = abs(buyer_fee_df["Net_Clean"].sum()) if len(buyer_fee_df) else 0.0
-        total_payments = payment_df["Net_Clean"].sum() if len(payment_df) else 0.0
-        etsy_net_earned = (gross_sales - total_fees - total_shipping_cost
-                           - total_marketing - total_refunds - total_taxes - total_buyer_fees + total_payments)
-        etsy_net = etsy_net_earned
-        order_count = len(sales_df)
-        avg_order = gross_sales / order_count if order_count else 0
-        etsy_net_margin = (etsy_net / gross_sales * 100) if gross_sales else 0
+        # 3. Rebuild bank-derived metrics (running balance, BB CC, bank computed)
+        _rebuild_bank_derived()
 
-        # Monthly aggregations
-        monthly_sales = sales_df.groupby("Month")["Net_Clean"].sum()
-        monthly_fees = fee_df.groupby("Month")["Net_Clean"].sum().abs()
-        monthly_shipping = ship_df.groupby("Month")["Net_Clean"].sum().abs()
-        monthly_marketing = mkt_df.groupby("Month")["Net_Clean"].sum().abs()
-        monthly_refunds = refund_df.groupby("Month")["Net_Clean"].sum().abs()
-        monthly_taxes = tax_df.groupby("Month")["Net_Clean"].sum().abs()
-        months_sorted = sorted(monthly_sales.index.tolist())
-
-        # Monthly raw metrics (with sign, for monthly_net_revenue)
-        monthly_raw_fees = fee_df.groupby("Month")["Net_Clean"].sum()
-        monthly_raw_shipping = ship_df.groupby("Month")["Net_Clean"].sum()
-        monthly_raw_marketing = mkt_df.groupby("Month")["Net_Clean"].sum()
-        monthly_raw_refunds = refund_df.groupby("Month")["Net_Clean"].sum()
-        monthly_raw_taxes = tax_df.groupby("Month")["Net_Clean"].sum()
-        monthly_raw_buyer_fees = buyer_fee_df.groupby("Month")["Net_Clean"].sum()
-        monthly_raw_payments = payment_df.groupby("Month")["Net_Clean"].sum()
-
-        monthly_net_revenue = {}
-        for m in months_sorted:
-            monthly_net_revenue[m] = (
-                monthly_sales.get(m, 0)
-                + monthly_raw_fees.get(m, 0)
-                + monthly_raw_shipping.get(m, 0)
-                + monthly_raw_marketing.get(m, 0)
-                + monthly_raw_refunds.get(m, 0)
-                + monthly_raw_taxes.get(m, 0)
-                + monthly_raw_buyer_fees.get(m, 0)
-                + monthly_raw_payments.get(m, 0)
-            )
-
-        # Daily aggregations
-        daily_sales = sales_df.groupby(sales_df["Date_Parsed"].dt.date)["Net_Clean"].sum()
-        daily_orders = sales_df.groupby(sales_df["Date_Parsed"].dt.date).size()
-        if len(DATA) > 0:
-            _d0 = DATA["Date_Parsed"].min()
-            _d1 = DATA["Date_Parsed"].max()
-            days_active = (_d1 - _d0).days + 1 if pd.notna(_d0) and pd.notna(_d1) else 1
-        else:
-            days_active = 1
-
-        # 3. Rebuild bank derived metrics (mirrors _reload_bank_data logic)
-        bank_deposits = [t for t in BANK_TXNS if t["type"] == "deposit"]
-        bank_debits = [t for t in BANK_TXNS if t["type"] == "debit"]
-        bank_total_deposits = sum(t["amount"] for t in bank_deposits)
-        bank_total_debits = sum(t["amount"] for t in bank_debits)
-        bank_net_cash = bank_total_deposits - bank_total_debits
-
-        # Etsy balance = auto-calc + pre-CSV starting balance
-        _dep_total = 0.0
-        for _, _dr in deposit_df.iterrows():
-            _m = _re_mod.search(r'([\d,]+\.\d+)', str(_dr.get("Title", "")))
-            if _m:
-                _dep_total += float(_m.group(1).replace(",", ""))
-        _starting_bal = float(CONFIG.get("etsy_starting_balance", 0))
-        etsy_balance = max(0, round(DATA["Net_Clean"].sum() - _dep_total + _starting_bal, 2))
-        etsy_total_deposited = etsy_pre_capone_deposits + bank_total_deposits
-        etsy_balance_calculated = etsy_net_earned - etsy_total_deposited
-        etsy_csv_gap = round(etsy_balance_calculated - etsy_balance, 2)
-
-        bank_by_cat = {}
-        for t in bank_debits:
-            cat = t["category"]
-            bank_by_cat[cat] = bank_by_cat.get(cat, 0) + t["amount"]
-        bank_by_cat = dict(sorted(bank_by_cat.items(), key=lambda x: -x[1]))
-
-        bank_monthly = {}
-        for t in BANK_TXNS:
-            parts = t["date"].split("/")
-            month_key = f"{parts[2]}-{parts[0]}"
-            if month_key not in bank_monthly:
-                bank_monthly[month_key] = {"deposits": 0, "debits": 0}
-            if t["type"] == "deposit":
-                bank_monthly[month_key]["deposits"] += t["amount"]
-            else:
-                bank_monthly[month_key]["debits"] += t["amount"]
-
-        bank_tax_deductible = sum(amt for cat, amt in bank_by_cat.items() if cat in BANK_TAX_DEDUCTIBLE)
-        bank_personal = bank_by_cat.get("Personal", 0)
-        bank_pending = bank_by_cat.get("Pending", 0)
-
-        _biz_cats = ["Shipping", "Craft Supplies", "Etsy Fees", "Subscriptions",
-                     "AliExpress Supplies", "Business Credit Card"]
-        bank_biz_expense_total = sum(bank_by_cat.get(c, 0) for c in _biz_cats)
-        bank_all_expenses = bank_by_cat.get("Amazon Inventory", 0) + bank_biz_expense_total
-        bank_cash_on_hand = bank_net_cash + etsy_balance
-        bank_owner_draw_total = sum(v for k, v in bank_by_cat.items() if k.startswith("Owner Draw"))
-        real_profit = bank_cash_on_hand + bank_owner_draw_total
-        real_profit_margin = (real_profit / gross_sales * 100) if gross_sales else 0
-
-        tulsa_draws = [t for t in bank_debits if t["category"] == "Owner Draw - Tulsa"]
-        texas_draws = [t for t in bank_debits if t["category"] == "Owner Draw - Texas"]
-        tulsa_draw_total = sum(t["amount"] for t in tulsa_draws)
-        texas_draw_total = sum(t["amount"] for t in texas_draws)
-        draw_diff = abs(tulsa_draw_total - texas_draw_total)
-        draw_owed_to = "Braden" if tulsa_draw_total > texas_draw_total else "TJ"
-
-        bank_txns_sorted = sorted(BANK_TXNS, key=lambda x: (_parse_bank_date(x["date"]),
-                                  0 if x["type"] == "deposit" else 1))
-        bank_running = []
-        _bal = 0.0
-        for t in bank_txns_sorted:
-            if t["type"] == "deposit":
-                _bal += t["amount"]
-            else:
-                _bal -= t["amount"]
-            bank_running.append({**t, "_balance": round(_bal, 2)})
-
-        _bank_cat_color_map, _bank_acct_gap, _bank_no_receipt, _bank_amazon_txns = _get_bank_computed()
-
-        bb_cc_payments = [{"date": t["date"], "desc": t["desc"], "amount": t["amount"]}
-                          for t in BANK_TXNS if t["category"] == "Business Credit Card"
-                          and "BEST BUY" in t.get("desc", "").upper()]
-        bb_cc_total_paid = sum(p["amount"] for p in bb_cc_payments)
-        bb_cc_balance = bb_cc_total_charged - bb_cc_total_paid
-        bb_cc_available = bb_cc_limit - bb_cc_balance
-
-        # 4. Profit
-        bank_amazon_inv = bank_by_cat.get("Amazon Inventory", 0)
-        receipt_cogs_outside_bank = 0
-        profit = real_profit
-        profit_margin = (profit / gross_sales * 100) if gross_sales else 0
-
-        # 5. Recompute fee/shipping/product breakdown (needed by charts)
-        listing_fees = abs(fee_df[fee_df["Title"].str.contains("Listing fee", na=False)]["Net_Clean"].sum())
-        transaction_fees_product = abs(
-            fee_df[
-                fee_df["Title"].str.startswith("Transaction fee:", na=False)
-                & ~fee_df["Title"].str.contains("Shipping", na=False)
-            ]["Net_Clean"].sum()
-        )
-        transaction_fees_shipping = abs(
-            fee_df[fee_df["Title"].str.contains("Transaction fee: Shipping", na=False)]["Net_Clean"].sum()
-        )
-        processing_fees = abs(fee_df[fee_df["Title"].str.contains("Processing fee", na=False)]["Net_Clean"].sum())
-        credit_transaction = fee_df[fee_df["Title"].str.startswith("Credit for transaction fee", na=False)]["Net_Clean"].sum()
-        credit_listing = fee_df[fee_df["Title"].str.startswith("Credit for listing fee", na=False)]["Net_Clean"].sum()
-        credit_processing = fee_df[fee_df["Title"].str.startswith("Credit for processing fee", na=False)]["Net_Clean"].sum()
-        share_save = fee_df[fee_df["Title"].str.contains("Share & Save", na=False)]["Net_Clean"].sum()
-        total_credits = credit_transaction + credit_listing + credit_processing + share_save
-        total_fees_gross = listing_fees + transaction_fees_product + transaction_fees_shipping + processing_fees
-        etsy_ads = abs(mkt_df[mkt_df["Title"].str.contains("Etsy Ads", na=False)]["Net_Clean"].sum())
-        offsite_ads_fees = abs(
-            mkt_df[
-                mkt_df["Title"].str.contains("Offsite Ads", na=False)
-                & ~mkt_df["Title"].str.contains("Credit", na=False)
-            ]["Net_Clean"].sum()
-        )
-        offsite_ads_credits = mkt_df[mkt_df["Title"].str.contains("Credit for Offsite", na=False)]["Net_Clean"].sum()
-        usps_outbound = abs(ship_df[ship_df["Title"] == "USPS shipping label"]["Net_Clean"].sum())
-        usps_outbound_count = len(ship_df[ship_df["Title"] == "USPS shipping label"])
-        usps_return = abs(ship_df[ship_df["Title"] == "USPS return shipping label"]["Net_Clean"].sum())
-        usps_return_count = len(ship_df[ship_df["Title"] == "USPS return shipping label"])
-        asendia_labels = abs(ship_df[ship_df["Title"].str.contains("Asendia", na=False)]["Net_Clean"].sum())
-        asendia_count = len(ship_df[ship_df["Title"].str.contains("Asendia", na=False)])
-        ship_adjustments = abs(ship_df[ship_df["Title"].str.contains("Adjustment", na=False)]["Net_Clean"].sum())
-        ship_adjust_count = len(ship_df[ship_df["Title"].str.contains("Adjustment", na=False)])
-        ship_credits = ship_df[ship_df["Title"].str.contains("Credit for", na=False)]["Net_Clean"].sum()
-        ship_credit_count = len(ship_df[ship_df["Title"].str.contains("Credit for", na=False)])
-        ship_insurance = abs(ship_df[ship_df["Title"].str.contains("insurance", case=False, na=False)]["Net_Clean"].sum())
-        ship_insurance_count = len(ship_df[ship_df["Title"].str.contains("insurance", case=False, na=False)])
-        ship_fee_gross = abs(
-            fee_df[fee_df["Title"].str.contains("Transaction fee: Shipping", na=False)]["Net_Clean"].sum()
-        )
-        ship_fee_credits_amt = abs(
-            fee_df[fee_df["Title"].str.contains("Credit for transaction fee on shipping", na=False)]["Net_Clean"].sum()
-        )
-        buyer_paid_shipping = None   # not in Etsy CSV
-        shipping_profit = None
-        shipping_margin = None
-        ship_fee_rows = fee_df[fee_df["Title"].str.contains("Transaction fee: Shipping", na=False)].copy()
-        orders_with_paid_shipping = set(ship_fee_rows["Info"].dropna())
-        all_order_ids = set(sales_df["Title"].str.extract(r"(Order #\d+)", expand=False).dropna())
-        orders_free_shipping = all_order_ids - orders_with_paid_shipping
-        paid_ship_count = len(orders_with_paid_shipping & all_order_ids)
-        free_ship_count = len(orders_free_shipping)
-        avg_outbound_label = usps_outbound / usps_outbound_count if usps_outbound_count else 0
-        _listing_aliases = CONFIG.get("listing_aliases", {})
-        prod_fees = fee_df[
-            fee_df["Title"].str.startswith("Transaction fee:", na=False)
-            & ~fee_df["Title"].str.contains("Shipping", na=False)
-        ].copy()
-        prod_fees["Product"] = prod_fees["Title"].str.replace("Transaction fee: ", "", regex=False).apply(
-            lambda n: _normalize_product_name(n, aliases=_listing_aliases)
-        )
-        product_fee_totals = prod_fees.groupby("Product")["Net_Clean"].sum().abs().sort_values(ascending=False)
-        _order_to_product = prod_fees.dropna(subset=["Info"]).drop_duplicates(subset=["Info"]).set_index("Info")["Product"]
-        _sales_with_product = sales_df.copy()
-        _sales_with_product["Product"] = _sales_with_product["Title"].str.extract(r"(Order #\d+)", expand=False).map(_order_to_product)
-        _sales_with_product = _sales_with_product.dropna(subset=["Product"])
-        _sales_with_product["Product"] = _merge_product_prefixes(_sales_with_product["Product"])
-        if len(_sales_with_product) > 0:
-            product_revenue_est = _sales_with_product.groupby("Product")["Net_Clean"].sum().sort_values(ascending=False).round(2)
-        else:
-            product_revenue_est = pd.Series(dtype=float)
-
-        # Monthly order counts and AOV
-        monthly_order_counts = sales_df.groupby("Month")["Net_Clean"].count()
-        monthly_aov = {}
-        monthly_profit_per_order = {}
-        for m in months_sorted:
-            oc = monthly_order_counts.get(m, 0)
-            if oc > 0:
-                monthly_aov[m] = monthly_sales.get(m, 0) / oc
-                monthly_profit_per_order[m] = monthly_net_revenue.get(m, 0) / oc
-            else:
-                monthly_aov[m] = 0
-                monthly_profit_per_order[m] = 0
-
-        # 6. Rebuild charts and analytics
-        _recompute_shipping_details()
-        _recompute_analytics()
-        _recompute_tax_years()
-        _recompute_valuation()
-        _rebuild_all_charts()
-        try:
-            from agents.governance import run_governance_async
-            run_governance_async()
-        except ImportError:
-            pass
-
-        # Parity check: compare api_reload values vs expected
-        _check = round(DATA["Net_Clean"].sum(), 2)
-        if abs(round(etsy_net_earned, 2) - _check) > 0.01:
-            print(f"api_reload PARITY WARNING: etsy_net_earned mismatch")
+        # 4. Run pipeline + publish financial metrics + recompute charts/analytics/tax/valuation
+        _cascade_reload("supabase")
 
         return flask.jsonify({
             "status": "ok",
@@ -8333,10 +8095,10 @@ def api_charts_health_breakdown():
     """Health score breakdown for gauge charts."""
     sub_scores = {
         "Profit Margin": min(100, int(profit_margin * 3)) if profit_margin > 0 else 0,
-        "Revenue Trend": 100 if len(monthly_sales) >= 2 and list(monthly_sales.values())[-1] > list(monthly_sales.values())[-2] else 70,
+        "Revenue Trend": 100 if len(monthly_sales) >= 2 and monthly_sales.iloc[-1] > monthly_sales.iloc[-2] else 70,
         "Order Velocity": min(100, int((order_count / max(days_active, 1)) * 20)),
         "Fee Efficiency": max(0, 100 - int((total_fees / gross_sales * 100) if gross_sales > 0 else 0)),
-        "Shipping Economics": 100 if shipping_profit >= 0 else max(0, 100 + int(shipping_margin)),
+        "Shipping Economics": 50 if shipping_profit is None else (100 if shipping_profit >= 0 else max(0, 100 + int(shipping_margin))),
         "Cash Position": min(100, int((bank_cash_on_hand / (bank_all_expenses / 30 if bank_all_expenses > 0 else 1)) * 10)),
     }
 
@@ -8479,7 +8241,7 @@ def build_tab5_tax_forms():
         _d = TAX_YEARS[_yr]
         _gp = _d["gross_sales"] - _d["refunds"] - _d["cogs"]
         _td = (_d["net_fees"] + _d["shipping"] + _d["marketing"]
-               + _d["bank_biz_expense"] + _d["taxes_collected"] + _d["buyer_fees"])
+               + _d.get("bank_additional_expense", 0) + _d["taxes_collected"] + _d["buyer_fees"])
         _oi = _gp - _td
         _ps = _oi / 2
         _nse = _ps * 0.9235
@@ -8495,12 +8257,13 @@ def build_tab5_tax_forms():
     children.append(html.H3("TAX LIABILITY SUMMARY",
                             style={"color": CYAN, "margin": "0 0 10px 0",
                                    "borderBottom": f"2px solid {CYAN}33", "paddingBottom": "6px"}))
-    children.append(html.P("Estimated total tax owed per partner (2025 + 2026 YTD combined). "
-                           "Includes self-employment tax + estimated income tax (22% bracket).",
+    children.append(html.P("ESTIMATE: Total tax owed per partner (2025 + 2026 YTD combined). "
+                           "Includes self-employment tax + estimated income tax (progressive federal brackets). "
+                           "Assumes single filer, no other income, standard deduction. Use actual 1040/tax software for accuracy.",
                            style={"color": GRAY, "margin": "0 0 10px 0", "fontSize": "13px"}))
     children.append(html.Div([
         kpi_card("TJ OWES (tax)", money(_tj_total_tax), RED, f"Draws taken: {money(_tj_draws_all)}",
-                 f"TJ's estimated tax liability: self-employment tax (Social Security 12.4% + Medicare 2.9% on 92.35% of net earnings) plus estimated income tax (22% bracket on partnership share minus half of SE tax). Draws taken: {money(_tj_draws_all)}. Draws are NOT taxable -- they're just advances against your partnership share."),
+                 f"TJ's estimated tax liability: self-employment tax (Social Security 12.4% + Medicare 2.9% on 92.35% of net earnings) plus estimated income tax (progressive federal brackets on partnership share minus half of SE tax). Draws taken: {money(_tj_draws_all)}. Draws are NOT taxable -- they're just advances against your partnership share."),
         kpi_card("BRADEN OWES (tax)", money(_br_total_tax), RED, f"Draws taken: {money(_br_draws_all)}",
                  f"Braden's estimated tax liability: same calculation as TJ (50/50 partnership). SE tax + income tax on his share of net income. Draws taken: {money(_br_draws_all)}. Tax is owed on partnership income regardless of draws taken."),
         kpi_card("COMBINED TAX", money(_tj_total_tax + _br_total_tax), ORANGE, "Both partners total",
@@ -8690,7 +8453,7 @@ def build_tab5_tax_forms():
             p25 = TAX_YEARS[2025]
             gp25 = p25["gross_sales"] - p25["refunds"] - p25["cogs"]
             td25 = (p25["net_fees"] + p25["shipping"] + p25["marketing"]
-                    + p25["bank_biz_expense"] + p25["taxes_collected"] + p25["buyer_fees"])
+                    + p25.get("bank_additional_expense", 0) + p25["taxes_collected"] + p25["buyer_fees"])
             oi25 = gp25 - td25
             tj_beg_capital = oi25 / 2 - p25["tulsa_draws"]
             br_beg_capital = oi25 / 2 - p25["texas_draws"]
@@ -8790,7 +8553,7 @@ def build_tab5_tax_forms():
                             style={"color": CYAN, "margin": "20px 0 10px 0",
                                    "borderBottom": f"2px solid {CYAN}33", "paddingBottom": "6px"}))
     children.append(html.P("Quarterly estimated tax payments due from each partner. "
-                           "Includes SE tax + estimated income tax (using 22% bracket as approximation).",
+                           "Includes SE tax + estimated income tax (using progressive federal brackets).",
                            style={"color": GRAY, "margin": "0 0 10px 0", "fontSize": "13px"}))
 
     q_dates = {
@@ -8838,8 +8601,8 @@ def build_tab5_tax_forms():
             html.Div([
                 kpi_card("SE TAX", money(se_tax), RED, "Per partner",
                          f"Self-employment tax per partner: Social Security (12.4% on first ${ss_wage_base:,.0f}) + Medicare (2.9% on all earnings). Calculated on 92.35% of net self-employment income ({money(net_se)}). This replaces the employer/employee FICA split since you're self-employed."),
-                kpi_card("EST. INCOME TAX", money(est_income_tax), ORANGE, "22% bracket approx",
-                         f"Estimated federal income tax on partnership share ({money(partner_share)}) minus half of SE tax deduction ({money(se_deduction)}). Uses 22% marginal rate as approximation. Actual rate depends on total household income, filing status, and other deductions."),
+                kpi_card("EST. INCOME TAX", money(est_income_tax), ORANGE, "progressive federal brackets",
+                         f"Estimated federal income tax on partnership share ({money(partner_share)}) minus half of SE tax deduction ({money(se_deduction)}). Uses progressive 2026 federal brackets (10% through 37%). Actual rate depends on total household income, filing status, and other deductions."),
                 kpi_card("TOTAL ANNUAL", money(total_annual_tax), RED, "Per partner",
                          f"SE tax ({money(se_tax)}) + income tax ({money(est_income_tax)}) = {money(total_annual_tax)} per partner per year. This is what each partner needs to set aside for taxes."),
                 kpi_card("PER QUARTER", money(quarterly_payment), CYAN,
@@ -8855,7 +8618,7 @@ def build_tab5_tax_forms():
                 ], style={"borderBottom": f"2px solid {ORANGE}44"})),
                 html.Tbody(q_rows),
             ], style={"width": "100%", "borderCollapse": "collapse"}),
-            html.P(f"Note: Income tax estimate uses a flat 22% marginal rate as approximation. "
+            html.P(f"Note: Income tax estimate uses progressive 2026 federal brackets (10% through 37%). "
                    f"Actual rate depends on each partner's total taxable income and filing status.",
                    style={"color": DARKGRAY, "fontSize": "11px", "marginTop": "10px", "fontStyle": "italic"}),
         ], color=ORANGE))
@@ -8897,7 +8660,7 @@ def build_tab5_tax_forms():
         # SE tax deduction (deductible half)
         gross_profit = d["gross_sales"] - d["refunds"] - d["cogs"]
         total_deductions_calc = (d["net_fees"] + d["shipping"] + d["marketing"]
-                                 + d["bank_biz_expense"] + d["taxes_collected"] + d["buyer_fees"])
+                                 + d.get("bank_additional_expense", 0) + d["taxes_collected"] + d["buyer_fees"])
         ordinary_income = gross_profit - total_deductions_calc
         partner_share = ordinary_income / 2
         net_se = partner_share * 0.9235
@@ -8910,22 +8673,18 @@ def build_tab5_tax_forms():
                          + marketing_ded + buyer_fees_ded + taxes_collected_ded
                          + bank_craft + bank_ali + bank_subs + bank_etsy_fees)
 
-        # Potential missed deductions (estimates)
-        # Home office: IRS simplified = $5/sqft x 300sqft max = $1,500/yr
-        home_office_est = 1500 if yr == 2025 else int(1500 * (2 / 12))  # pro-rate for partial year
-        # Internet portion: ~$80/mo x 30% biz use
-        internet_est = 80 * 0.3 * (3 if yr == 2025 else 2)
-        # Phone portion: ~$60/mo x 20% biz use
-        phone_est = 60 * 0.2 * (3 if yr == 2025 else 2)
-        # Mileage: IRS 2025 rate $0.70/mi — estimate trips
-        mileage_rate = 0.70
-        est_biz_miles = 200 if yr == 2025 else 80
-        mileage_est = est_biz_miles * mileage_rate
+        # Potential missed deductions — UNKNOWN without supporting documents.
+        # All hardcoded guesses REMOVED. Users must provide actual documents to claim.
+        home_office_est = None   # Provide: lease/mortgage statement, office measurements
+        internet_est = None      # Provide: ISP bill, document business-use percentage
+        phone_est = None         # Provide: phone bill, document business-use percentage
+        mileage_rate = 0.70      # IRS 2025 rate (this is a fact, not an estimate)
+        est_biz_miles = None     # Provide: mileage log with odometer readings
+        mileage_est = None       # Provide: mileage log
         # Equipment depreciation / Section 179
-        # Can deduct 100% of equipment cost in year 1 using Section 179
-        section_179_est = bb_cc_asset_value if yr == 2025 else 0
+        section_179_est = bb_cc_asset_value if yr == 2025 else 0  # based on actual asset data
 
-        total_potential = home_office_est + internet_est + phone_est + mileage_est + section_179_est
+        total_potential = (section_179_est or 0)  # only Section 179 has actual data
         total_all_deductions = total_claimed + total_potential + (se_deduction * 2)  # both partners
 
         # Tax savings: SE rate (fixed) + marginal income tax rate (from brackets)
@@ -8942,25 +8701,29 @@ def build_tab5_tax_forms():
             kpi_card("TAX SAVINGS", money(total_claimed * effective_ded_rate), GREEN,
                      f"~{effective_ded_rate:.0%} effective rate",
                      f"Every $1 you deduct saves ~${effective_ded_rate:.2f} in combined SE tax + income tax. Total claimed ({money(total_claimed)}) x {effective_ded_rate:.0%} = {money(total_claimed * effective_ded_rate)} in tax you DON'T pay."),
-            kpi_card("POTENTIAL MISSED", money(total_potential), ORANGE, "Unclaimed deductions",
-                     f"Estimated additional deductions you may qualify for but haven't claimed: home office, internet, phone, mileage, Section 179 equipment. These are ESTIMATES — track actual expenses to claim them."),
-            kpi_card("EXTRA SAVINGS", money(total_potential * effective_ded_rate), ORANGE,
+            kpi_card("POTENTIAL MISSED", money(total_potential) if total_potential else "UNKNOWN", ORANGE,
+                     "Provide docs to claim",
+                     f"Deductions you may qualify for: home office, internet, phone, mileage. Provide lease/ISP bill/phone bill/mileage log to claim. Section 179 equipment: {money(section_179_est) if section_179_est else 'N/A'}."),
+            kpi_card("EXTRA SAVINGS", money(total_potential * effective_ded_rate) if total_potential else "UNKNOWN", ORANGE,
                      "If you claim all",
-                     f"If you claim all potential missed deductions ({money(total_potential)}), you'd save an additional {money(total_potential * effective_ded_rate)} in taxes. That's money back in your pocket."),
+                     f"Provide supporting documents (lease, ISP bill, phone bill, mileage log) to calculate actual additional deductions and tax savings."),
         ], style={"display": "flex", "gap": "8px", "marginBottom": "12px", "flexWrap": "wrap"}))
 
         # Deduction table — CLAIMED
         def ded_row(desc, amount, irs_line="", note="", is_header=False, is_missed=False):
             bg = f"{ORANGE}08" if is_missed else "transparent"
             border_style = f"2px solid {GREEN}44" if is_header else "1px solid #ffffff10"
-            icon = "✓ " if not is_missed and amount > 0 else "⚠ " if is_missed else ""
+            is_unknown = amount is None
+            icon = "✓ " if not is_missed and not is_unknown and amount > 0 else "⚠ " if is_missed else ""
+            amount_text = "UNKNOWN" if is_unknown else (money(amount) if amount > 0 else "—")
+            amount_color = RED if is_unknown else (GREEN if amount and amount > 0 and not is_missed else ORANGE if is_missed and amount and amount > 0 else DARKGRAY)
             return html.Div([
                 html.Span(f"{icon}{desc}", style={"flex": "3", "color": WHITE if not is_header else GREEN,
                            "fontSize": "13px", "fontWeight": "bold" if is_header else "normal"}),
                 html.Span(irs_line, style={"flex": "1", "color": GRAY, "fontSize": "11px", "textAlign": "center"}),
-                html.Span(money(amount) if amount > 0 else "—", style={
+                html.Span(amount_text, style={
                     "flex": "1", "textAlign": "right", "fontFamily": "monospace", "fontSize": "13px",
-                    "color": GREEN if amount > 0 and not is_missed else ORANGE if is_missed and amount > 0 else DARKGRAY,
+                    "color": amount_color,
                     "fontWeight": "bold" if is_header else "normal"}),
                 html.Span(note, style={"flex": "2", "color": DARKGRAY, "fontSize": "11px", "paddingLeft": "10px"}),
             ], style={"display": "flex", "alignItems": "center", "padding": "5px 0",
@@ -9022,20 +8785,28 @@ def build_tab5_tax_forms():
                 "color": ORANGE, "fontWeight": "bold", "fontSize": "13px", "marginBottom": "6px"}),
             html.P("These are common small-business deductions you may qualify for. Track these expenses to claim them.",
                    style={"color": GRAY, "fontSize": "11px", "margin": "0 0 6px 0"}),
-            ded_row("  Home office (simplified method)", home_office_est, "8829", f"$5/sqft x up to 300 sqft = $1,500/yr", is_missed=True),
-            ded_row("  Internet (business portion)", internet_est, "1065 Ln 20", "~30% of monthly internet bill", is_missed=True),
-            ded_row("  Cell phone (business portion)", phone_est, "1065 Ln 20", "~20% of monthly phone bill", is_missed=True),
-            ded_row("  Business mileage", mileage_est, "1065 Ln 20", f"~{est_biz_miles} mi x ${mileage_rate}/mi (post office, supply runs)", is_missed=True),
-            ded_row("  Section 179: Equipment", section_179_est, "4562", "Deduct full equipment cost in year 1 (3D printers)" if section_179_est > 0 else "Equipment purchased in 2025", is_missed=True),
+            ded_row("  Home office (simplified method)", home_office_est, "8829",
+                    "PROVIDE: lease/mortgage statement + office sqft measurement", is_missed=True),
+            ded_row("  Internet (business portion)", internet_est, "1065 Ln 20",
+                    "PROVIDE: ISP bill + document business-use %", is_missed=True),
+            ded_row("  Cell phone (business portion)", phone_est, "1065 Ln 20",
+                    "PROVIDE: phone bill + document business-use %", is_missed=True),
+            ded_row("  Business mileage", mileage_est, "1065 Ln 20",
+                    f"PROVIDE: mileage log with odometer readings (IRS rate: ${mileage_rate}/mi)", is_missed=True),
+            ded_row("  Section 179: Equipment", section_179_est, "4562",
+                    "Deduct full equipment cost in year 1 (3D printers)" if section_179_est and section_179_est > 0
+                    else "Equipment purchased in 2025", is_missed=True),
 
             html.Div(style={"borderTop": f"2px solid {ORANGE}44", "margin": "6px 0"}),
             html.Div([
                 html.Span("POTENTIAL EXTRA DEDUCTIONS", style={"flex": "3", "color": ORANGE, "fontSize": "13px", "fontWeight": "bold"}),
                 html.Span("", style={"flex": "1"}),
-                html.Span(money(total_potential), style={"flex": "1", "textAlign": "right", "fontFamily": "monospace",
+                html.Span(money(total_potential) if total_potential else "UNKNOWN — provide docs above",
+                           style={"flex": "1", "textAlign": "right", "fontFamily": "monospace",
                            "fontSize": "13px", "color": ORANGE, "fontWeight": "bold"}),
-                html.Span(f"→ saves ~{money(total_potential * effective_ded_rate)} in tax", style={"flex": "2", "color": ORANGE,
-                           "fontSize": "11px", "paddingLeft": "10px"}),
+                html.Span(f"→ saves ~{money(total_potential * effective_ded_rate)} in tax" if total_potential
+                           else "→ provide documents to calculate savings",
+                           style={"flex": "2", "color": ORANGE, "fontSize": "11px", "paddingLeft": "10px"}),
             ], style={"display": "flex", "padding": "6px 0"}),
         ], color=GREEN))
 
@@ -9053,7 +8824,7 @@ def build_tab5_tax_forms():
     _combined_annual_income = sum(
         (TAX_YEARS[yr]["gross_sales"] - TAX_YEARS[yr]["refunds"] - TAX_YEARS[yr]["cogs"]
          - TAX_YEARS[yr]["net_fees"] - TAX_YEARS[yr]["shipping"] - TAX_YEARS[yr]["marketing"]
-         - TAX_YEARS[yr]["bank_biz_expense"] - TAX_YEARS[yr]["taxes_collected"] - TAX_YEARS[yr]["buyer_fees"]
+         - TAX_YEARS[yr].get("bank_additional_expense", 0) - TAX_YEARS[yr]["taxes_collected"] - TAX_YEARS[yr]["buyer_fees"]
          + TAX_YEARS[yr].get("payments", 0))
         for yr in (2025, 2026))
     _combined_partner_share = _combined_annual_income / 2
@@ -9162,8 +8933,8 @@ def build_tab5_tax_forms():
          f"At ${mileage_rate:.2f}/mi, even small trips add up fast"],
         TEAL))
 
-    # 5. Internet & phone deductions
-    _utility_savings = (internet_est + phone_est) * 2 * effective_ded_rate  # full year estimate
+    # 5. Internet & phone deductions — amounts UNKNOWN without bills
+    _utility_savings = 0  # was: (internet_est + phone_est) * 2 * effective_ded_rate — no bill data
     strategies.append(strategy_card(
         "Internet & Phone (Business Portion)", _utility_savings,
         "MEDIUM", "TRACK",
@@ -9235,11 +9006,12 @@ def build_tab5_tax_forms():
         html.Div([
             kpi_card("CURRENT TAX BILL", money(_combined_total_tax * 2), RED, "Both partners combined",
                      f"Total estimated tax liability for both partners across 2025 + 2026 YTD. This includes self-employment tax and estimated income tax using progressive federal brackets."),
-            kpi_card("MAX POTENTIAL SAVINGS", money(total_potential * effective_ded_rate * 2 + _scorp_savings),
-                     GREEN, "If all strategies applied",
-                     f"Maximum tax savings if you claim all missed deductions and implement all applicable strategies. Includes home office, mileage, utilities, equipment deduction, and structural optimization."),
-            kpi_card("EASIEST WIN", money(1500 * effective_ded_rate), GREEN, "Home office deduction",
-                     "The simplest deduction to claim with the biggest bang: $5/sqft x up to 300 sqft. Just need a dedicated workspace. Saves ~$542/year in taxes."),
+            kpi_card("MAX POTENTIAL SAVINGS",
+                     money(total_potential * effective_ded_rate * 2 + _scorp_savings) if total_potential else "UNKNOWN",
+                     GREEN, "Provide docs to calculate",
+                     f"Maximum tax savings requires providing supporting documents: lease/mortgage, ISP bill, phone bill, mileage log. Section 179 equipment deduction is based on actual asset data."),
+            kpi_card("EASIEST WIN", "PROVIDE DOCS", GREEN, "Home office deduction",
+                     "Provide lease/mortgage statement and office sqft measurement. IRS simplified method: $5/sqft x up to 300 sqft = max $1,500/yr deduction."),
             kpi_card("NEXT DEADLINE", _q1_due, ORANGE, f"Q1 payment: {money(_q1_amount)}/partner",
                      f"Next quarterly estimated tax payment due date. Pay {money(_q1_amount)} per partner to IRS via Form 1040-ES to avoid underpayment penalties (~8% interest)."),
         ], style={"display": "flex", "gap": "8px", "marginBottom": "14px", "flexWrap": "wrap"}),
@@ -9872,14 +9644,12 @@ def _build_health_checks():
                           f"Running low: {', '.join(low_names)}{'...' if len(low) > 5 else ''}"))
 
     # ── 8. Receipt vs Bank — count unmatched transactions ──
-    _unmatched_count = len([t for t in _bank_no_receipt
-                            if t.get("category") in ("Amazon Inventory", "AliExpress Supplies", "Craft Supplies")])
-    _unmatched_total = sum(t["amount"] for t in _bank_no_receipt
-                           if t.get("category") in ("Amazon Inventory", "AliExpress Supplies", "Craft Supplies"))
+    _unmatched_count = len(expense_missing_receipts)
+    _unmatched_total = sum(t["amount"] for t in expense_missing_receipts)
     if _unmatched_count > 0:
         todos.append((2, "\U0001f9fe", ORANGE,
-                      f"{_unmatched_count} bank charges (${_unmatched_total:,.0f}) without matching receipts",
-                      f"Upload invoice PDFs for these purchases in Data Hub → Inventory Receipts."))
+                      f"{_unmatched_count} bank expenses (${_unmatched_total:,.0f}) without matching receipts",
+                      f"Gap: ${expense_gap:,.2f}. Upload receipts in Data Hub → Inventory Receipts."))
 
     # ── 10. Etsy balance gap ──
     if abs(etsy_csv_gap) > 5:
@@ -10138,8 +9908,8 @@ def _compute_health_score():
     sub_scores["Data Quality"] = round(dq)
     weights["Data Quality"] = 0.05
 
-    # 8. Shipping Economics (5%) — unavailable without buyer-paid data
-    se = 50  # neutral score — buyer_paid_shipping not in Etsy CSV
+    # 8. Shipping Economics (5%) — based on shipping margin
+    se = 50 if shipping_profit is None else (100 if shipping_profit >= 0 else max(0, 100 + shipping_margin))
     sub_scores["Shipping Economics"] = round(se)
     weights["Shipping Economics"] = 0.05
 
@@ -10256,28 +10026,29 @@ def _generate_actions():
         if len(oos_df) > 0:
             avg_unit_cost = oos_df["unit_cost"].mean()
             reorder_cost = avg_unit_cost * len(oos_df)
-            # Estimate lost revenue: each OOS item = ~1 sale/week at avg order value
-            est_lost_weekly = len(oos_df) * avg_order * 0.5
+            # est_lost_weekly REMOVED — was len(oos_df) * avg_order * 0.5
+            # (count * avg * guess factor violates no-estimates rule)
+            # Missing data: per-listing view count, add-to-cart rate, historical sales velocity
             oos_names = list(oos_df["display_name"].values[:3])
             actions.append({
                 "priority": "HIGH",
                 "title": f"Restock {len(oos_df)} Out-of-Stock Items",
                 "reason": f"Items like {', '.join(n[:25] for n in oos_names)}{'...' if len(oos_df) > 3 else ''} "
-                          f"can't generate revenue until restocked.",
-                "impact": est_lost_weekly * 4,
+                          f"can't generate revenue until restocked. Revenue impact: UNKNOWN (no conversion data).",
+                "impact": None,  # was: est_lost_weekly * 4 — no data to estimate
                 "cost": reorder_cost,
                 "difficulty": "Easy",
             })
 
     # 2. Shipping cost awareness (can't know profit — buyer-paid unavailable)
+    # free_cost estimate REMOVED — was free_ship_count * avg_outbound_label (count * avg)
     if free_ship_count > 0 and avg_outbound_label > 0:
-        free_cost = free_ship_count * avg_outbound_label
         actions.append({
             "priority": "MEDIUM",
-            "title": f"Review Free Shipping — {free_ship_count} Orders Absorbed ~${free_cost:,.0f}",
-            "reason": f"Total label costs: ${total_shipping_cost:,.0f}. {free_ship_count} free-shipping orders "
-                      f"at avg ${avg_outbound_label:.2f}/label. Consider raising prices to offset.",
-            "impact": free_cost,
+            "title": f"Review Free Shipping — {free_ship_count} Orders (Label Cost UNKNOWN)",
+            "reason": f"Total label costs: ${total_shipping_cost:,.0f}. {free_ship_count} free-shipping orders. "
+                      f"Exact cost absorbed: UNKNOWN without per-order label matching. Consider raising prices to offset.",
+            "impact": None,  # was: free_ship_count * avg_outbound_label — no per-order data
             "cost": 0,
             "difficulty": "Easy",
         })
@@ -10354,8 +10125,8 @@ def _generate_actions():
                 "difficulty": "Easy",
             })
 
-    # Sort by estimated dollar impact (descending)
-    actions.sort(key=lambda a: a.get("impact", 0), reverse=True)
+    # Sort by dollar impact (descending); None impact sorts last
+    actions.sort(key=lambda a: a.get("impact") if a.get("impact") is not None else -1, reverse=True)
     return actions
 
 
@@ -10437,16 +10208,15 @@ def _detect_patterns():
             })
 
     # 5. Shipping cost awareness (buyer-paid unavailable)
+    # free_cost estimate REMOVED — was free_ship_count * avg_outbound_label
     if total_shipping_cost > 0 and free_ship_count > 0:
-        free_cost = free_ship_count * avg_outbound_label
-        if free_cost > total_shipping_cost * 0.3:
-            patterns.append({
-                "type": "Risk",
-                "insight": f"Free shipping absorbs ~${free_cost:,.0f} ({free_ship_count} orders). "
-                           f"Total label costs: ${total_shipping_cost:,.0f}. "
-                           f"Buyer-paid amount is unavailable from Etsy CSV — profit/loss cannot be calculated.",
-                "sources": ["Etsy Shipping"],
-            })
+        patterns.append({
+            "type": "Risk",
+            "insight": f"{free_ship_count} free-shipping orders absorb label costs (exact total UNKNOWN without per-order label matching). "
+                       f"Total label costs: ${total_shipping_cost:,.0f}. "
+                       f"Buyer-paid amount is unavailable from Etsy CSV — profit/loss cannot be calculated.",
+            "sources": ["Etsy Shipping"],
+        })
 
     # 6. Bank expense spikes vs Etsy revenue
     if bank_monthly and len(months_sorted) >= 3:
@@ -10651,9 +10421,11 @@ def _build_actions_section(actions):
                 "lineHeight": "1.5",
             }),
             html.Div([
-                html.Span(f"Impact: ${action.get('impact', 0):,.0f}", style={
-                    "color": GREEN, "fontSize": "11px", "fontWeight": "bold",
-                }),
+                html.Span(
+                    f"Impact: ${action['impact']:,.0f}" if action.get('impact') is not None else "Impact: UNKNOWN",
+                    style={"color": GREEN if action.get('impact') is not None else ORANGE,
+                           "fontSize": "11px", "fontWeight": "bold"},
+                ),
                 html.Span(f"  Cost: ${action.get('cost', 0):,.0f}", style={
                     "color": GRAY, "fontSize": "11px", "marginLeft": "12px",
                 }) if action.get("cost", 0) > 0 else html.Span(),
@@ -11705,19 +11477,66 @@ def build_tab3_financials():
                 ], style={"padding": "2px 0", "borderBottom": "1px solid #ffffff08"})
                   for c in ["Amazon Inventory"] + _biz_expense_cats if bank_by_cat.get(c, 0) > 0],
             ], bank_all_expenses),
-            # Split missing receipts: purchase receipts vs other categories
-            *[cat_card(
-                f"MISSING {cat.upper()} RECEIPTS ({len(items)})", "#b71c1c",
-                [html.Div([
-                    html.Span(f"${t['amount']:,.2f}", style={"color": RED, "fontFamily": "monospace", "fontSize": "10px", "width": "55px", "display": "inline-block"}),
-                    html.Span(t.get("date", ""), style={"color": GRAY, "fontSize": "9px", "width": "75px", "display": "inline-block"}),
-                    html.Span(t["desc"][:30], style={"color": WHITE, "fontSize": "10px"}),
-                ], style={"padding": "1px 0"}) for t in items],
-                sum(t["amount"] for t in items),
-            ) for cat, items in [
-                (cat, [t for t in _bank_no_receipt if t["category"] == cat])
-                for cat in dict.fromkeys(t["category"] for t in _bank_no_receipt)
-            ] if items],
+            # ── Expense Completeness: 3-pill KPI strip ──
+            html.Div([
+                html.Div([
+                    html.Div("RECEIPT-VERIFIED", style={"fontSize": "9px", "color": GRAY, "textTransform": "uppercase"}),
+                    html.Div(f"${expense_receipt_verified:,.2f}", style={"fontSize": "16px", "fontWeight": "bold", "color": GREEN, "fontFamily": "monospace"}),
+                ], style={"backgroundColor": "#ffffff08", "padding": "8px 14px", "borderRadius": "6px", "border": f"1px solid {GREEN}44", "flex": "1", "textAlign": "center"}),
+                html.Div([
+                    html.Div("BANK-RECORDED", style={"fontSize": "9px", "color": GRAY, "textTransform": "uppercase"}),
+                    html.Div(f"${expense_bank_recorded:,.2f}", style={"fontSize": "16px", "fontWeight": "bold", "color": WHITE, "fontFamily": "monospace"}),
+                ], style={"backgroundColor": "#ffffff08", "padding": "8px 14px", "borderRadius": "6px", "border": "1px solid #ffffff22", "flex": "1", "textAlign": "center"}),
+                html.Div([
+                    html.Div("UNVERIFIED GAP", style={"fontSize": "9px", "color": GRAY, "textTransform": "uppercase"}),
+                    html.Div(f"${expense_gap:,.2f}", style={"fontSize": "16px", "fontWeight": "bold", "color": ORANGE, "fontFamily": "monospace"}),
+                ], style={"backgroundColor": "#ffffff08", "padding": "8px 14px", "borderRadius": "6px", "border": f"1px solid {ORANGE}44", "flex": "1", "textAlign": "center"}),
+            ], style={"display": "flex", "gap": "8px", "marginBottom": "8px"}),
+            # ── Per-category breakdown table ──
+            html.Div([
+                html.Table([
+                    html.Thead(html.Tr([
+                        html.Th("Category", style={"color": CYAN, "fontSize": "10px", "textAlign": "left", "padding": "4px 8px"}),
+                        html.Th("Verified", style={"color": GREEN, "fontSize": "10px", "textAlign": "right", "padding": "4px 8px"}),
+                        html.Th("Bank Total", style={"color": WHITE, "fontSize": "10px", "textAlign": "right", "padding": "4px 8px"}),
+                        html.Th("Gap", style={"color": ORANGE, "fontSize": "10px", "textAlign": "right", "padding": "4px 8px"}),
+                        html.Th("Missing", style={"color": RED, "fontSize": "10px", "textAlign": "right", "padding": "4px 8px"}),
+                    ])),
+                    html.Tbody([
+                        html.Tr([
+                            html.Td(cat, style={"color": WHITE, "fontSize": "10px", "padding": "3px 8px"}),
+                            html.Td(f"${vals.get('verified', 0):,.2f}", style={"color": GREEN, "fontSize": "10px", "textAlign": "right", "padding": "3px 8px", "fontFamily": "monospace"}),
+                            html.Td(f"${vals.get('bank_recorded', 0):,.2f}", style={"color": WHITE, "fontSize": "10px", "textAlign": "right", "padding": "3px 8px", "fontFamily": "monospace"}),
+                            html.Td(f"${vals.get('gap', 0):,.2f}", style={"color": ORANGE if vals.get('gap', 0) > 0 else GREEN, "fontSize": "10px", "textAlign": "right", "padding": "3px 8px", "fontFamily": "monospace"}),
+                            html.Td(str(vals.get('missing_count', 0)), style={"color": RED if vals.get('missing_count', 0) > 0 else GREEN, "fontSize": "10px", "textAlign": "right", "padding": "3px 8px"}),
+                        ]) for cat, vals in expense_by_category.items()
+                    ]),
+                ], style={"width": "100%", "borderCollapse": "collapse"}),
+            ], style={"backgroundColor": "#ffffff06", "borderRadius": "6px", "padding": "6px", "marginBottom": "8px"}),
+            # ── Missing Receipt Queue (collapsible) ──
+            html.Details([
+                html.Summary([
+                    html.Span("\u25b6 ", style={"fontSize": "12px"}),
+                    html.Span(f"MISSING RECEIPT QUEUE ({len(expense_missing_receipts)})", style={"fontWeight": "bold"}),
+                    html.Span(f" — ${expense_gap:,.2f} unverified", style={"color": ORANGE, "fontWeight": "normal", "fontSize": "12px"}),
+                ], style={"color": RED, "fontSize": "13px", "fontWeight": "bold",
+                    "cursor": "pointer", "padding": "8px 12px", "listStyle": "none",
+                    "backgroundColor": "#b71c1c18", "borderRadius": "6px",
+                    "border": f"1px solid {RED}33"}),
+                html.Div([
+                    html.Div([
+                        html.Span(f"${t['amount']:,.2f}", style={"color": RED, "fontFamily": "monospace", "fontSize": "10px", "width": "60px", "display": "inline-block"}),
+                        html.Span(t.get("vendor", ""), style={"color": WHITE, "fontSize": "10px", "width": "130px", "display": "inline-block"}),
+                        html.Span(t.get("date", ""), style={"color": GRAY, "fontSize": "9px", "width": "75px", "display": "inline-block"}),
+                        html.Span(t.get("category", ""), style={"color": CYAN, "fontSize": "9px", "width": "110px", "display": "inline-block"}),
+                        html.Span("TAX" if t.get("tax_deductible") else "", style={"color": ORANGE, "fontSize": "8px", "fontWeight": "bold"}),
+                    ], style={"padding": "2px 0", "borderBottom": "1px solid #ffffff08"})
+                    for t in expense_missing_receipts[:50]  # Cap display
+                ] + ([html.Div(f"... and {len(expense_missing_receipts) - 50} more",
+                       style={"color": GRAY, "fontSize": "10px", "padding": "4px 0"})]
+                     if len(expense_missing_receipts) > 50 else []),
+                style={"padding": "8px 12px", "maxHeight": "300px", "overflowY": "auto"}),
+            ], style={"marginBottom": "8px"}),
         ], style={"display": "flex", "gap": "8px", "flexWrap": "wrap", "marginBottom": "10px"}),
             ], style={"paddingTop": "10px"}),
         ], style={"marginBottom": "8px"}),
@@ -11735,18 +11554,20 @@ def build_tab3_financials():
 
         # Shipping KPIs
         html.Div([
-            kpi_card("NET SHIPPING P&L", "N/A", ORANGE,
-                "Buyer-paid shipping not in Etsy CSV",
-                f"Shipping profit/loss cannot be calculated because the Etsy Payments CSV does not include how much buyers paid for shipping. Total label costs: ${total_shipping_cost:,.2f}.", status="na"),
+            kpi_card("NET SHIPPING P&L", "UNKNOWN", ORANGE,
+                "Requires buyer-paid shipping data",
+                f"Shipping P/L is UNKNOWN — Etsy CSVs do not include buyer-paid shipping amounts. "
+                f"Labels cost ${total_shipping_cost:,.2f}. Need: order-level CSV with shipping revenue.", status="na"),
             kpi_card("TOTAL LABEL COST", money(-total_shipping_cost), RED,
                 f"{total_label_count} labels purchased",
                 f"USPS outbound: {usps_outbound_count} labels (${usps_outbound:,.2f}). USPS return: {usps_return_count} labels (${usps_return:,.2f}). Asendia intl: {asendia_count} labels (${asendia_labels:,.2f}). Adjustments: ${ship_adjustments:,.2f}. Credits back: ${abs(ship_credits):,.2f}.", status="verified"),
-            kpi_card("BUYER PAID", "N/A", ORANGE,
+            kpi_card("BUYER PAID", "UNKNOWN", TEAL,
                 f"{paid_ship_count} paid-shipping orders",
-                "The Etsy Payments CSV only records the transaction fee on shipping (6.5%), not the actual amount buyers paid. This data is not available from current imports.", status="na"),
+                f"Buyer-paid shipping amount is UNKNOWN. Etsy CSVs do not include per-order shipping revenue. "
+                f"Need: Etsy order-level CSV with 'Shipping charged to buyer' column.", status="na"),
             kpi_card("FREE ORDERS", str(free_ship_count), ORANGE,
                 f"Avg label: ${avg_outbound_label:.2f}",
-                f"{free_ship_count} orders shipped free (you absorbed the label cost). Avg label cost: ${avg_outbound_label:.2f}. Per-order label costs cannot be calculated — labels don't carry order numbers.", status="verified"),
+                f"{free_ship_count} orders shipped free (you absorbed the label cost). Avg label cost: ${avg_outbound_label:.2f}.", status="verified"),
             kpi_card("RETURN LABELS", str(usps_return_count), PINK,
                 money(-usps_return) + " in return label cost",
                 f"{usps_return_count} return shipping labels purchased for refunded orders. Total return label cost: ${usps_return:,.2f}. This is on top of the original outbound label cost and the refund amount -- returns are triple losses.", status="verified"),
@@ -11761,12 +11582,11 @@ def build_tab3_financials():
             html.Div([dcc.Graph(figure=_build_ship_type(), config={"displayModeBar": False})], style={"flex": "1"}),
         ], style={"display": "flex", "gap": "8px", "marginBottom": "10px"}),
 
-        # Shipping Costs section (buyer-paid unavailable)
-        section("SHIPPING COSTS (VERIFIED)", [
-            html.Div([
-                html.Span("BUYER-PAID SHIPPING", style={"color": ORANGE, "fontWeight": "bold", "fontSize": "13px"}),
-                html.Span("N/A — not in Etsy CSV", style={"color": ORANGE, "fontFamily": "monospace", "fontSize": "13px"}),
-            ], style={"display": "flex", "justifyContent": "space-between", "padding": "4px 0"}),
+        # Shipping P&L section
+        section("SHIPPING PROFIT & LOSS", [
+            row_item("Buyer-Paid Shipping Revenue", None, bold=True, color=ORANGE),
+            html.P("UNKNOWN — Etsy CSV does not include buyer-paid shipping amounts",
+                   style={"color": ORANGE, "fontSize": "11px", "margin": "2px 0 8px 16px"}),
             html.Div(style={"borderTop": f"1px solid {DARKGRAY}", "margin": "8px 0"}),
             row_item(f"USPS Outbound Labels ({usps_outbound_count})", -usps_outbound, indent=1),
             row_item(f"USPS Return Labels ({usps_return_count})", -usps_return, indent=1),
@@ -11774,23 +11594,26 @@ def build_tab3_financials():
             row_item(f"Label Adjustments ({ship_adjust_count})", -ship_adjustments, indent=1),
             row_item(f"Insurance ({ship_insurance_count})", -ship_insurance, indent=1) if ship_insurance > 0 else html.Div(),
             row_item(f"Label Credits ({ship_credit_count})", ship_credits, indent=1, color=GREEN),
-            row_item("TOTAL SHIPPING COST", -total_shipping_cost, bold=True),
+            row_item("TOTAL LABEL COST", -total_shipping_cost, bold=True),
             html.Div(style={"borderTop": f"3px solid {ORANGE}", "marginTop": "8px"}),
             html.Div([
                 html.Span("NET SHIPPING P&L", style={"color": ORANGE, "fontWeight": "bold", "fontSize": "20px"}),
-                html.Span("UNKNOWN", style={"color": ORANGE, "fontWeight": "bold", "fontSize": "20px", "fontFamily": "monospace"}),
+                html.Span("UNKNOWN",
+                          style={"color": ORANGE, "fontWeight": "bold", "fontSize": "20px", "fontFamily": "monospace"}),
             ], style={"display": "flex", "justifyContent": "space-between", "padding": "10px 0"}),
         ], ORANGE),
 
-        # Paid vs Free order counts (amounts unavailable)
+        # Paid vs Free order counts
         section("PAID vs FREE SHIPPING ORDERS", [
             html.P("PAID SHIPPING", style={"color": TEAL, "fontWeight": "bold", "fontSize": "13px", "margin": "0 0 4px 0"}),
             row_item(f"Orders with paid shipping", paid_ship_count, color=TEAL, indent=1),
-            html.P("Buyer-paid amount and per-order label cost are not available", style={"color": ORANGE, "fontSize": "11px", "margin": "2px 0 8px 16px"}),
+            row_item(f"Total buyer-paid shipping", None, color=ORANGE, indent=1),
+            html.P("Buyer-paid shipping amount: UNKNOWN (not in Etsy CSV)",
+                   style={"color": ORANGE, "fontSize": "11px", "margin": "2px 0 8px 16px"}),
             html.Div(style={"borderTop": f"1px solid {DARKGRAY}", "margin": "8px 0"}),
             html.P("FREE SHIPPING", style={"color": ORANGE, "fontWeight": "bold", "fontSize": "13px", "margin": "0 0 4px 0"}),
             row_item(f"Orders with free shipping", free_ship_count, color=ORANGE, indent=1),
-            html.P(f"Avg label cost: ${avg_outbound_label:.2f}", style={"color": GRAY, "fontSize": "11px", "margin": "2px 0 0 16px"}),
+            html.P(f"Avg label cost: ${avg_outbound_label:.2f} (absorbed by seller)", style={"color": GRAY, "fontSize": "11px", "margin": "2px 0 0 16px"}),
         ], TEAL),
 
         # Returns section
@@ -12624,15 +12447,42 @@ def serve_layout():
     inv_label = f"Inventory ({_new_count} new)" if _new_count > 0 else "Inventory (Cost of Goods)"
 
     return html.Div([
+        # Strict mode state
+        dcc.Store(id="strict-mode-store", data=False, storage_type="local"),
+
         # Header
         html.Div([
-            html.H1("TJs SOFTWARE PROJECT", style={"color": ORANGE, "margin": "0", "fontSize": "24px"}),
-            html.Div(
-                _header_text(),
-                id="app-header-content",
-                style={"color": GRAY, "margin": "2px 0 0 0", "fontSize": "13px"},
-            ),
-        ], style={"padding": "14px 20px", "backgroundColor": CARD2}),
+            html.Div([
+                html.H1("TJs SOFTWARE PROJECT", style={"color": ORANGE, "margin": "0", "fontSize": "24px"}),
+                html.Div(
+                    _header_text(),
+                    id="app-header-content",
+                    style={"color": GRAY, "margin": "2px 0 0 0", "fontSize": "13px"},
+                ),
+            ], style={"flex": "1"}),
+            # Strict mode toggle
+            html.Div([
+                html.Span("STRICT", style={
+                    "color": GRAY, "fontSize": "11px", "marginRight": "6px",
+                    "fontWeight": "600", "letterSpacing": "1px",
+                }),
+                dbc.Switch(
+                    id="strict-mode-toggle",
+                    value=False,
+                    style={"display": "inline-block"},
+                ),
+                html.Span(
+                    "OFF",
+                    id="strict-mode-label",
+                    style={"color": GRAY, "fontSize": "11px", "marginLeft": "2px", "fontWeight": "600"},
+                ),
+            ], style={
+                "display": "flex", "alignItems": "center",
+                "padding": "4px 12px", "borderRadius": "6px",
+                "backgroundColor": BG, "border": f"1px solid {GRAY}",
+            }),
+        ], style={"padding": "14px 20px", "backgroundColor": CARD2,
+                   "display": "flex", "alignItems": "center", "justifyContent": "space-between"}),
 
         # Tabs — content rendered dynamically via callback so uploads refresh data
         dcc.Tabs(id="main-tabs", value="tab-overview", children=[
@@ -12690,6 +12540,33 @@ def render_active_tab(tab):
     elif tab == "tab-data-hub":
         return build_tab7_data_hub()
     return html.Div("Select a tab")
+
+
+# ── Strict Mode Toggle ───────────────────────────────────────────────────────
+
+@app.callback(
+    Output("strict-mode-store", "data"),
+    Output("strict-mode-label", "children"),
+    Output("strict-mode-label", "style"),
+    Input("strict-mode-toggle", "value"),
+    prevent_initial_call=True,
+)
+def toggle_strict_mode(is_on):
+    """Toggle strict mode: rebuild pipeline with strict_mode flag."""
+    global _acct_pipeline
+    if _acct_pipeline is not None:
+        try:
+            _acct_pipeline.full_rebuild(DATA, BANK_TXNS, CONFIG,
+                                        invoices=INVOICES, strict_mode=bool(is_on))
+            _publish_to_globals(_acct_pipeline, __name__)
+            print(f"[Dashboard] Strict mode {'ON' if is_on else 'OFF'}: {_acct_pipeline.ledger.summary()}")
+        except Exception as e:
+            print(f"WARNING: Strict mode toggle failed: {e}")
+
+    label = "ON" if is_on else "OFF"
+    color = {"color": "#e74c3c" if is_on else GRAY, "fontSize": "11px",
+             "marginLeft": "2px", "fontWeight": "600"}
+    return is_on, label, color
 
 
 # ── Image Manager Callbacks ──────────────────────────────────────────────────

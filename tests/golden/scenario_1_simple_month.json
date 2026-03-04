@@ -1,0 +1,55 @@
+{
+  "_description": "Scenario 1: Simple month, no refunds. 3 sales, fees, shipping labels, 1 deposit, bank payout + 2 debits (1 matched by receipt, 1 missing).",
+  "etsy_rows": [
+    {"Date": "January 5, 2026", "Type": "Sale",     "Title": "Payment for Order #1001", "Info": "Order #1001", "Currency": "USD", "Amount": "$40.00", "Fees & Taxes": "--",      "Net": "$40.00"},
+    {"Date": "January 5, 2026", "Type": "Fee",      "Title": "Listing fee",              "Info": "Order #1001", "Currency": "USD", "Amount": "--",     "Fees & Taxes": "-$0.20", "Net": "-$0.20"},
+    {"Date": "January 5, 2026", "Type": "Fee",      "Title": "Transaction fee: Order #1001",  "Info": "Order #1001", "Currency": "USD", "Amount": "--", "Fees & Taxes": "-$2.60", "Net": "-$2.60"},
+    {"Date": "January 5, 2026", "Type": "Fee",      "Title": "Processing fee",           "Info": "Order #1001", "Currency": "USD", "Amount": "--",     "Fees & Taxes": "-$1.76", "Net": "-$1.76"},
+    {"Date": "January 5, 2026", "Type": "Shipping", "Title": "USPS shipping label",      "Info": "Order #1001", "Currency": "USD", "Amount": "--",     "Fees & Taxes": "-$5.25", "Net": "-$5.25"},
+
+    {"Date": "January 10, 2026", "Type": "Sale",     "Title": "Payment for Order #1002", "Info": "Order #1002", "Currency": "USD", "Amount": "$25.00", "Fees & Taxes": "--",      "Net": "$25.00"},
+    {"Date": "January 10, 2026", "Type": "Fee",      "Title": "Listing fee",              "Info": "Order #1002", "Currency": "USD", "Amount": "--",     "Fees & Taxes": "-$0.20", "Net": "-$0.20"},
+    {"Date": "January 10, 2026", "Type": "Fee",      "Title": "Transaction fee: Order #1002",  "Info": "Order #1002", "Currency": "USD", "Amount": "--", "Fees & Taxes": "-$1.63", "Net": "-$1.63"},
+    {"Date": "January 10, 2026", "Type": "Fee",      "Title": "Processing fee",           "Info": "Order #1002", "Currency": "USD", "Amount": "--",     "Fees & Taxes": "-$1.10", "Net": "-$1.10"},
+    {"Date": "January 10, 2026", "Type": "Shipping", "Title": "USPS shipping label",      "Info": "Order #1002", "Currency": "USD", "Amount": "--",     "Fees & Taxes": "-$4.50", "Net": "-$4.50"},
+
+    {"Date": "January 15, 2026", "Type": "Sale",     "Title": "Payment for Order #1003", "Info": "Order #1003", "Currency": "USD", "Amount": "$35.00", "Fees & Taxes": "--",      "Net": "$35.00"},
+    {"Date": "January 15, 2026", "Type": "Fee",      "Title": "Listing fee",              "Info": "Order #1003", "Currency": "USD", "Amount": "--",     "Fees & Taxes": "-$0.20", "Net": "-$0.20"},
+    {"Date": "January 15, 2026", "Type": "Fee",      "Title": "Transaction fee: Order #1003",  "Info": "Order #1003", "Currency": "USD", "Amount": "--", "Fees & Taxes": "-$2.28", "Net": "-$2.28"},
+    {"Date": "January 15, 2026", "Type": "Fee",      "Title": "Processing fee",           "Info": "Order #1003", "Currency": "USD", "Amount": "--",     "Fees & Taxes": "-$1.54", "Net": "-$1.54"},
+    {"Date": "January 15, 2026", "Type": "Shipping", "Title": "USPS shipping label",      "Info": "Order #1003", "Currency": "USD", "Amount": "--",     "Fees & Taxes": "-$5.00", "Net": "-$5.00"},
+
+    {"Date": "January 20, 2026", "Type": "Deposit",  "Title": "$72.74 sent to your bank account", "Info": "", "Currency": "USD", "Amount": "--", "Fees & Taxes": "--", "Net": "--"}
+  ],
+  "bank_txns": [
+    {"date": "01/21/2026", "desc": "ETSY PAYOUT",           "amount": 72.74,  "type": "deposit", "category": "Etsy Payout",      "source_file": "test_jan.pdf", "raw_desc": "ACH deposit ETSY, INC. PAYOUT"},
+    {"date": "01/08/2026", "desc": "AMAZON MKTPL ABC123",   "amount": 23.79,  "type": "debit",   "category": "Amazon Inventory",  "source_file": "test_jan.pdf", "raw_desc": "AMAZON MKTPL ABC123"},
+    {"date": "01/12/2026", "desc": "USPS PO 123",           "amount": 8.50,   "type": "debit",   "category": "Shipping",          "source_file": "test_jan.pdf", "raw_desc": "USPS PO 123 TULSA OK"}
+  ],
+  "invoices": [
+    {"order_num": "AMZ-001", "date": "January 6, 2026", "grand_total": 23.79, "subtotal": 21.98, "tax": 1.81, "source": "Key Component Mfg", "file": "order-test1.pdf", "items": []}
+  ],
+  "config": {
+    "etsy_pre_capone_deposits": 0,
+    "pre_capone_detail": []
+  },
+  "expected": {
+    "gross_sales": 100.00,
+    "total_refunds": 0.00,
+    "net_sales": 100.00,
+    "total_fees": 11.51,
+    "total_shipping_cost": 14.75,
+    "etsy_net_earned": 73.74,
+    "order_count": 3,
+    "bank_total_deposits": 72.74,
+    "bank_total_debits": 32.29,
+    "bank_net_cash": 40.45,
+    "etsy_balance": 1.00,
+    "expense_receipt_verified": 23.79,
+    "expense_bank_recorded": 32.29,
+    "expense_gap": 8.50,
+    "expense_missing_count": 1,
+    "expense_matched_count": 1,
+    "_notes": "gross=40+25+35=100. fees=abs(-0.20*3 -2.60-1.63-2.28 -1.76-1.10-1.54)=11.51. ship=5.25+4.50+5.00=14.75. net=100-11.51-14.75=73.74. deposit_parsed=72.74. balance=73.74-72.74=1.00. bank_debits=23.79+8.50=32.29. Amazon matched by receipt, Shipping missing."
+  }
+}

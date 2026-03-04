@@ -396,6 +396,24 @@ def save_item_details(order_num: str, item_name: str, details: list[dict]) -> bo
     return True
 
 
+def save_item_details_batch(items: list[dict]) -> int:
+    """Batch-save multiple item details. Returns count of successful saves.
+
+    Each item dict: {order_num, item_name, details: [{display_name, category, true_qty, location}]}
+    Reuses save_item_details() logic per item.
+    """
+    saved = 0
+    for item in items:
+        ok = save_item_details(
+            item["order_num"],
+            item["item_name"],
+            item["details"],
+        )
+        if ok:
+            saved += 1
+    return saved
+
+
 def save_new_order(order: dict) -> bool:
     """Insert a new order into Supabase (inventory_orders + inventory_items).
     Used by the receipt upload wizard to persist new orders immediately."""

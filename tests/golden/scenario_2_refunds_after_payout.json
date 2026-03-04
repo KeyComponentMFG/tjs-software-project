@@ -1,0 +1,51 @@
+{
+  "_description": "Scenario 2: Refunds after payout. 2 sales deposited, then 1 full refund with fee credits and return label. Tests negative balance, refund math, fee credit netting.",
+  "etsy_rows": [
+    {"Date": "February 1, 2026", "Type": "Sale",     "Title": "Payment for Order #2001", "Info": "Order #2001", "Currency": "USD", "Amount": "$50.00", "Fees & Taxes": "--",      "Net": "$50.00"},
+    {"Date": "February 1, 2026", "Type": "Fee",      "Title": "Listing fee",              "Info": "Order #2001", "Currency": "USD", "Amount": "--",     "Fees & Taxes": "-$0.20", "Net": "-$0.20"},
+    {"Date": "February 1, 2026", "Type": "Fee",      "Title": "Transaction fee: Order #2001",  "Info": "Order #2001", "Currency": "USD", "Amount": "--", "Fees & Taxes": "-$3.25", "Net": "-$3.25"},
+    {"Date": "February 1, 2026", "Type": "Fee",      "Title": "Processing fee",           "Info": "Order #2001", "Currency": "USD", "Amount": "--",     "Fees & Taxes": "-$2.20", "Net": "-$2.20"},
+    {"Date": "February 1, 2026", "Type": "Shipping", "Title": "USPS shipping label",      "Info": "Order #2001", "Currency": "USD", "Amount": "--",     "Fees & Taxes": "-$5.00", "Net": "-$5.00"},
+
+    {"Date": "February 3, 2026", "Type": "Sale",     "Title": "Payment for Order #2002", "Info": "Order #2002", "Currency": "USD", "Amount": "$30.00", "Fees & Taxes": "--",      "Net": "$30.00"},
+    {"Date": "February 3, 2026", "Type": "Fee",      "Title": "Listing fee",              "Info": "Order #2002", "Currency": "USD", "Amount": "--",     "Fees & Taxes": "-$0.20", "Net": "-$0.20"},
+    {"Date": "February 3, 2026", "Type": "Fee",      "Title": "Transaction fee: Order #2002",  "Info": "Order #2002", "Currency": "USD", "Amount": "--", "Fees & Taxes": "-$1.95", "Net": "-$1.95"},
+    {"Date": "February 3, 2026", "Type": "Fee",      "Title": "Processing fee",           "Info": "Order #2002", "Currency": "USD", "Amount": "--",     "Fees & Taxes": "-$1.32", "Net": "-$1.32"},
+    {"Date": "February 3, 2026", "Type": "Shipping", "Title": "USPS shipping label",      "Info": "Order #2002", "Currency": "USD", "Amount": "--",     "Fees & Taxes": "-$4.00", "Net": "-$4.00"},
+
+    {"Date": "February 5, 2026", "Type": "Deposit",  "Title": "$61.68 sent to your bank account", "Info": "", "Currency": "USD", "Amount": "--", "Fees & Taxes": "--", "Net": "--"},
+
+    {"Date": "February 8, 2026", "Type": "Refund",   "Title": "Refund - Order #2001",    "Info": "Order #2001", "Currency": "USD", "Amount": "--",     "Fees & Taxes": "--",      "Net": "-$50.00"},
+    {"Date": "February 8, 2026", "Type": "Fee",      "Title": "Credit for transaction fee: Order #2001", "Info": "Order #2001", "Currency": "USD", "Amount": "--", "Fees & Taxes": "$3.25", "Net": "$3.25"},
+    {"Date": "February 8, 2026", "Type": "Fee",      "Title": "Credit for processing fee: Order #2001", "Info": "Order #2001", "Currency": "USD", "Amount": "--", "Fees & Taxes": "$2.20", "Net": "$2.20"},
+    {"Date": "February 8, 2026", "Type": "Shipping", "Title": "USPS return shipping label", "Info": "Order #2001", "Currency": "USD", "Amount": "--", "Fees & Taxes": "-$5.25", "Net": "-$5.25"}
+  ],
+  "bank_txns": [
+    {"date": "02/06/2026", "desc": "ETSY PAYOUT",  "amount": 61.68, "type": "deposit", "category": "Etsy Payout", "source_file": "test_feb.pdf", "raw_desc": "ACH deposit ETSY, INC. PAYOUT"}
+  ],
+  "invoices": [],
+  "config": {
+    "etsy_pre_capone_deposits": 0,
+    "pre_capone_detail": []
+  },
+  "expected": {
+    "gross_sales": 80.00,
+    "total_refunds": 50.00,
+    "net_sales": 30.00,
+    "total_fees": 3.67,
+    "total_shipping_cost": 14.25,
+    "total_credits": 5.45,
+    "etsy_net_earned": 12.08,
+    "order_count": 2,
+    "bank_total_deposits": 61.68,
+    "bank_total_debits": 0.00,
+    "bank_net_cash": 61.68,
+    "etsy_balance": -49.60,
+    "expense_receipt_verified": 0.00,
+    "expense_bank_recorded": 0.00,
+    "expense_gap": 0.00,
+    "expense_missing_count": 0,
+    "expense_matched_count": 0,
+    "_notes": "gross=50+30=80. refunds=50. fees=abs(-0.20-3.25-2.20-0.20-1.95-1.32+3.25+2.20)=abs(-3.67)=3.67. ship=abs(-5.00-4.00-5.25)=14.25. net=80-3.67-14.25-50=12.08. deposit=61.68. balance=12.08-61.68=-49.60. No bank debits. Negative balance = refund after payout."
+  }
+}

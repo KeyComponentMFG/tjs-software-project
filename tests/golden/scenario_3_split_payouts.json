@@ -1,0 +1,52 @@
+{
+  "_description": "Scenario 3: Split payouts hitting bank on different days. 2 Etsy deposits, 2 bank deposits (one delayed 2 days). Tests reconciliation with date tolerance and multiple payout matching.",
+  "etsy_rows": [
+    {"Date": "March 1, 2026", "Type": "Sale",     "Title": "Payment for Order #3001", "Info": "Order #3001", "Currency": "USD", "Amount": "$60.00", "Fees & Taxes": "--",      "Net": "$60.00"},
+    {"Date": "March 1, 2026", "Type": "Fee",      "Title": "Listing fee",              "Info": "Order #3001", "Currency": "USD", "Amount": "--",     "Fees & Taxes": "-$0.20", "Net": "-$0.20"},
+    {"Date": "March 1, 2026", "Type": "Fee",      "Title": "Transaction fee: Order #3001",  "Info": "Order #3001", "Currency": "USD", "Amount": "--", "Fees & Taxes": "-$3.90", "Net": "-$3.90"},
+    {"Date": "March 1, 2026", "Type": "Fee",      "Title": "Processing fee",           "Info": "Order #3001", "Currency": "USD", "Amount": "--",     "Fees & Taxes": "-$2.64", "Net": "-$2.64"},
+    {"Date": "March 1, 2026", "Type": "Shipping", "Title": "USPS shipping label",      "Info": "Order #3001", "Currency": "USD", "Amount": "--",     "Fees & Taxes": "-$5.50", "Net": "-$5.50"},
+
+    {"Date": "March 5, 2026", "Type": "Deposit",  "Title": "$47.76 sent to your bank account", "Info": "", "Currency": "USD", "Amount": "--", "Fees & Taxes": "--", "Net": "--"},
+
+    {"Date": "March 8, 2026", "Type": "Sale",     "Title": "Payment for Order #3002", "Info": "Order #3002", "Currency": "USD", "Amount": "$40.00", "Fees & Taxes": "--",      "Net": "$40.00"},
+    {"Date": "March 8, 2026", "Type": "Fee",      "Title": "Listing fee",              "Info": "Order #3002", "Currency": "USD", "Amount": "--",     "Fees & Taxes": "-$0.20", "Net": "-$0.20"},
+    {"Date": "March 8, 2026", "Type": "Fee",      "Title": "Transaction fee: Order #3002",  "Info": "Order #3002", "Currency": "USD", "Amount": "--", "Fees & Taxes": "-$2.60", "Net": "-$2.60"},
+    {"Date": "March 8, 2026", "Type": "Fee",      "Title": "Processing fee",           "Info": "Order #3002", "Currency": "USD", "Amount": "--",     "Fees & Taxes": "-$1.76", "Net": "-$1.76"},
+    {"Date": "March 8, 2026", "Type": "Shipping", "Title": "USPS shipping label",      "Info": "Order #3002", "Currency": "USD", "Amount": "--",     "Fees & Taxes": "-$4.80", "Net": "-$4.80"},
+
+    {"Date": "March 12, 2026", "Type": "Deposit",  "Title": "$30.64 sent to your bank account", "Info": "", "Currency": "USD", "Amount": "--", "Fees & Taxes": "--", "Net": "--"}
+  ],
+  "bank_txns": [
+    {"date": "03/05/2026", "desc": "ETSY PAYOUT",         "amount": 47.76, "type": "deposit", "category": "Etsy Payout", "source_file": "test_mar.pdf", "raw_desc": "ACH deposit ETSY, INC. PAYOUT"},
+    {"date": "03/14/2026", "desc": "ETSY PAYOUT",         "amount": 30.64, "type": "deposit", "category": "Etsy Payout", "source_file": "test_mar.pdf", "raw_desc": "ACH deposit ETSY, INC. PAYOUT"},
+    {"date": "03/06/2026", "desc": "AMAZON MKTPL XYZ789", "amount": 15.00, "type": "debit",   "category": "Amazon Inventory", "source_file": "test_mar.pdf", "raw_desc": "AMAZON MKTPL XYZ789"}
+  ],
+  "invoices": [
+    {"order_num": "AMZ-003", "date": "March 4, 2026", "grand_total": 15.00, "subtotal": 13.89, "tax": 1.11, "source": "Key Component Mfg", "file": "order-test3.pdf", "items": []}
+  ],
+  "config": {
+    "etsy_pre_capone_deposits": 0,
+    "pre_capone_detail": []
+  },
+  "expected": {
+    "gross_sales": 100.00,
+    "total_refunds": 0.00,
+    "total_fees": 11.30,
+    "total_shipping_cost": 10.30,
+    "etsy_net_earned": 78.40,
+    "order_count": 2,
+    "bank_total_deposits": 78.40,
+    "bank_total_debits": 15.00,
+    "bank_net_cash": 63.40,
+    "etsy_balance": 0.00,
+    "reconciliation_matched": 2,
+    "reconciliation_etsy_unmatched": 0,
+    "expense_receipt_verified": 15.00,
+    "expense_bank_recorded": 15.00,
+    "expense_gap": 0.00,
+    "expense_missing_count": 0,
+    "expense_matched_count": 1,
+    "_notes": "fees=abs(-0.20-3.90-2.64-0.20-2.60-1.76)=11.30. ship=5.50+4.80=10.30. net=100-11.30-10.30=78.40. deposits=47.76+30.64=78.40. balance=0. Second bank deposit is 2 days late (03/14 vs 03/12) — within ±3 day tolerance. Amazon debit matched exactly."
+  }
+}

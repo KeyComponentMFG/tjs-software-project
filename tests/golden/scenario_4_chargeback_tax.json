@@ -1,0 +1,46 @@
+{
+  "_description": "Scenario 4: Chargeback/hold/reserve. 1 sale with tax, deposit, then full chargeback (refund + fee credits). Tests tax handling, deeply negative balance, and that chargebacks don't create phantom bank debits.",
+  "etsy_rows": [
+    {"Date": "April 1, 2026", "Type": "Sale",     "Title": "Payment for Order #4001", "Info": "Order #4001", "Currency": "USD", "Amount": "$80.00", "Fees & Taxes": "--",      "Net": "$80.00"},
+    {"Date": "April 1, 2026", "Type": "Fee",      "Title": "Listing fee",              "Info": "Order #4001", "Currency": "USD", "Amount": "--",     "Fees & Taxes": "-$0.20", "Net": "-$0.20"},
+    {"Date": "April 1, 2026", "Type": "Fee",      "Title": "Transaction fee: Order #4001",  "Info": "Order #4001", "Currency": "USD", "Amount": "--", "Fees & Taxes": "-$5.20", "Net": "-$5.20"},
+    {"Date": "April 1, 2026", "Type": "Fee",      "Title": "Processing fee",           "Info": "Order #4001", "Currency": "USD", "Amount": "--",     "Fees & Taxes": "-$3.52", "Net": "-$3.52"},
+    {"Date": "April 1, 2026", "Type": "Tax",      "Title": "Sales tax paid by buyer: Order #4001", "Info": "Order #4001", "Currency": "USD", "Amount": "$6.40", "Fees & Taxes": "--", "Net": "-$6.40"},
+    {"Date": "April 1, 2026", "Type": "Shipping", "Title": "USPS shipping label",      "Info": "Order #4001", "Currency": "USD", "Amount": "--",     "Fees & Taxes": "-$5.00", "Net": "-$5.00"},
+
+    {"Date": "April 5, 2026", "Type": "Deposit",  "Title": "$59.68 sent to your bank account", "Info": "", "Currency": "USD", "Amount": "--", "Fees & Taxes": "--", "Net": "--"},
+
+    {"Date": "April 12, 2026", "Type": "Refund",   "Title": "Refund - Order #4001 (chargeback)", "Info": "Order #4001", "Currency": "USD", "Amount": "--", "Fees & Taxes": "--", "Net": "-$80.00"},
+    {"Date": "April 12, 2026", "Type": "Fee",      "Title": "Credit for transaction fee: Order #4001", "Info": "Order #4001", "Currency": "USD", "Amount": "--", "Fees & Taxes": "$5.20", "Net": "$5.20"},
+    {"Date": "April 12, 2026", "Type": "Fee",      "Title": "Credit for processing fee: Order #4001", "Info": "Order #4001", "Currency": "USD", "Amount": "--", "Fees & Taxes": "$3.52", "Net": "$3.52"}
+  ],
+  "bank_txns": [
+    {"date": "04/06/2026", "desc": "ETSY PAYOUT",  "amount": 59.68, "type": "deposit", "category": "Etsy Payout", "source_file": "test_apr.pdf", "raw_desc": "ACH deposit ETSY, INC. PAYOUT"}
+  ],
+  "invoices": [],
+  "config": {
+    "etsy_pre_capone_deposits": 0,
+    "pre_capone_detail": []
+  },
+  "expected": {
+    "gross_sales": 80.00,
+    "total_refunds": 80.00,
+    "net_sales": 0.00,
+    "total_fees": 0.20,
+    "total_taxes": 6.40,
+    "total_shipping_cost": 5.00,
+    "total_credits": 8.72,
+    "etsy_net_earned": -11.60,
+    "order_count": 1,
+    "bank_total_deposits": 59.68,
+    "bank_total_debits": 0.00,
+    "bank_net_cash": 59.68,
+    "etsy_balance": -71.28,
+    "expense_receipt_verified": 0.00,
+    "expense_bank_recorded": 0.00,
+    "expense_gap": 0.00,
+    "expense_missing_count": 0,
+    "expense_matched_count": 0,
+    "_notes": "fees=abs(-0.20-5.20-3.52+5.20+3.52)=abs(-0.20)=0.20. tax=6.40. ship=5.00. refund=80. net=80-0.20-5.00-0-80-6.40-0+0=-11.60. deposit=59.68. balance=-11.60-59.68=-71.28. Chargeback creates deeply negative balance. No bank debits (Etsy eats it from future payouts). Credits: txn=5.20, proc=3.52, total=8.72."
+  }
+}
