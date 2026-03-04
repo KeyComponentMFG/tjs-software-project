@@ -75,6 +75,7 @@ from supabase_loader import (
 )
 
 RAILWAY_URL = os.environ.get("RAILWAY_URL", "https://web-production-7f385.up.railway.app")
+IS_RAILWAY = bool(os.environ.get("RAILWAY_ENVIRONMENT") or os.environ.get("RAILWAY_SERVICE_NAME"))
 
 
 def _notify_railway_reload():
@@ -14176,6 +14177,7 @@ def handle_datahub_upload(etsy_contents, receipt_contents, bank_contents,
                           etsy_filename, receipt_filename, bank_filename,
                           activity_log):
     """Handle file uploads from all 3 Data Hub zones."""
+    global DATA, BANK_TXNS
     import datetime as _dt
 
     trigger = callback_context.triggered[0]["prop_id"] if callback_context.triggered else ""
@@ -14229,10 +14231,31 @@ def handle_datahub_upload(etsy_contents, receipt_contents, bank_contents,
                 with open(save_path, "wb") as f:
                     f.write(decoded)
 
-                stats = _reload_etsy_data()
-                _cascade_reload("etsy")
-                # Full sync to Supabase (delete-and-replace to prevent duplicates)
-                _sb_ok = _sync_etsy_to_supabase(DATA)
+                if IS_RAILWAY:
+                    # On Railway, local disk only has the just-uploaded file.
+                    # Merge new data into existing DATA (loaded from Supabase at startup)
+                    # instead of re-reading from disk, which would lose historical data.
+                    _new_df = df.copy()
+                    _new_df["Amount_Clean"] = _new_df["Amount"].apply(parse_money)
+                    _new_df["Net_Clean"] = _new_df["Net"].apply(parse_money)
+                    _new_df["Fees_Clean"] = _new_df["Fees & Taxes"].apply(parse_money)
+                    _new_df["Date_Parsed"] = pd.to_datetime(_new_df["Date"], format="%B %d, %Y", errors="coerce")
+                    _new_df["Month"] = _new_df["Date_Parsed"].dt.to_period("M").astype(str)
+                    DATA = pd.concat([DATA, _new_df], ignore_index=True).drop_duplicates(
+                        subset=["Date", "Type", "Title", "Info", "Amount", "Fees & Taxes", "Net"],
+                        keep="last",
+                    )
+                    _rebuild_etsy_derived()
+                    stats = {"transactions": len(DATA), "orders": len(sales_df),
+                             "gross_sales": sales_df["Net_Clean"].sum()}
+                    _cascade_reload("etsy")
+                    # Append-only sync to Supabase (dedup, no delete)
+                    _sb_ok = _append_etsy_to_supabase(_new_df)
+                else:
+                    stats = _reload_etsy_data()
+                    _cascade_reload("etsy")
+                    # Full sync to Supabase (delete-and-replace to prevent duplicates)
+                    _sb_ok = _sync_etsy_to_supabase(DATA)
                 _notify_railway_reload()
 
                 if not _sb_ok:
@@ -14380,10 +14403,42 @@ def handle_datahub_upload(etsy_contents, receipt_contents, bank_contents,
                 with open(save_path, "wb") as f:
                     f.write(decoded)
 
-                stats = _reload_bank_data()
-                _cascade_reload("bank")
-                # Full sync to Supabase (delete-and-replace to prevent duplicates)
-                _sb_ok = _sync_bank_to_supabase(BANK_TXNS)
+                if IS_RAILWAY:
+                    # On Railway, local disk only has the just-uploaded file.
+                    # Parse it and merge into existing BANK_TXNS (from Supabase).
+                    from _parse_bank_statements import parse_bank_pdf as _pb, parse_bank_csv as _pc
+                    from _parse_bank_statements import apply_overrides as _ao
+                    _new_txns = []
+                    if fname.lower().endswith(".pdf"):
+                        try:
+                            _new_txns, _ = _pb(save_path)
+                        except Exception:
+                            pass
+                    elif fname.lower().endswith(".csv"):
+                        try:
+                            _new_txns, _ = _pc(save_path)
+                        except Exception:
+                            pass
+                    _new_txns = _ao(_new_txns)
+                    if _new_txns:
+                        # Dedup: skip transactions already in BANK_TXNS
+                        _existing_keys = {(t["date"], f"{t['amount']:.2f}", t["type"],
+                                           t.get("raw_desc", t["desc"])) for t in BANK_TXNS}
+                        _added = [t for t in _new_txns
+                                  if (t["date"], f"{t['amount']:.2f}", t["type"],
+                                      t.get("raw_desc", t["desc"])) not in _existing_keys]
+                        BANK_TXNS.extend(_added)
+                    _rebuild_bank_derived()
+                    _final_bal = bank_running[-1]["_balance"] if bank_running else 0.0
+                    stats = {"transactions": len(BANK_TXNS), "statements": 0,
+                             "net_cash": round(_final_bal, 2)}
+                    _cascade_reload("bank")
+                    _sb_ok = _append_bank_to_supabase(_new_txns)
+                else:
+                    stats = _reload_bank_data()
+                    _cascade_reload("bank")
+                    # Full sync to Supabase (delete-and-replace to prevent duplicates)
+                    _sb_ok = _sync_bank_to_supabase(BANK_TXNS)
                 _notify_railway_reload()
                 _bank_warn = "" if _sb_ok else " (WARNING: Supabase sync failed)"
                 bank_status = html.Div([
