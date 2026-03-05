@@ -14848,8 +14848,7 @@ def handle_datahub_upload(etsy_contents, receipt_contents, bank_contents,
 
                 if IS_RAILWAY:
                     # On Railway, local disk only has the just-uploaded file.
-                    # Merge new data into existing DATA (loaded from Supabase at startup)
-                    # instead of re-reading from disk, which would lose historical data.
+                    # Replace the month's data in existing DATA, then rebuild.
                     _new_df = df.copy()
                     _new_df["Amount_Clean"] = _new_df["Amount"].apply(parse_money)
                     _new_df["Net_Clean"] = _new_df["Net"].apply(parse_money)
@@ -14857,19 +14856,16 @@ def handle_datahub_upload(etsy_contents, receipt_contents, bank_contents,
                     _new_df["Date_Parsed"] = pd.to_datetime(_new_df["Date"], format="%B %d, %Y", errors="coerce")
                     _new_df["Month"] = _new_df["Date_Parsed"].dt.to_period("M").astype(str)
                     _new_df["Week"] = _new_df["Date_Parsed"].dt.to_period("W").apply(lambda p: p.start_time)
-                    # Rank-based dedup: keep max(existing_count, new_count) per unique row
-                    _dedup_cols_rw = ["Date", "Type", "Title", "Info", "Amount", "Fees & Taxes", "Net"]
+                    # Remove old rows that fall within the new file's date range,
+                    # then append new data. This fully replaces the month.
+                    _new_months = set(_new_df["Month"].dropna().unique())
                     _old = DATA.copy()
-                    _old["_src"] = "old"
-                    _new_df["_src"] = "new"
-                    _merged = pd.concat([_old, _new_df], ignore_index=True)
-                    _merged["_dup_rank"] = _merged.groupby(
-                        _dedup_cols_rw + ["_src"], sort=False
-                    ).cumcount()
-                    DATA = _merged.drop_duplicates(
-                        subset=_dedup_cols_rw + ["_dup_rank"], keep="last"
-                    ).drop(columns=["_src", "_dup_rank"]).reset_index(drop=True)
-                    print(f"[UPLOAD] Railway merge: {len(_old)}->{len(DATA)} rows")
+                    if "Month" not in _old.columns:
+                        _old["Date_Parsed"] = pd.to_datetime(_old["Date"], format="%B %d, %Y", errors="coerce")
+                        _old["Month"] = _old["Date_Parsed"].dt.to_period("M").astype(str)
+                    _old_keep = _old[~_old["Month"].isin(_new_months)]
+                    DATA = pd.concat([_old_keep, _new_df], ignore_index=True)
+                    print(f"[UPLOAD] Railway replace: {len(_old)} - {len(_old) - len(_old_keep)} old month rows + {len(_new_df)} new = {len(DATA)} total")
                     _rebuild_etsy_derived()
                     stats = {"transactions": len(DATA), "orders": len(sales_df),
                              "gross_sales": sales_df["Net_Clean"].sum()}
