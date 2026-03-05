@@ -188,24 +188,34 @@ if _etsy_frames:
     _sb_data = _sb["DATA"]
     _dedup_startup_cols = ["Date", "Type", "Title", "Info", "Amount", "Fees & Taxes", "Net"]
     if len(_sb_data) > 0:
-        # Tag each source with a row index so identical rows within the same source
-        # (e.g. multiple $0.20 listing fees on the same day) survive dedup, while
-        # true cross-source duplicates still collapse.
+        # Merge strategy: both sources have the same underlying Etsy data. Local CSVs
+        # preserve legitimate duplicate rows (e.g. multiple $0.20 listing fees on the
+        # same day) while Supabase may have deduped them at upload. We concat both
+        # sources, then for each group of identical rows (by the 7 key columns), keep
+        # at most max(local_count, sb_count) copies — not the sum.
         _sb_data = _sb_data.copy()
-        _sb_data["_src_tag"] = "sb"
-        _sb_data["_row_idx"] = range(len(_sb_data))
         _local_data = _local_data.copy()
-        _local_data["_src_tag"] = "local"
-        _local_data["_row_idx"] = range(len(_local_data))
-        # Normalise NaN/'nan' so dedup works across CSV vs Supabase
+        # Normalise NaN/'nan' so comparison works across CSV vs Supabase
         for _dc in _dedup_startup_cols:
             _sb_data[_dc] = _sb_data[_dc].fillna("").replace("nan", "")
             _local_data[_dc] = _local_data[_dc].fillna("").replace("nan", "")
-        _dedup_cols_with_idx = _dedup_startup_cols + ["_src_tag", "_row_idx"]
-        DATA = pd.concat([_sb_data, _local_data], ignore_index=True).drop_duplicates(
-            subset=_dedup_cols_with_idx, keep="last"
+        # Number each row within its (key, source) group: if local has the same
+        # row 3 times, they get ranks 0, 1, 2. Same for Supabase.
+        # Then dedup on (key + rank) keeping local first. This yields exactly
+        # max(local_count, sb_count) rows per unique key — preserving legitimate
+        # duplicate rows while collapsing cross-source copies.
+        _local_data["_src"] = "local"
+        _sb_data["_src"] = "sb"
+        _combined = pd.concat([_local_data, _sb_data], ignore_index=True)
+        _combined["_dup_rank"] = _combined.groupby(
+            _dedup_startup_cols + ["_src"], sort=False
+        ).cumcount()
+        # Dedup on key + rank: (local rank 0, sb rank 0) → keep local; rank 1 etc.
+        # Rows with ranks only in one source survive automatically.
+        DATA = _combined.drop_duplicates(
+            subset=_dedup_startup_cols + ["_dup_rank"], keep="first"
         )
-        DATA = DATA.drop(columns=["_src_tag", "_row_idx"])
+        DATA = DATA.drop(columns=["_src", "_dup_rank"]).reset_index(drop=True)
         print(f"Merged {len(_local_data)} local + {len(_sb_data)} Supabase -> {len(DATA)} unique Etsy rows")
     else:
         DATA = _local_data
@@ -1123,10 +1133,17 @@ def _reload_etsy_data():
             for _dc in _dedup_cols:
                 _sb_df[_dc] = _sb_df[_dc].fillna("").replace("nan", "")
                 _local_df[_dc] = _local_df[_dc].fillna("").replace("nan", "")
-            # Merge: concat both sources, keep last (local wins on conflicts)
-            DATA = pd.concat([_sb_df, _local_df], ignore_index=True).drop_duplicates(
-                subset=_dedup_cols, keep="last"
-            )
+            # Merge: rank duplicates within each source, then dedup on
+            # (key + rank) to keep max(local_count, sb_count) per unique row.
+            _local_df["_src"] = "local"
+            _sb_df["_src"] = "sb"
+            _comb = pd.concat([_local_df, _sb_df], ignore_index=True)
+            _comb["_dup_rank"] = _comb.groupby(
+                _dedup_cols + ["_src"], sort=False
+            ).cumcount()
+            DATA = _comb.drop_duplicates(
+                subset=_dedup_cols + ["_dup_rank"], keep="first"
+            ).drop(columns=["_src", "_dup_rank"]).reset_index(drop=True)
             print(f"[Reload] Merged {len(_local_df)} local + {len(_sb_df)} Supabase rows -> {len(DATA)} unique")
         else:
             DATA = _local_df
