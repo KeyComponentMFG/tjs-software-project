@@ -329,16 +329,19 @@ class ComputationAgent:
         m["draw_diff"] = _metric("draw_diff", draw_diff, Confidence.DERIVED,
                                   "ABS(tulsa_draw - texas_draw)", 0)
 
-        # ── Fee Breakdown ──
+        # ── Fee Breakdown (exclude credit entries from charge totals) ──
         listing_fees = journal.sum_abs_amount(
-            journal.title_contains(TxnType.FEE, "Listing fee"))
+            [e for e in journal.title_contains(TxnType.FEE, "Listing fee")
+             if "credit" not in e.title.lower()])
         transaction_fees_product = journal.sum_abs_amount(
             [e for e in journal.title_contains(TxnType.FEE, "Transaction fee:")
-             if "shipping" not in e.title.lower()])
+             if "shipping" not in e.title.lower() and "credit" not in e.title.lower()])
         transaction_fees_shipping = journal.sum_abs_amount(
-            journal.title_contains(TxnType.FEE, "Transaction fee: Shipping"))
+            [e for e in journal.title_contains(TxnType.FEE, "Transaction fee: Shipping")
+             if "credit" not in e.title.lower()])
         processing_fees = journal.sum_abs_amount(
-            journal.title_contains(TxnType.FEE, "Processing fee"))
+            [e for e in journal.title_contains(TxnType.FEE, "Processing fee")
+             if "credit" not in e.title.lower()])
 
         credit_transaction = journal.sum_amount(
             journal.title_contains(TxnType.FEE, "Credit for transaction fee"))
@@ -392,7 +395,6 @@ class ComputationAgent:
                                             "SUM(Marketing WHERE 'Credit for Offsite')", 0, ["Marketing"])
 
         # ── Shipping Breakdown ──
-        usps_outbound = journal.title_contains(TxnType.SHIPPING, "USPS shipping label")
         # Exact match only (not return labels)
         usps_outbound = [e for e in journal.by_type(TxnType.SHIPPING)
                          if e.title == "USPS shipping label"]

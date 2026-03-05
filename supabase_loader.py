@@ -739,14 +739,21 @@ def sync_etsy_transactions(data_df) -> bool:
 
 def append_etsy_transactions(data_df) -> bool:
     """Add new Etsy rows to Supabase WITHOUT deleting existing data.
-    Used by Railway uploads where only the new CSV is on disk."""
+    Used by Railway uploads where only the new CSV is on disk.
+
+    Uses rank-based dedup: counts how many times each (date,type,title,info,amount,net)
+    key appears in Supabase vs the new CSV. Only inserts rows that exceed the existing
+    count for that key. This preserves legitimate duplicate listing fees ($0.20 each)
+    while preventing true cross-upload duplicates.
+    """
     client = _get_supabase_client()
     if client is None:
         print("append_etsy: no Supabase client")
         return False
     try:
-        # Fetch ALL existing rows to avoid duplicates (paginated)
-        existing_keys = set()
+        from collections import Counter
+        # Fetch ALL existing rows to count duplicates per key (paginated)
+        existing_counts = Counter()
         _offset = 0
         while True:
             batch = (client.table("etsy_transactions")
@@ -755,19 +762,23 @@ def append_etsy_transactions(data_df) -> bool:
                      .range(_offset, _offset + 999)
                      .execute())
             for r in batch.data:
-                existing_keys.add((r.get("date", ""), r.get("type", ""), r.get("title", ""),
-                                   r.get("info", ""), r.get("amount", ""), r.get("net", "")))
+                key = (r.get("date", ""), r.get("type", ""), r.get("title", ""),
+                       r.get("info", ""), r.get("amount", ""), r.get("net", ""))
+                existing_counts[key] += 1
             if len(batch.data) < 1000:
                 break
             _offset += 1000
-        print(f"append_etsy: found {len(existing_keys)} existing keys")
+        print(f"append_etsy: found {sum(existing_counts.values())} existing rows, {len(existing_counts)} unique keys")
 
-        rows = []
+        # Count occurrences of each key in the new data
+        new_counts = Counter()
+        new_rows_by_key = {}
         for _, r in data_df.iterrows():
             key = (str(r.get("Date", "")), str(r.get("Type", "")), str(r.get("Title", "")),
                    str(r.get("Info", "")), str(r.get("Amount", "")), str(r.get("Net", "")))
-            if key not in existing_keys:
-                rows.append({
+            new_counts[key] += 1
+            if key not in new_rows_by_key:
+                new_rows_by_key[key] = {
                     "date": str(r.get("Date", "")),
                     "type": str(r.get("Type", "")),
                     "title": str(r.get("Title", "")),
@@ -777,7 +788,16 @@ def append_etsy_transactions(data_df) -> bool:
                     "fees_and_taxes": str(r.get("Fees & Taxes", "--")),
                     "net": str(r.get("Net", "--")),
                     "tax_details": str(r.get("Tax Details", "--")),
-                })
+                }
+
+        # Insert only the EXCESS rows: new_count - existing_count for each key
+        rows = []
+        for key, new_count in new_counts.items():
+            excess = new_count - existing_counts.get(key, 0)
+            if excess > 0:
+                row_data = new_rows_by_key[key]
+                rows.extend([row_data.copy() for _ in range(excess)])
+
         if rows:
             for i in range(0, len(rows), 500):
                 client.table("etsy_transactions").insert(rows[i:i+500]).execute()
