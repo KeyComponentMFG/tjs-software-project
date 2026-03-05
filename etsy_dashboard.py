@@ -1464,24 +1464,15 @@ def _cascade_reload(source="etsy"):
 
     Call this after _reload_etsy_data, _reload_bank_data, or _reload_inventory_data
     to ensure globals that span multiple data sources stay consistent.
+
+    Order matters: pipeline FIRST (updates etsy_balance, gross_sales, etc.),
+    THEN derived metrics (bank_cash_on_hand, real_profit) that depend on them.
     """
     global real_profit, real_profit_margin, bank_cash_on_hand, bank_all_expenses
     global profit, profit_margin, receipt_cogs_outside_bank
     global bank_amazon_inv
 
-    # bank_cash_on_hand depends on bank_net_cash + etsy_balance
-    bank_cash_on_hand = _safe(bank_net_cash) + _safe(etsy_balance)
-    # real_profit depends on bank_cash_on_hand + bank_owner_draw_total
-    real_profit = bank_cash_on_hand + _safe(bank_owner_draw_total)
-    real_profit_margin = (real_profit / _safe(gross_sales) * 100) if _safe(gross_sales) else 0
-
-    # All spending flows through the bank; CC balance is a liability, not expense
-    bank_amazon_inv = bank_by_cat.get("Amazon Inventory", 0)
-    receipt_cogs_outside_bank = 0
-    profit = real_profit
-    profit_margin = (profit / _safe(gross_sales) * 100) if _safe(gross_sales) else 0
-
-    # Re-run accounting pipeline if available (Decimal precision + validation)
+    # 1. Run pipeline FIRST to update all base metrics (etsy_balance, gross_sales, etc.)
     if _acct_pipeline is not None:
         try:
             _sm = getattr(_acct_pipeline, '_strict_mode', False)
@@ -1490,8 +1481,20 @@ def _cascade_reload(source="etsy"):
             print(f"[Dashboard] Pipeline rebuilt after {source} reload: {_acct_pipeline.ledger.summary()}")
         except Exception as e:
             print(f"WARNING: Pipeline rebuild failed after {source} reload: {e}")
+            import traceback
+            traceback.print_exc()
 
-    # Recompute all derived metrics and charts
+    # 2. THEN compute derived metrics using the UPDATED base metrics
+    bank_cash_on_hand = _safe(bank_net_cash) + _safe(etsy_balance)
+    real_profit = bank_cash_on_hand + _safe(bank_owner_draw_total)
+    real_profit_margin = (real_profit / _safe(gross_sales) * 100) if _safe(gross_sales) else 0
+
+    bank_amazon_inv = bank_by_cat.get("Amazon Inventory", 0)
+    receipt_cogs_outside_bank = 0
+    profit = real_profit
+    profit_margin = (profit / _safe(gross_sales) * 100) if _safe(gross_sales) else 0
+
+    # 3. Recompute all derived metrics and charts
     _recompute_shipping_details()
     _recompute_analytics()
     _recompute_tax_years()
@@ -14599,6 +14602,7 @@ def init_datahub_files(_trigger):
 # ── Data Hub: Upload Callback ───────────────────────────────────────────────
 
 @app.callback(
+    Output("tab-content", "children", allow_duplicate=True),
     Output("datahub-etsy-status", "children"),
     Output("datahub-etsy-files", "children", allow_duplicate=True),
     Output("datahub-etsy-stats", "children", allow_duplicate=True),
@@ -14623,7 +14627,12 @@ def init_datahub_files(_trigger):
 def handle_datahub_upload(etsy_contents, receipt_contents, bank_contents,
                           etsy_filename, receipt_filename, bank_filename,
                           activity_log):
-    """Handle file uploads from all 3 Data Hub zones."""
+    """Handle file uploads from all 3 Data Hub zones.
+
+    Rebuilds the full Data Hub tab content (tab-content) after upload so that
+    KPI cards, charts, and summaries refresh with the new data. The individual
+    datahub-* outputs update the upload status elements inside the rebuilt tab.
+    """
     global DATA, BANK_TXNS
     import datetime as _dt
 
@@ -14632,6 +14641,7 @@ def handle_datahub_upload(etsy_contents, receipt_contents, bank_contents,
     nu = dash.no_update  # shorthand
 
     # Initialize outputs — all no_update by default
+    tab_content = nu  # rebuilt after successful upload
     etsy_status, etsy_file_list, etsy_stats = nu, nu, nu
     rcpt_status, rcpt_file_list, rcpt_stats = nu, nu, nu
     bank_status, bank_file_list, bank_stats = nu, nu, nu
@@ -14918,7 +14928,17 @@ def handle_datahub_upload(etsy_contents, receipt_contents, bank_contents,
         except Exception as e:
             bank_status = html.Div(f"Error: {e}", style={"color": RED, "fontSize": "13px"})
 
-    return (etsy_status, etsy_file_list, etsy_stats,
+    # Rebuild the Data Hub tab so KPIs, charts, and summaries show fresh data.
+    # The individual datahub-* outputs are applied ON TOP of this rebuilt content.
+    if any(x is not nu for x in [etsy_status, rcpt_status, bank_status]):
+        try:
+            stale_banner = _build_stale_data_banner()
+            tab_content = html.Div([stale_banner, build_tab7_data_hub()])
+        except Exception as _tab_err:
+            print(f"WARNING: Tab rebuild after upload failed: {_tab_err}")
+
+    return (tab_content,
+            etsy_status, etsy_file_list, etsy_stats,
             rcpt_status, rcpt_file_list, rcpt_stats,
             bank_status, bank_file_list, bank_stats,
             new_log, summary, header)
