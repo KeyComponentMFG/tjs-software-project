@@ -84,12 +84,17 @@ class JournalEntry:
     category: str = ""       # Bank category (e.g., "Shipping", "Owner Draw - Tulsa")
     month: str = ""          # YYYY-MM
     currency: str = "USD"
+    sequence_num: int = 0              # Row index within source — prevents dedup of legitimate identical rows
     raw_row: dict = field(default_factory=dict, repr=False)  # Original data for audit
 
     @property
     def dedup_hash(self) -> str:
-        """Hash for deduplication: (source, date, type, amount, title/desc)."""
-        key = f"{self.source.value}|{self.txn_date}|{self.txn_type.value}|{self.amount}|{self.title}|{self.info}"
+        """Hash for deduplication: (source, date, type, amount, title/desc, sequence).
+
+        sequence_num ensures identical rows within the same source (e.g. multiple
+        $0.20 listing fees on the same day) get unique hashes.
+        """
+        key = f"{self.source.value}|{self.txn_date}|{self.txn_type.value}|{self.amount}|{self.title}|{self.info}|{self.sequence_num}"
         return hashlib.sha256(key.encode()).hexdigest()[:16]
 
 

@@ -234,6 +234,54 @@ JARVIS_TOOLS = [
             "properties": {},
         },
     },
+    {
+        "name": "get_data_freshness",
+        "description": (
+            "Check how fresh the dashboard data is — age of latest CSV uploads, "
+            "last bank statement date, and any staleness warnings. "
+            "Use when the user asks 'is my data up to date?' or for data freshness checks."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+        },
+    },
+    {
+        "name": "get_health_report",
+        "description": (
+            "Get a summary health report of all validation and data quality checks. "
+            "Includes validation passes/failures, expense completeness, reconciliation status. "
+            "Use when the user asks 'how healthy is my data?' or for an overall status check."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+        },
+    },
+    {
+        "name": "get_inventory_summary",
+        "description": (
+            "Get inventory stock levels, total spend by category, low-stock items, "
+            "and out-of-stock items. Use when the user asks about inventory status, "
+            "stock levels, or supply spending."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+        },
+    },
+    {
+        "name": "get_missing_receipts",
+        "description": (
+            "Get expense completeness details — which bank expenses have matching receipts "
+            "and which are missing. Shows verification progress and gap amounts by category. "
+            "Use when the user asks about receipt tracking or expense verification."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+        },
+    },
 ]
 
 # ---------------------------------------------------------------------------
@@ -574,6 +622,151 @@ def _handle_get_validation(params: dict, pipeline) -> dict:
     }
 
 
+def _handle_get_data_freshness(params: dict, pipeline) -> dict:
+    """Check how fresh the data is."""
+    journal = pipeline.journal
+    etsy = journal.etsy_entries()
+    bank = journal.bank_entries()
+
+    result = {"status": "ok"}
+
+    if etsy:
+        latest_etsy = max(e.txn_date for e in etsy)
+        days_old = (date.today() - latest_etsy).days
+        result["latest_etsy_date"] = latest_etsy.isoformat()
+        result["etsy_days_old"] = days_old
+        result["etsy_stale"] = days_old > 7
+    else:
+        result["latest_etsy_date"] = None
+        result["etsy_stale"] = True
+
+    if bank:
+        latest_bank = max(e.txn_date for e in bank)
+        bank_days = (date.today() - latest_bank).days
+        result["latest_bank_date"] = latest_bank.isoformat()
+        result["bank_days_old"] = bank_days
+        result["bank_stale"] = bank_days > 14
+    else:
+        result["latest_bank_date"] = None
+        result["bank_stale"] = True
+
+    warnings = []
+    if result.get("etsy_stale"):
+        warnings.append(f"Etsy data is {result.get('etsy_days_old', '?')} days old — download latest CSV from Etsy.")
+    if result.get("bank_stale"):
+        warnings.append(f"Bank data is {result.get('bank_days_old', '?')} days old — upload latest statement.")
+    result["warnings"] = warnings
+    return result
+
+
+def _handle_get_health_report(params: dict, pipeline) -> dict:
+    """Overall health report combining all checks."""
+    result = {"status": "ok", "checks": []}
+
+    # Validation checks
+    ledger = pipeline.ledger
+    if ledger and ledger.validations:
+        for v in ledger.validations:
+            result["checks"].append({
+                "name": v.check_name,
+                "passed": v.passed,
+                "severity": v.severity,
+                "message": v.message,
+            })
+
+    # Expense completeness
+    expense = pipeline.get_expense_completeness()
+    if expense:
+        total_expenses = len(expense.receipt_matches) + len(expense.missing_receipts)
+        result["expense_completeness"] = {
+            "verified": len(expense.receipt_matches),
+            "missing": len(expense.missing_receipts),
+            "total": total_expenses,
+            "pct": round(len(expense.receipt_matches) / max(total_expenses, 1) * 100, 1),
+            "gap_amount": f"${float(expense.gap_total):,.2f}",
+        }
+
+    # Reconciliation
+    recon = pipeline.get_reconciliation_result()
+    if recon:
+        result["reconciliation"] = {
+            "matched": len(recon.matched),
+            "etsy_unmatched": len(recon.etsy_unmatched),
+            "bank_unmatched": len(recon.bank_unmatched),
+        }
+
+    # Data freshness
+    freshness = _handle_get_data_freshness({}, pipeline)
+    result["freshness"] = freshness
+
+    passed = sum(1 for c in result["checks"] if c["passed"])
+    total = len(result["checks"])
+    result["summary"] = f"{passed}/{total} checks passed"
+    return result
+
+
+def _handle_get_inventory_summary(params: dict, pipeline) -> dict:
+    """Get inventory stock levels and spend summary."""
+    # Import at call time to avoid circular imports
+    import sys
+    mod = sys.modules.get("etsy_dashboard")
+    if not mod:
+        return {"status": "error", "message": "Dashboard module not loaded."}
+
+    result = {"status": "ok"}
+    skpi_fn = getattr(mod, "_compute_stock_kpis", None)
+    if skpi_fn:
+        try:
+            skpi = skpi_fn()
+            result["stock"] = {
+                "in_stock": skpi.get("in_stock", 0),
+                "unique_items": skpi.get("unique", 0),
+                "low_stock": skpi.get("low", 0),
+                "out_of_stock": skpi.get("oos", 0),
+                "total_value": f"${skpi.get('value', 0):,.2f}",
+            }
+        except Exception:
+            result["stock"] = "unavailable"
+
+    inv_cost = getattr(mod, "true_inventory_cost", 0)
+    inv_orders = getattr(mod, "inv_order_count", 0)
+    result["spend"] = {
+        "total_inventory_cost": f"${inv_cost:,.2f}",
+        "total_orders": inv_orders,
+    }
+    return result
+
+
+def _handle_get_missing_receipts(params: dict, pipeline) -> dict:
+    """Get expense completeness details."""
+    expense = pipeline.get_expense_completeness()
+    if not expense:
+        return {"status": "ok", "message": "No expense completeness data available."}
+
+    total = len(expense.receipt_matches) + len(expense.missing_receipts)
+    result = {
+        "status": "ok",
+        "verified_count": len(expense.receipt_matches),
+        "missing_count": len(expense.missing_receipts),
+        "total_expenses": total,
+        "pct_verified": round(len(expense.receipt_matches) / max(total, 1) * 100, 1),
+        "verified_total": f"${float(expense.receipt_verified_total):,.2f}",
+        "gap_total": f"${float(expense.gap_total):,.2f}",
+        "by_category": {
+            k: {kk: (f"${float(vv):,.2f}" if isinstance(vv, Decimal) else vv)
+                for kk, vv in v.items()}
+            for k, v in expense.by_category.items()
+        },
+        "top_missing": [
+            {"vendor": m.vendor, "amount": f"${float(abs(m.amount)):,.2f}",
+             "date": m.date.isoformat(), "category": m.bank_category}
+            for m in sorted(expense.missing_receipts,
+                           key=lambda x: abs(x.amount), reverse=True)[:10]
+        ],
+    }
+    return result
+
+
 # ---------------------------------------------------------------------------
 # C2. Tool dispatcher
 # ---------------------------------------------------------------------------
@@ -587,6 +780,10 @@ _TOOL_HANDLERS = {
     "compare_periods": _handle_compare_periods,
     "get_reconciliation": _handle_get_reconciliation,
     "get_validation": _handle_get_validation,
+    "get_data_freshness": _handle_get_data_freshness,
+    "get_health_report": _handle_get_health_report,
+    "get_inventory_summary": _handle_get_inventory_summary,
+    "get_missing_receipts": _handle_get_missing_receipts,
 }
 
 

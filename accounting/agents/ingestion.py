@@ -106,7 +106,7 @@ class IngestionAgent:
         Returns count of new entries added.
         """
         count = 0
-        for _, row in df.iterrows():
+        for seq_num, (_, row) in enumerate(df.iterrows()):
             txn_type_str = str(row.get("Type", ""))
             txn_type = _etsy_txn_type(txn_type_str)
 
@@ -142,6 +142,7 @@ class IngestionAgent:
                 source_file=source_file,
                 month=month,
                 currency=str(row.get("Currency", "USD")),
+                sequence_num=seq_num,
                 raw_row={
                     "deposit_parsed_amount": str(deposit_amount),
                     "date_str": date_str,
@@ -159,7 +160,7 @@ class IngestionAgent:
         Returns count of new entries added.
         """
         count = 0
-        for t in bank_txns:
+        for seq_num, t in enumerate(bank_txns):
             txn_date = _parse_bank_date(t["date"])
             amount = Decimal(str(t["amount"]))
             txn_type = TxnType.BANK_DEPOSIT if t["type"] == "deposit" else TxnType.BANK_DEBIT
@@ -182,6 +183,7 @@ class IngestionAgent:
                 source_file=t.get("source_file", ""),
                 category=category,
                 month=txn_date.strftime("%Y-%m"),
+                sequence_num=seq_num,
                 raw_row=t,
             )
             if journal.add(entry):

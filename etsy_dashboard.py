@@ -6,7 +6,7 @@ Open: http://127.0.0.1:8070
 
 import dash
 import dash_bootstrap_components as dbc
-from dash import dcc, html, callback_context
+from dash import dcc, html, callback_context, dash_table
 from dash.dependencies import Input, Output, State, MATCH, ALL
 import json
 import re
@@ -188,13 +188,24 @@ if _etsy_frames:
     _sb_data = _sb["DATA"]
     _dedup_startup_cols = ["Date", "Type", "Title", "Info", "Amount", "Fees & Taxes", "Net"]
     if len(_sb_data) > 0:
-        # Merge both sources — normalise NaN/'nan' so dedup works across CSV vs Supabase
+        # Tag each source with a row index so identical rows within the same source
+        # (e.g. multiple $0.20 listing fees on the same day) survive dedup, while
+        # true cross-source duplicates still collapse.
+        _sb_data = _sb_data.copy()
+        _sb_data["_src_tag"] = "sb"
+        _sb_data["_row_idx"] = range(len(_sb_data))
+        _local_data = _local_data.copy()
+        _local_data["_src_tag"] = "local"
+        _local_data["_row_idx"] = range(len(_local_data))
+        # Normalise NaN/'nan' so dedup works across CSV vs Supabase
         for _dc in _dedup_startup_cols:
             _sb_data[_dc] = _sb_data[_dc].fillna("").replace("nan", "")
             _local_data[_dc] = _local_data[_dc].fillna("").replace("nan", "")
+        _dedup_cols_with_idx = _dedup_startup_cols + ["_src_tag", "_row_idx"]
         DATA = pd.concat([_sb_data, _local_data], ignore_index=True).drop_duplicates(
-            subset=_dedup_startup_cols, keep="last"
+            subset=_dedup_cols_with_idx, keep="last"
         )
+        DATA = DATA.drop(columns=["_src_tag", "_row_idx"])
         print(f"Merged {len(_local_data)} local + {len(_sb_data)} Supabase -> {len(DATA)} unique Etsy rows")
     else:
         DATA = _local_data
@@ -803,11 +814,22 @@ try:
     _acct_pipeline.full_rebuild(DATA, BANK_TXNS, CONFIG, invoices=INVOICES)
     _publish_to_globals(_acct_pipeline, __name__)
     print(f"[Dashboard] Accounting pipeline active: {_acct_pipeline.ledger.summary()}")
+
+    # Run CEO Agent startup check (21 agents)
+    from accounting.agents.ceo import CEOAgent
+    _ceo_agent = CEOAgent()
+    _ceo_health = _ceo_agent.run_startup_check(_acct_pipeline)
 except Exception as _pipe_err:
     print(f"WARNING: Accounting pipeline failed, using legacy calculations: {_pipe_err}")
     import traceback
     traceback.print_exc()
     _acct_pipeline = None
+
+try:
+    _ceo_agent
+except NameError:
+    _ceo_agent = None
+    _ceo_health = None
 
 # ── Expense completeness globals (defaults if pipeline didn't set them) ──
 try:
@@ -826,6 +848,10 @@ try:
     expense_by_category
 except NameError:
     expense_by_category = {}
+try:
+    expense_matched_count
+except NameError:
+    expense_matched_count = 0
 try:
     expense_missing_receipts
 except NameError:
@@ -3803,6 +3829,119 @@ def make_chart(fig, height=360, legend_h=True):
     return fig
 
 
+def _build_stale_data_banner():
+    """Orange banner shown on ALL tabs when data is >7 days old."""
+    if not _ceo_health:
+        return html.Div()
+    freshness = [r for r in _ceo_health.results if r.agent_name == "DataFreshness"]
+    if freshness and not freshness[0].passed:
+        return html.Div([
+            html.Span("DATA MAY BE STALE", style={"color": ORANGE, "fontWeight": "bold",
+                                                    "fontSize": "12px", "letterSpacing": "1px"}),
+            html.Span(f" — {freshness[0].message}. Upload latest in Data Hub.",
+                      style={"color": GRAY, "fontSize": "11px"}),
+        ], style={"backgroundColor": "#1a1000", "border": f"1px solid {ORANGE}33",
+                  "borderRadius": "6px", "padding": "6px 14px", "marginBottom": "8px"})
+    return html.Div()
+
+
+def _build_jarvis_auto_briefing():
+    """Build the auto-briefing text for Jarvis greeting."""
+    lines = []
+
+    # CEO findings
+    if _ceo_health:
+        for alert in _ceo_health.critical_alerts:
+            lines.append(f"X {alert.message}")
+        for alert in _ceo_health.warning_alerts[:3]:
+            lines.append(f"! {alert.message}")
+        if not _ceo_health.critical_alerts and not _ceo_health.warning_alerts:
+            lines.append("All validation checks passing.")
+
+    # Missing receipts
+    try:
+        if expense_missing_receipts:
+            gap = expense_gap if expense_gap else 0
+            lines.append(f"! {len(expense_missing_receipts)} expenses missing receipts (${gap:,.0f} unverified).")
+    except NameError:
+        pass
+
+    # Profit margin
+    try:
+        if profit_margin is not None:
+            lines.append(f"Profit margin at {profit_margin:.1f}%.")
+    except NameError:
+        pass
+
+    if not lines:
+        lines.append("I'm JARVIS, your AI business intelligence advisor. Ask me anything!")
+
+    return "\n".join(lines)
+
+
+def _build_ceo_banner():
+    """Build the CEO agent alert banner from latest health report."""
+    if not _ceo_health:
+        return html.Div()
+
+    alerts = _ceo_health.alerts
+    if not alerts:
+        return html.Div()
+
+    children = []
+    for alert in alerts[:5]:  # Cap at 5 visible alerts
+        if alert.level == "critical":
+            color, icon = RED, "X"
+        elif alert.level == "warning":
+            color, icon = ORANGE, "!"
+        else:
+            color, icon = CYAN, "i"
+
+        children.append(html.Div([
+            html.Span(f" {icon} ", style={"color": color, "fontWeight": "bold",
+                                          "fontSize": "12px", "marginRight": "6px",
+                                          "backgroundColor": f"{color}22",
+                                          "padding": "1px 6px", "borderRadius": "3px"}),
+            html.Span(f"{alert.agent}: ", style={"color": color, "fontWeight": "bold",
+                                                  "fontSize": "12px"}),
+            html.Span(alert.message, style={"color": GRAY, "fontSize": "12px"}),
+        ], style={"padding": "2px 0"}))
+
+    if len(alerts) > 5:
+        children.append(html.Span(f"... and {len(alerts) - 5} more",
+                                  style={"color": GRAY, "fontSize": "11px"}))
+
+    return html.Div(children, style={
+        "backgroundColor": "#1a1000", "border": f"1px solid {ORANGE}33",
+        "borderRadius": "6px", "padding": "8px 14px", "margin": "0 16px 8px 16px",
+    })
+
+
+def _strict_banner(message="Only VERIFIED metrics shown. Estimates, projections, and scores are hidden."):
+    """Reusable strict mode warning banner for all tabs."""
+    return html.Div([
+        html.Span("STRICT MODE", style={"color": RED, "fontWeight": "bold", "fontSize": "13px", "letterSpacing": "1px"}),
+        html.Span(f" — {message}", style={"color": ORANGE, "fontSize": "12px"}),
+    ], style={"backgroundColor": "#1a0000", "border": f"1px solid {RED}44", "borderRadius": "6px",
+              "padding": "8px 14px", "marginBottom": "10px"})
+
+
+def _no_data_fig(title="No Data Available", message="Upload data to populate this chart.", height=300):
+    """Styled placeholder figure shown when chart has no data."""
+    fig = go.Figure()
+    fig.add_annotation(
+        text=f"<b>{title}</b><br><span style='font-size:12px;color:#888'>{message}</span>",
+        xref="paper", yref="paper", x=0.5, y=0.5,
+        showarrow=False, font=dict(size=16, color="#666"),
+        align="center",
+    )
+    fig.update_layout(
+        **CHART_LAYOUT, height=height,
+        xaxis=dict(visible=False), yaxis=dict(visible=False),
+    )
+    return fig
+
+
 def txn_row(t, color=GRAY, reason=""):
     return html.Div([
         html.Span(t["date"], style={"color": GRAY, "fontSize": "11px", "width": "70px", "display": "inline-block"}),
@@ -4192,8 +4331,8 @@ def _rebuild_all_charts():
     rev_inv_fig.update_yaxes(title_text="Supply Cost Ratio (%)", secondary_y=True, showgrid=False)
 
     # 10) Inventory category breakdown (what you're spending on)
-    inv_cat_bar = go.Figure()
     if len(biz_inv_by_category) > 0:
+        inv_cat_bar = go.Figure()
         _cat_names = biz_inv_by_category.index.tolist()
         _cat_vals = biz_inv_by_category.values.tolist()
         _cat_colors = [PURPLE, TEAL, BLUE, GREEN, ORANGE, RED, PINK, CYAN, GRAY, DARKGRAY]
@@ -4202,9 +4341,11 @@ def _rebuild_all_charts():
             marker_color=_cat_colors[:len(_cat_names)],
             text=[f"${v:,.0f}" for v in _cat_vals], textposition="outside",
         ))
-    make_chart(inv_cat_bar, 320, False)
-    inv_cat_bar.update_layout(title="Inventory Spend by Category", yaxis_title="Amount ($)",
-                              xaxis_tickangle=-25, xaxis_tickfont=dict(size=10))
+        make_chart(inv_cat_bar, 320, False)
+        inv_cat_bar.update_layout(title="Inventory Spend by Category", yaxis_title="Amount ($)",
+                                  xaxis_tickangle=-25, xaxis_tickfont=dict(size=10))
+    else:
+        inv_cat_bar = _no_data_fig("Inventory Spend by Category", "Upload invoices to see inventory breakdown.")
 
     # 11) Anomaly detection (z-score on daily revenue)
     _daily_rev_mean = daily_df["revenue"].mean()
@@ -4267,9 +4408,7 @@ def _rebuild_all_charts():
         product_heat.update_layout(title="Product Revenue Heatmap (Top 8 by Month)",
                                    yaxis=dict(tickfont=dict(size=10)))
     else:
-        product_heat = go.Figure()
-        product_heat.add_annotation(text="No product data available", showarrow=False)
-        make_chart(product_heat, 200, False)
+        product_heat = _no_data_fig("Product Revenue Heatmap", "Need 3+ months of sales data for heatmap.")
 
     # 13) Correlation: Ads Spend vs Sales (monthly)
     corr_fig = go.Figure()
@@ -4344,27 +4483,34 @@ def _rebuild_all_charts():
         loc_fig.update_layout(title="Inventory Orders by Location & Month", barmode="stack",
                               yaxis_title="Spend ($)")
     else:
-        make_chart(loc_fig, 200, False)
+        loc_fig = _no_data_fig("Inventory by Location", "Upload invoices to see Tulsa vs Texas split.", 200)
 
     # 16) Cash flow timeline (deposits - expenses by month)
-    cashflow_fig = go.Figure()
     _cf_months = sorted(bank_monthly.keys())
-    _cf_deposits = [bank_monthly[m]["deposits"] for m in _cf_months]
-    _cf_debits = [bank_monthly[m]["debits"] for m in _cf_months]
-    _cf_net = [bank_monthly[m]["deposits"] - bank_monthly[m]["debits"] for m in _cf_months]
-    _cf_cum = list(np.cumsum(_cf_net))
-    cashflow_fig.add_trace(go.Bar(name="Deposits", x=_cf_months, y=_cf_deposits, marker_color=GREEN, opacity=0.7))
-    cashflow_fig.add_trace(go.Bar(name="Expenses", x=_cf_months, y=[-d for d in _cf_debits], marker_color=RED, opacity=0.7))
-    cashflow_fig.add_trace(go.Scatter(name="Net Cash Flow", x=_cf_months, y=_cf_net,
-        mode="lines+markers+text", text=[f"${v:,.0f}" for v in _cf_net],
-        textposition="top center", textfont=dict(color=CYAN, size=10),
-        line=dict(color=CYAN, width=3), marker=dict(size=8)))
-    make_chart(cashflow_fig, 340)
-    cashflow_fig.update_layout(title="CASH BASIS — Bank Deposits vs Expenses by Month", barmode="relative",
-                               yaxis_title="Amount ($)")
-    cashflow_fig.add_annotation(text="Cash flow = actual bank deposits minus actual bank debits. Not accrual-basis profit.",
-                                xref="paper", yref="paper", x=0.5, y=1.08, showarrow=False,
-                                font=dict(size=10, color=GRAY), xanchor="center")
+    if not _cf_months:
+        cashflow_fig = _no_data_fig("Bank Cash Flow", "Upload bank statements to see cash flow.")
+        _cf_deposits = []
+        _cf_debits = []
+        _cf_net = []
+        _cf_cum = []
+    else:
+        cashflow_fig = go.Figure()
+        _cf_deposits = [bank_monthly[m]["deposits"] for m in _cf_months]
+        _cf_debits = [bank_monthly[m]["debits"] for m in _cf_months]
+        _cf_net = [bank_monthly[m]["deposits"] - bank_monthly[m]["debits"] for m in _cf_months]
+        _cf_cum = list(np.cumsum(_cf_net))
+        cashflow_fig.add_trace(go.Bar(name="Deposits", x=_cf_months, y=_cf_deposits, marker_color=GREEN, opacity=0.7))
+        cashflow_fig.add_trace(go.Bar(name="Expenses", x=_cf_months, y=[-d for d in _cf_debits], marker_color=RED, opacity=0.7))
+        cashflow_fig.add_trace(go.Scatter(name="Net Cash Flow", x=_cf_months, y=_cf_net,
+            mode="lines+markers+text", text=[f"${v:,.0f}" for v in _cf_net],
+            textposition="top center", textfont=dict(color=CYAN, size=10),
+            line=dict(color=CYAN, width=3), marker=dict(size=8)))
+        make_chart(cashflow_fig, 340)
+        cashflow_fig.update_layout(title="CASH BASIS — Bank Deposits vs Expenses by Month", barmode="relative",
+                                   yaxis_title="Amount ($)")
+        cashflow_fig.add_annotation(text="Cash flow = actual bank deposits minus actual bank debits. Not accrual-basis profit.",
+                                    xref="paper", yref="paper", x=0.5, y=1.08, showarrow=False,
+                                    font=dict(size=10, color=GRAY), xanchor="center")
 
     # 17) Break-even analysis
     _monthly_fixed = (bank_biz_expense_total + total_marketing) / _val_months_operating if _val_months_operating else 0
@@ -4389,7 +4535,7 @@ def _rebuild_all_charts():
     # --- TAB 3: AI ANALYTICS BOT CHARTS ---
 
     # Revenue projection chart
-    proj_chart = go.Figure()
+    proj_chart = _no_data_fig("Revenue Projection", "Need 3+ months of data for projections.")
     if "proj_sales" in analytics_projections:
         proj_chart.add_trace(go.Scatter(
             name="Actual Sales", x=months_sorted,
@@ -4528,21 +4674,24 @@ def _rebuild_all_charts():
     # --- TAB 7: INVENTORY / COGS CHARTS ---
 
     # Monthly inventory spend bar chart
-    inv_monthly_fig = go.Figure()
     inv_months_sorted = sorted(monthly_inv_spend.index)
-    inv_monthly_fig.add_trace(go.Bar(
-        name="Inventory Spend", x=inv_months_sorted,
-        y=[monthly_inv_spend.get(m, 0) for m in inv_months_sorted],
-        marker_color=PURPLE,
-        text=[f"${monthly_inv_spend.get(m, 0):,.0f}" for m in inv_months_sorted],
-        textposition="outside",
-    ))
-    make_chart(inv_monthly_fig, 360)
-    inv_monthly_fig.update_layout(title="Monthly Supply Costs", yaxis_title="Amount ($)")
+    if len(inv_months_sorted) > 0:
+        inv_monthly_fig = go.Figure()
+        inv_monthly_fig.add_trace(go.Bar(
+            name="Inventory Spend", x=inv_months_sorted,
+            y=[monthly_inv_spend.get(m, 0) for m in inv_months_sorted],
+            marker_color=PURPLE,
+            text=[f"${monthly_inv_spend.get(m, 0):,.0f}" for m in inv_months_sorted],
+            textposition="outside",
+        ))
+        make_chart(inv_monthly_fig, 360)
+        inv_monthly_fig.update_layout(title="Monthly Supply Costs", yaxis_title="Amount ($)")
+    else:
+        inv_monthly_fig = _no_data_fig("Monthly Supply Costs", "Upload invoices to see monthly spending.")
 
     # Category breakdown donut
-    inv_cat_fig = go.Figure()
     if len(biz_inv_by_category) > 0:
+        inv_cat_fig = go.Figure()
         inv_cat_fig.add_trace(go.Pie(
             labels=biz_inv_by_category.index.tolist(),
             values=biz_inv_by_category.values.tolist(),
@@ -4551,8 +4700,10 @@ def _rebuild_all_charts():
             textinfo="label+percent",
             textposition="outside",
         ))
-    make_chart(inv_cat_fig, 380, False)
-    inv_cat_fig.update_layout(title="Inventory by Category (Business Only)", showlegend=False)
+        make_chart(inv_cat_fig, 380, False)
+        inv_cat_fig.update_layout(title="Inventory by Category (Business Only)", showlegend=False)
+    else:
+        inv_cat_fig = _no_data_fig("Inventory by Category", "Upload invoices to see category breakdown.")
 
     # Revenue vs COGS vs True Profit monthly bar chart
     rev_cogs_fig = go.Figure()
@@ -4611,26 +4762,30 @@ def _rebuild_all_charts():
     loc_monthly_fig.update_layout(title="Monthly Inventory Spend by Location", barmode="group", yaxis_title="Amount ($)")
 
     # TJ (Tulsa) category donut
-    tulsa_cat_fig = go.Figure()
     if len(tulsa_by_cat) > 0:
+        tulsa_cat_fig = go.Figure()
         tulsa_cat_fig.add_trace(go.Pie(
             labels=tulsa_by_cat.index.tolist(), values=tulsa_by_cat.values.tolist(),
             hole=0.45, marker_colors=[TEAL, BLUE, GREEN, PURPLE, CYAN, PINK, ORANGE, RED][:len(tulsa_by_cat)],
             textinfo="label+percent", textposition="outside",
         ))
-    make_chart(tulsa_cat_fig, 340, False)
-    tulsa_cat_fig.update_layout(title="TJ (Tulsa) - Categories", showlegend=False)
+        make_chart(tulsa_cat_fig, 340, False)
+        tulsa_cat_fig.update_layout(title="TJ (Tulsa) - Categories", showlegend=False)
+    else:
+        tulsa_cat_fig = _no_data_fig("TJ (Tulsa) Categories", "Upload Tulsa invoices to see categories.")
 
     # Braden (Texas) category donut
-    texas_cat_fig = go.Figure()
     if len(texas_by_cat) > 0:
+        texas_cat_fig = go.Figure()
         texas_cat_fig.add_trace(go.Pie(
             labels=texas_by_cat.index.tolist(), values=texas_by_cat.values.tolist(),
             hole=0.45, marker_colors=[ORANGE, RED, PURPLE, BLUE, TEAL, PINK, GREEN, CYAN][:len(texas_by_cat)],
             textinfo="label+percent", textposition="outside",
         ))
-    make_chart(texas_cat_fig, 340, False)
-    texas_cat_fig.update_layout(title="Braden (Texas) - Categories", showlegend=False)
+        make_chart(texas_cat_fig, 340, False)
+        texas_cat_fig.update_layout(title="Braden (Texas) - Categories", showlegend=False)
+    else:
+        texas_cat_fig = _no_data_fig("Braden (Texas) Categories", "Upload Texas invoices to see categories.")
 
     # --- TAB 8: BANK / CASH FLOW CHARTS ---
 
@@ -6544,6 +6699,103 @@ def _build_receipt_upload_section():
 
         ], id="receipt-wizard-panel", style={"display": "none"}),
 
+        # ── BATCH MODE: Editable DataTable for all items at once ──
+        html.Div([
+            html.Div([
+                html.Span("BATCH EDIT MODE", style={"color": GREEN, "fontWeight": "bold", "fontSize": "14px"}),
+                html.Span(" — Edit all items at once, then save with one click.",
+                          style={"color": GRAY, "fontSize": "12px", "marginLeft": "8px"}),
+            ], style={"marginBottom": "8px"}),
+            dash_table.DataTable(
+                id="batch-items-table",
+                columns=[
+                    {"name": "Item Name", "id": "name", "editable": True},
+                    {"name": "Category", "id": "category", "presentation": "dropdown", "editable": True},
+                    {"name": "Qty", "id": "qty", "type": "numeric", "editable": True},
+                    {"name": "Price", "id": "price", "type": "numeric", "editable": False},
+                    {"name": "Location", "id": "location", "presentation": "dropdown", "editable": True},
+                ],
+                data=[],
+                dropdown={
+                    "category": {"options": [
+                        {"label": c, "value": c} for c in sorted([
+                            "3D Printing", "Electronics & Components", "Tools & Equipment",
+                            "Packaging & Shipping", "Craft Supplies", "Office Supplies",
+                            "Labels & Stickers", "Resin & Molds", "Vinyl & HTV",
+                            "Wood & Laser", "Fabric & Sewing", "Paint & Finishing",
+                            "Storage & Organization", "Business Services", "Other",
+                        ])
+                    ]},
+                    "location": {"options": [
+                        {"label": "Tulsa, OK", "value": "Tulsa, OK"},
+                        {"label": "Texas", "value": "Texas"},
+                    ]},
+                },
+                style_table={"overflowX": "auto"},
+                style_header={
+                    "backgroundColor": "#1a1a2e", "color": CYAN,
+                    "fontWeight": "bold", "fontSize": "12px",
+                    "border": f"1px solid {CYAN}33",
+                },
+                style_cell={
+                    "backgroundColor": CARD, "color": WHITE,
+                    "border": f"1px solid {DARKGRAY}33", "fontSize": "12px",
+                    "padding": "6px 10px", "textAlign": "left",
+                },
+                style_data_conditional=[
+                    {"if": {"state": "active"}, "backgroundColor": f"{CYAN}15",
+                     "border": f"1px solid {CYAN}"},
+                ],
+                editable=True,
+                row_deletable=True,
+            ),
+            html.Div([
+                html.Button("Save All Items", id="batch-save-btn", n_clicks=0,
+                            style={"fontSize": "13px", "padding": "10px 28px",
+                                   "backgroundColor": GREEN, "color": WHITE,
+                                   "border": "none", "borderRadius": "6px",
+                                   "cursor": "pointer", "fontWeight": "bold",
+                                   "marginTop": "10px",
+                                   "boxShadow": f"0 2px 8px {GREEN}33"}),
+                html.Span(id="batch-save-status", style={"color": GRAY, "fontSize": "12px",
+                                                          "marginLeft": "10px"}),
+            ]),
+        ], id="batch-mode-panel", style={"display": "none", "marginTop": "12px",
+                                          "padding": "12px", "backgroundColor": f"{GREEN}08",
+                                          "borderRadius": "6px", "border": f"1px solid {GREEN}33"}),
+
+        # ── CSV PASTE IMPORT ──
+        html.Details([
+            html.Summary([
+                html.Span("\u25b6 ", style={"fontSize": "12px"}),
+                html.Span("CSV PASTE IMPORT", style={"fontWeight": "bold"}),
+                html.Span(" — Paste CSV data (Name, Qty, Price, Category)", style={"color": GRAY, "fontWeight": "normal", "fontSize": "12px"}),
+            ], style={"color": TEAL, "fontSize": "13px", "fontWeight": "bold",
+                      "cursor": "pointer", "padding": "8px 12px", "listStyle": "none",
+                      "backgroundColor": "#ffffff08", "borderRadius": "6px",
+                      "border": f"1px solid {TEAL}33", "marginTop": "10px"}),
+            html.Div([
+                dcc.Textarea(
+                    id="csv-paste-input",
+                    placeholder="Paste CSV data here:\nItem Name, Qty, Price, Category\nWidget A, 5, 2.99, Electronics\nWidget B, 10, 1.50, Craft Supplies",
+                    style={"width": "100%", "height": "120px", "backgroundColor": CARD,
+                           "color": WHITE, "border": f"1px solid {TEAL}33",
+                           "borderRadius": "6px", "padding": "10px", "fontSize": "12px",
+                           "fontFamily": "monospace", "resize": "vertical"},
+                ),
+                html.Div([
+                    html.Button("Import All", id="csv-import-btn", n_clicks=0,
+                                style={"fontSize": "12px", "padding": "8px 20px",
+                                       "backgroundColor": TEAL, "color": WHITE,
+                                       "border": "none", "borderRadius": "6px",
+                                       "cursor": "pointer", "fontWeight": "bold",
+                                       "marginTop": "8px"}),
+                    html.Span(id="csv-import-status", style={"color": GRAY, "fontSize": "12px",
+                                                              "marginLeft": "10px"}),
+                ]),
+            ], style={"padding": "10px"}),
+        ], style={"marginTop": "8px"}),
+
     ], style={"backgroundColor": CARD, "padding": "16px", "borderRadius": "10px",
               "marginBottom": "14px", "border": f"1px solid {PURPLE}33",
               "borderLeft": f"4px solid {PURPLE}"})
@@ -6552,6 +6804,7 @@ def _build_receipt_upload_section():
 def build_tab4_inventory():
     """Tab 4 - Inventory: Business inventory only (personal items under Owner Draws).
     Reorganized with daily-workflow-first design: collapsible sections, snapshot banner."""
+    _sm = strict_mode if isinstance(strict_mode, bool) else False
     biz_order_count = len(BIZ_INV_DF)
     skpi = _compute_stock_kpis()
 
@@ -6664,6 +6917,9 @@ def build_tab4_inventory():
         )
 
     return html.Div([
+
+        # Strict mode banner
+        _strict_banner("Health scores and valuation estimates are hidden. Purchase records and stock levels still shown.") if _sm else html.Div(),
 
         # ══════════════════════════════════════════════════════════════════════
         # HEADER + KPI STRIP
@@ -8306,12 +8562,8 @@ def build_tab5_tax_forms():
 
     # Strict mode banner
     if _sm:
-        children.append(html.Div([
-            html.Span("STRICT MODE", style={"color": RED, "fontWeight": "bold", "fontSize": "13px", "letterSpacing": "1px"}),
-            html.Span(" — Income tax estimates use progressive brackets and assumptions. Treat as rough guidance only.",
-                      style={"color": ORANGE, "fontSize": "12px"}),
-        ], style={"backgroundColor": "#1a0000", "border": f"1px solid {RED}44", "borderRadius": "6px",
-                  "padding": "8px 14px", "marginBottom": "10px"}))
+        children.append(_strict_banner("Income tax estimates use progressive brackets and assumptions. "
+                                       "Estimated Tax Summary section is hidden. SE tax (derived from net income) still shown."))
 
     # ── Compute per-partner totals for summary bubbles ──
     _tj_total_tax = 0
@@ -8626,14 +8878,17 @@ def build_tab5_tax_forms():
         ], color=ORANGE))
 
     # ══════════════════════════════════════════════════════════════
-    # SECTION F: ESTIMATED TAX SUMMARY
+    # SECTION F: ESTIMATED TAX SUMMARY (hidden in strict mode)
     # ══════════════════════════════════════════════════════════════
-    children.append(html.H3("F: ESTIMATED TAX SUMMARY  (1040-ES)",
-                            style={"color": CYAN, "margin": "20px 0 10px 0",
-                                   "borderBottom": f"2px solid {CYAN}33", "paddingBottom": "6px"}))
-    children.append(html.P("Quarterly estimated tax payments due from each partner. "
-                           "Includes SE tax + estimated income tax (using progressive federal brackets).",
-                           style={"color": GRAY, "margin": "0 0 10px 0", "fontSize": "13px"}))
+    if _sm:
+        children.append(html.Div([
+            html.H3("F: ESTIMATED TAX SUMMARY  (1040-ES)",
+                     style={"color": GRAY, "margin": "20px 0 10px 0", "fontSize": "14px"}),
+            html.P("Hidden in strict mode — income tax estimates rely on progressive bracket assumptions. "
+                   "Toggle strict mode off to see quarterly payment estimates.",
+                   style={"color": ORANGE, "fontSize": "12px"}),
+        ], style={"backgroundColor": f"{RED}08", "border": f"1px solid {RED}22",
+                  "borderRadius": "6px", "padding": "10px 14px", "marginBottom": "10px"}))
 
     q_dates = {
         2025: [("Q4", "Jan 15, 2026", "Oct-Dec 2025")],
@@ -8643,64 +8898,65 @@ def build_tab5_tax_forms():
                ("Q4", "Jan 15, 2027", "Oct-Dec 2026")],
     }
 
-    for yr in (2025, 2026):
-        d = TAX_YEARS[yr]
-        gross_profit = d["gross_sales"] - d["refunds"] - d["cogs"]
-        total_deductions = (d["net_fees"] + d["shipping"] + d["marketing"]
-                            + d.get("bank_additional_expense", 0) + d["taxes_collected"] + d["buyer_fees"])
-        ordinary_income = gross_profit - total_deductions
-        partner_share = ordinary_income / 2
+    if not _sm:
+        for yr in (2025, 2026):
+            d = TAX_YEARS[yr]
+            gross_profit = d["gross_sales"] - d["refunds"] - d["cogs"]
+            total_deductions = (d["net_fees"] + d["shipping"] + d["marketing"]
+                                + d.get("bank_additional_expense", 0) + d["taxes_collected"] + d["buyer_fees"])
+            ordinary_income = gross_profit - total_deductions
+            partner_share = ordinary_income / 2
 
-        net_se = partner_share * 0.9235
-        ss_wage_base = 168600 if yr == 2025 else 176100
-        se_tax = min(net_se, ss_wage_base) * 0.124 + net_se * 0.029
-        se_deduction = se_tax / 2
+            net_se = partner_share * 0.9235
+            ss_wage_base = 168600 if yr == 2025 else 176100
+            se_tax = min(net_se, ss_wage_base) * 0.124 + net_se * 0.029
+            se_deduction = se_tax / 2
 
-        # Estimated income tax (progressive brackets)
-        taxable_income = partner_share - se_deduction  # after SE deduction
-        est_income_tax = _compute_income_tax(max(0, taxable_income))
-        total_annual_tax = se_tax + est_income_tax
-        num_quarters = len(q_dates[yr])
-        quarterly_payment = total_annual_tax / num_quarters if num_quarters else 0
+            # Estimated income tax (progressive brackets)
+            taxable_income = partner_share - se_deduction  # after SE deduction
+            est_income_tax = _compute_income_tax(max(0, taxable_income))
+            total_annual_tax = se_tax + est_income_tax
+            num_quarters = len(q_dates[yr])
+            quarterly_payment = total_annual_tax / num_quarters if num_quarters else 0
 
-        children.append(yr_header(yr))
+            children.append(yr_header(yr))
 
-        # Quarterly schedule table
-        q_rows = []
-        for q_label, due_date, period in q_dates[yr]:
-            q_rows.append(html.Tr([
-                html.Td(q_label, style={"color": CYAN, "padding": "6px 10px", "fontSize": "13px", "fontWeight": "bold"}),
-                html.Td(period, style={"color": GRAY, "padding": "6px 10px", "fontSize": "13px"}),
-                html.Td(due_date, style={"color": WHITE, "padding": "6px 10px", "fontSize": "13px"}),
-                html.Td(money(quarterly_payment), style={"color": RED, "padding": "6px 10px",
-                          "fontSize": "13px", "fontWeight": "bold", "fontFamily": "monospace", "textAlign": "right"}),
-            ], style={"borderBottom": "1px solid #ffffff10"}))
+            # Quarterly schedule table
+            q_rows = []
+            for q_label, due_date, period in q_dates[yr]:
+                q_rows.append(html.Tr([
+                    html.Td(q_label, style={"color": CYAN, "padding": "6px 10px", "fontSize": "13px", "fontWeight": "bold"}),
+                    html.Td(period, style={"color": GRAY, "padding": "6px 10px", "fontSize": "13px"}),
+                    html.Td(due_date, style={"color": WHITE, "padding": "6px 10px", "fontSize": "13px"}),
+                    html.Td(money(quarterly_payment), style={"color": RED, "padding": "6px 10px",
+                              "fontSize": "13px", "fontWeight": "bold", "fontFamily": "monospace", "textAlign": "right"}),
+                ], style={"borderBottom": "1px solid #ffffff10"}))
 
-        children.append(section(f"ESTIMATED TAX — {yr} (per partner)", [
-            html.Div([
-                kpi_card("SE TAX", money(se_tax), RED, "Per partner",
-                         f"Self-employment tax per partner: Social Security (12.4% on first ${ss_wage_base:,.0f}) + Medicare (2.9% on all earnings). Calculated on 92.35% of net self-employment income ({money(net_se)}). This replaces the employer/employee FICA split since you're self-employed."),
-                kpi_card("EST. INCOME TAX", money(est_income_tax), ORANGE, "progressive federal brackets",
-                         f"Estimated federal income tax on partnership share ({money(partner_share)}) minus half of SE tax deduction ({money(se_deduction)}). Uses progressive 2026 federal brackets (10% through 37%). Actual rate depends on total household income, filing status, and other deductions."),
-                kpi_card("TOTAL ANNUAL", money(total_annual_tax), RED, "Per partner",
-                         f"SE tax ({money(se_tax)}) + income tax ({money(est_income_tax)}) = {money(total_annual_tax)} per partner per year. This is what each partner needs to set aside for taxes."),
-                kpi_card("PER QUARTER", money(quarterly_payment), CYAN,
-                         f"{num_quarters} payment(s)",
-                         f"Divide annual tax ({money(total_annual_tax)}) by {num_quarters} quarters. Pay via IRS Form 1040-ES by each quarter's due date to avoid underpayment penalties (currently ~8% interest)."),
-            ], style={"display": "flex", "gap": "8px", "marginBottom": "12px", "flexWrap": "wrap"}),
-            html.Table([
-                html.Thead(html.Tr([
-                    html.Th("Quarter", style={"color": GRAY, "padding": "6px 10px", "fontSize": "11px", "textAlign": "left"}),
-                    html.Th("Period", style={"color": GRAY, "padding": "6px 10px", "fontSize": "11px", "textAlign": "left"}),
-                    html.Th("Due Date", style={"color": GRAY, "padding": "6px 10px", "fontSize": "11px", "textAlign": "left"}),
-                    html.Th("Amount (each)", style={"color": GRAY, "padding": "6px 10px", "fontSize": "11px", "textAlign": "right"}),
-                ], style={"borderBottom": f"2px solid {ORANGE}44"})),
-                html.Tbody(q_rows),
-            ], style={"width": "100%", "borderCollapse": "collapse"}),
-            html.P(f"Note: Income tax estimate uses progressive 2026 federal brackets (10% through 37%). "
-                   f"Actual rate depends on each partner's total taxable income and filing status.",
-                   style={"color": DARKGRAY, "fontSize": "11px", "marginTop": "10px", "fontStyle": "italic"}),
-        ], color=ORANGE))
+            children.append(section(f"ESTIMATED TAX — {yr} (per partner)", [
+                html.Div([
+                    kpi_card("SE TAX", money(se_tax), RED, "Per partner",
+                             f"Self-employment tax per partner: Social Security (12.4% on first ${ss_wage_base:,.0f}) + Medicare (2.9% on all earnings). Calculated on 92.35% of net self-employment income ({money(net_se)}). This replaces the employer/employee FICA split since you're self-employed."),
+                    kpi_card("EST. INCOME TAX", money(est_income_tax), ORANGE, "progressive federal brackets",
+                             f"Estimated federal income tax on partnership share ({money(partner_share)}) minus half of SE tax deduction ({money(se_deduction)}). Uses progressive 2026 federal brackets (10% through 37%). Actual rate depends on total household income, filing status, and other deductions."),
+                    kpi_card("TOTAL ANNUAL", money(total_annual_tax), RED, "Per partner",
+                             f"SE tax ({money(se_tax)}) + income tax ({money(est_income_tax)}) = {money(total_annual_tax)} per partner per year. This is what each partner needs to set aside for taxes."),
+                    kpi_card("PER QUARTER", money(quarterly_payment), CYAN,
+                             f"{num_quarters} payment(s)",
+                             f"Divide annual tax ({money(total_annual_tax)}) by {num_quarters} quarters. Pay via IRS Form 1040-ES by each quarter's due date to avoid underpayment penalties (currently ~8% interest)."),
+                ], style={"display": "flex", "gap": "8px", "marginBottom": "12px", "flexWrap": "wrap"}),
+                html.Table([
+                    html.Thead(html.Tr([
+                        html.Th("Quarter", style={"color": GRAY, "padding": "6px 10px", "fontSize": "11px", "textAlign": "left"}),
+                        html.Th("Period", style={"color": GRAY, "padding": "6px 10px", "fontSize": "11px", "textAlign": "left"}),
+                        html.Th("Due Date", style={"color": GRAY, "padding": "6px 10px", "fontSize": "11px", "textAlign": "left"}),
+                        html.Th("Amount (each)", style={"color": GRAY, "padding": "6px 10px", "fontSize": "11px", "textAlign": "right"}),
+                    ], style={"borderBottom": f"2px solid {ORANGE}44"})),
+                    html.Tbody(q_rows),
+                ], style={"width": "100%", "borderCollapse": "collapse"}),
+                html.P(f"Note: Income tax estimate uses progressive 2026 federal brackets (10% through 37%). "
+                       f"Actual rate depends on each partner's total taxable income and filing status.",
+                       style={"color": DARKGRAY, "fontSize": "11px", "marginTop": "10px", "fontStyle": "italic"}),
+            ], color=ORANGE))
 
     # ══════════════════════════════════════════════════════════════
     # SECTION G: TAX WRITE-OFFS & DEDUCTIONS
@@ -9866,12 +10122,7 @@ def build_tab1_overview():
     _sm = strict_mode if isinstance(strict_mode, bool) else False
 
     # Strict mode banner
-    _strict_banner = html.Div([
-        html.Span("STRICT MODE", style={"color": RED, "fontWeight": "bold", "fontSize": "13px", "letterSpacing": "1px"}),
-        html.Span(" — Only VERIFIED metrics shown. Estimates, projections, and scores are hidden.",
-                  style={"color": ORANGE, "fontSize": "12px"}),
-    ], style={"backgroundColor": "#1a0000", "border": f"1px solid {RED}44", "borderRadius": "6px",
-              "padding": "8px 14px", "marginBottom": "10px"}) if _sm else html.Div()
+    _strict_banner_ov = _strict_banner() if _sm else html.Div()
 
     # Missing receipts warning
     _missing_receipt_banner = html.Div([
@@ -9882,7 +10133,7 @@ def build_tab1_overview():
               "padding": "8px 14px", "marginBottom": "10px"}) if len(expense_missing_receipts) > 0 else html.Div()
 
     return html.Div([
-        _strict_banner,
+        _strict_banner_ov,
         _missing_receipt_banner,
         # KPI Strip (4 pills)
         html.Div([
@@ -10761,12 +11012,7 @@ def build_tab2_deep_dive():
         }))
 
     # Strict mode banner for deep dive
-    _strict_banner_dd = html.Div([
-        html.Span("STRICT MODE", style={"color": RED, "fontWeight": "bold", "fontSize": "13px", "letterSpacing": "1px"}),
-        html.Span(" — Only VERIFIED metrics shown. Estimates, projections, and scores are hidden.",
-                  style={"color": ORANGE, "fontSize": "12px"}),
-    ], style={"backgroundColor": "#1a0000", "border": f"1px solid {RED}44", "borderRadius": "6px",
-              "padding": "8px 14px", "marginBottom": "10px"}) if _sm else html.Div()
+    _strict_banner_dd = _strict_banner() if _sm else html.Div()
 
     return html.Div([
         _strict_banner_dd,
@@ -11168,23 +11414,29 @@ def build_tab2_deep_dive():
             ])
         ], style={"marginBottom": "14px", "display": "flex", "flexWrap": "wrap", "gap": "4px"}),
 
-        # Chat history
-        html.Div(id="chat-history", children=[
-            html.Div([
-                html.Div("Hi! I'm your Etsy data assistant. Ask me anything about your store's "
-                         "financial data -- revenue, products, shipping, fees, trends, and more. "
-                         "Type **help** to see example questions!",
-                    style={
+        # Chat history (wrapped in loading indicator)
+        dcc.Loading(type="dot", color=CYAN, children=[
+            html.Div(id="chat-history", children=[
+                html.Div([
+                    html.Div([
+                        html.Div("Good evening, sir. Here's your business briefing:",
+                                 style={"fontWeight": "bold", "marginBottom": "8px"}),
+                        html.Div(_build_jarvis_auto_briefing(),
+                                 style={"fontSize": "12px", "lineHeight": "1.6"}),
+                        html.Div("What would you like to dig into?",
+                                 style={"marginTop": "10px", "fontStyle": "italic", "color": GRAY}),
+                    ], style={
                         "backgroundColor": f"{CYAN}15", "border": f"1px solid {CYAN}33",
                         "borderRadius": "12px", "padding": "12px 16px", "maxWidth": "85%",
                         "color": WHITE, "fontSize": "13px", "whiteSpace": "pre-wrap",
                     }),
-            ], style={"display": "flex", "justifyContent": "flex-start", "marginBottom": "10px"}),
-        ], style={
-            "backgroundColor": CARD, "borderRadius": "10px", "padding": "16px",
-            "minHeight": "400px", "maxHeight": "600px", "overflowY": "auto",
-            "marginBottom": "10px",
-        }),
+                ], style={"display": "flex", "justifyContent": "flex-start", "marginBottom": "10px"}),
+            ], style={
+                "backgroundColor": CARD, "borderRadius": "10px", "padding": "16px",
+                "minHeight": "400px", "maxHeight": "600px", "overflowY": "auto",
+                "marginBottom": "10px",
+            }),
+        ]),
 
         # Input area
         html.Div([
@@ -11340,12 +11592,7 @@ def build_tab3_financials():
     _sm = strict_mode if isinstance(strict_mode, bool) else False
 
     # Strict mode banner (financials)
-    _strict_banner_fin = html.Div([
-        html.Span("STRICT MODE", style={"color": RED, "fontWeight": "bold", "fontSize": "13px", "letterSpacing": "1px"}),
-        html.Span(" — Only VERIFIED metrics shown. Estimates, projections, and scores are hidden.",
-                  style={"color": ORANGE, "fontSize": "12px"}),
-    ], style={"backgroundColor": "#1a0000", "border": f"1px solid {RED}44", "borderRadius": "6px",
-              "padding": "8px 14px", "marginBottom": "10px"}) if _sm else html.Div()
+    _strict_banner_fin = _strict_banner("Only VERIFIED metrics shown. Income tax estimates and derived ratios are hidden.") if _sm else html.Div()
 
     _fee_pct = f"{net_fees_after_credits / gross_sales * 100:.1f}% of sales" if gross_sales and net_fees_after_credits is not None else ""
     _refund_pct = f"{len(refund_df)} orders ({len(refund_df) / order_count * 100:.1f}%)" if order_count else ""
@@ -11657,7 +11904,7 @@ def build_tab3_financials():
                     ]),
                 ], style={"width": "100%", "borderCollapse": "collapse"}),
             ], style={"backgroundColor": "#ffffff06", "borderRadius": "6px", "padding": "6px", "marginBottom": "8px"}),
-            # ── Missing Receipt Queue (open by default) ──
+            # ── Missing Receipt Queue (open by default) — with progress + actions ──
             html.Details([
                 html.Summary([
                     html.Span("\u25b6 ", style={"fontSize": "12px"}),
@@ -11668,18 +11915,54 @@ def build_tab3_financials():
                     "backgroundColor": "#b71c1c18", "borderRadius": "6px",
                     "border": f"1px solid {RED}33"}),
                 html.Div([
+                    # Progress bar
                     html.Div([
-                        html.Span(f"${t['amount']:,.2f}", style={"color": RED, "fontFamily": "monospace", "fontSize": "10px", "width": "60px", "display": "inline-block"}),
-                        html.Span(t.get("vendor", ""), style={"color": WHITE, "fontSize": "10px", "width": "130px", "display": "inline-block"}),
-                        html.Span(t.get("date", ""), style={"color": GRAY, "fontSize": "9px", "width": "75px", "display": "inline-block"}),
-                        html.Span(t.get("category", ""), style={"color": CYAN, "fontSize": "9px", "width": "110px", "display": "inline-block"}),
-                        html.Span("TAX" if t.get("tax_deductible") else "", style={"color": ORANGE, "fontSize": "8px", "fontWeight": "bold"}),
-                    ], style={"padding": "2px 0", "borderBottom": "1px solid #ffffff08"})
-                    for t in expense_missing_receipts[:50]  # Cap display
-                ] + ([html.Div(f"... and {len(expense_missing_receipts) - 50} more",
-                       style={"color": GRAY, "fontSize": "10px", "padding": "4px 0"})]
-                     if len(expense_missing_receipts) > 50 else []),
-                style={"padding": "8px 12px", "maxHeight": "300px", "overflowY": "auto"}),
+                        html.Div([
+                            html.Span(f"{expense_matched_count}/{expense_matched_count + len(expense_missing_receipts)} expenses verified ",
+                                      style={"color": WHITE, "fontSize": "12px", "fontWeight": "bold"}),
+                            html.Span(f"({int(expense_matched_count / max(expense_matched_count + len(expense_missing_receipts), 1) * 100)}%)",
+                                      style={"color": GREEN, "fontSize": "12px"}),
+                        ]),
+                        html.Div([
+                            html.Div(style={"width": f"{int(expense_matched_count / max(expense_matched_count + len(expense_missing_receipts), 1) * 100)}%",
+                                            "height": "8px", "backgroundColor": GREEN, "borderRadius": "4px",
+                                            "transition": "width 0.3s"}),
+                        ], style={"width": "100%", "height": "8px", "backgroundColor": "#ffffff15",
+                                  "borderRadius": "4px", "marginTop": "4px"}),
+                    ], style={"marginBottom": "12px", "padding": "8px 0"}),
+
+                    # Sort hint
+                    html.P("Sorted by amount (largest gaps first). Mark items as verified if confirmed.",
+                           style={"color": GRAY, "fontSize": "10px", "margin": "0 0 8px 0"}),
+
+                    # Receipt rows with action buttons — sorted by amount descending
+                    *[html.Div([
+                        html.Span(f"${t['amount']:,.2f}", style={"color": RED, "fontFamily": "monospace",
+                                  "fontSize": "11px", "width": "70px", "display": "inline-block", "fontWeight": "bold"}),
+                        html.Span(t.get("vendor", ""), style={"color": WHITE, "fontSize": "11px",
+                                  "width": "140px", "display": "inline-block"}),
+                        html.Span(t.get("date", ""), style={"color": GRAY, "fontSize": "10px",
+                                  "width": "80px", "display": "inline-block"}),
+                        html.Span(t.get("category", ""), style={"color": CYAN, "fontSize": "10px",
+                                  "width": "110px", "display": "inline-block"}),
+                        html.Span("TAX" if t.get("tax_deductible") else "",
+                                  style={"color": ORANGE, "fontSize": "9px", "fontWeight": "bold",
+                                         "width": "30px", "display": "inline-block"}),
+                        html.Button("Mark Verified", id={"type": "receipt-verify-btn", "index": i},
+                                    n_clicks=0,
+                                    style={"fontSize": "9px", "padding": "2px 8px",
+                                           "backgroundColor": "transparent", "color": GREEN,
+                                           "border": f"1px solid {GREEN}44", "borderRadius": "4px",
+                                           "cursor": "pointer", "marginLeft": "4px"}),
+                    ], style={"padding": "4px 0", "borderBottom": "1px solid #ffffff08",
+                              "display": "flex", "alignItems": "center"})
+                      for i, t in enumerate(sorted(expense_missing_receipts,
+                                                    key=lambda x: x.get("amount", 0), reverse=True)[:50])],
+
+                    *([html.Div(f"... and {len(expense_missing_receipts) - 50} more",
+                         style={"color": GRAY, "fontSize": "10px", "padding": "4px 0"})]
+                       if len(expense_missing_receipts) > 50 else []),
+                ], style={"padding": "8px 12px", "maxHeight": "400px", "overflowY": "auto"}),
             ], open=True, style={"marginBottom": "8px"}),
         ], style={"display": "flex", "gap": "8px", "flexWrap": "wrap", "marginBottom": "10px"}),
             ], style={"paddingTop": "10px"}),
@@ -12441,11 +12724,15 @@ def _build_audit_report():
 
 def build_tab7_data_hub():
     """Build the Data Hub tab — upload & auto-update everything."""
+    _sm = strict_mode if isinstance(strict_mode, bool) else False
     etsy_files = _get_existing_files("etsy")
     receipt_files = _get_existing_files("receipt")
     bank_files = _get_existing_files("bank")
 
     return html.Div([
+        # Strict mode banner
+        _strict_banner("Data quality gaps are highlighted. Upload missing data to improve accuracy.") if _sm else html.Div(),
+
         # Title
         html.Div([
             html.H2("DATA HUB", style={"color": CYAN, "margin": "0", "fontSize": "22px",
@@ -12620,6 +12907,12 @@ def serve_layout():
             dcc.Tab(label="Business Valuation", value="tab-valuation", style=tab_style, selected_style=tab_selected_style),
             dcc.Tab(label="Data Hub", value="tab-data-hub", style=tab_style, selected_style=tab_selected_style),
         ], style={"backgroundColor": BG}),
+        # CEO Agent alert banner
+        html.Div(id="ceo-alert-banner", children=_build_ceo_banner()),
+
+        # Periodic CEO health check (every 15 min)
+        dcc.Interval(id="ceo-interval", interval=15 * 60 * 1000, n_intervals=0),
+
         html.Div(id="tab-content"),
 
         # Toast notification container
@@ -12652,20 +12945,21 @@ app.layout = serve_layout
 def render_active_tab(tab, _strict_flag):
     """Rebuild the active tab's content on every tab switch or strict mode toggle."""
     _rebuild_all_charts()
+    stale_banner = _build_stale_data_banner()
     if tab == "tab-overview":
-        return build_tab1_overview()
+        return html.Div([stale_banner, build_tab1_overview()])
     elif tab == "tab-deep-dive":
-        return build_tab2_deep_dive()
+        return html.Div([stale_banner, build_tab2_deep_dive()])
     elif tab == "tab-financials":
-        return build_tab3_financials()
+        return html.Div([stale_banner, build_tab3_financials()])
     elif tab == "tab-inventory":
-        return build_tab4_inventory()
+        return html.Div([stale_banner, build_tab4_inventory()])
     elif tab == "tab-tax-forms":
-        return build_tab5_tax_forms()
+        return html.Div([stale_banner, build_tab5_tax_forms()])
     elif tab == "tab-valuation":
-        return build_tab6_valuation()
+        return html.Div([stale_banner, build_tab6_valuation()])
     elif tab == "tab-data-hub":
-        return build_tab7_data_hub()
+        return html.Div([stale_banner, build_tab7_data_hub()])
     return html.Div("Select a tab")
 
 
@@ -14237,12 +14531,15 @@ def handle_chat(n_clicks, n_submit, quick_clicks, user_input, history_data, curr
             }),
         ], style={"display": "flex", "justifyContent": "flex-end", "marginBottom": "6px"}))
 
-        # Bot response
+        # Bot response — red tint on error
+        _is_error = entry["a"].startswith("Sorry") or "error" in entry["a"][:50].lower()
+        _bg = f"{RED}15" if _is_error else f"{CYAN}15"
+        _border = f"1px solid {RED}33" if _is_error else f"1px solid {CYAN}33"
         children.append(html.Div([
             html.Div([
                 dcc.Markdown(entry["a"], style={"color": WHITE, "fontSize": "13px", "lineHeight": "1.5"}),
             ], style={
-                "backgroundColor": f"{CYAN}15", "border": f"1px solid {CYAN}33",
+                "backgroundColor": _bg, "border": _border,
                 "borderRadius": "12px", "padding": "12px 16px", "maxWidth": "85%",
             }),
         ], style={"display": "flex", "justifyContent": "flex-start", "marginBottom": "10px"}))
@@ -14678,6 +14975,180 @@ def download_pl(n):
     ]
     df = pd.DataFrame(rows)
     return dcc.send_data_frame(df.to_csv, "profit_and_loss.csv", index=False)
+
+
+# ── Batch Mode: Populate table from wizard state ──────────────────────────────
+
+@app.callback(
+    Output("batch-items-table", "data"),
+    Output("batch-mode-panel", "style"),
+    Input("receipt-wizard-state", "data"),
+    prevent_initial_call=True,
+)
+def populate_batch_table(state):
+    """When a receipt is parsed, populate the batch edit table with all items."""
+    if not state or not state.get("items"):
+        return [], {"display": "none"}
+
+    rows = []
+    for item in state["items"]:
+        rows.append({
+            "name": item["name"],
+            "category": item.get("auto_category", "Other"),
+            "qty": item.get("qty", 1),
+            "price": item.get("price", 0),
+            "location": item.get("auto_location", "Tulsa, OK"),
+        })
+    return rows, {"display": "block", "marginTop": "12px", "padding": "12px",
+                  "backgroundColor": f"{GREEN}08", "borderRadius": "6px",
+                  "border": f"1px solid {GREEN}33"}
+
+
+# ── Batch Save Callback ──────────────────────────────────────────────────────
+
+@app.callback(
+    Output("batch-save-status", "children"),
+    Input("batch-save-btn", "n_clicks"),
+    State("batch-items-table", "data"),
+    State("receipt-wizard-state", "data"),
+    prevent_initial_call=True,
+)
+def batch_save_items(n_clicks, table_data, wizard_state):
+    """Save all items from the batch table at once."""
+    if not n_clicks or not table_data:
+        raise dash.exceptions.PreventUpdate
+
+    saved = 0
+    for row in table_data:
+        name = row.get("name", "").strip()
+        if not name:
+            continue
+        cat = row.get("category", "Other")
+        qty = int(row.get("qty", 1))
+        loc = row.get("location", "Tulsa, OK")
+
+        # Save item details to Supabase
+        order_num = wizard_state.get("order_num", "BATCH") if wizard_state else "BATCH"
+        try:
+            from supabase_loader import save_item_details as _sid
+            _sid(order_num, name, [{
+                "display_name": name,
+                "category": cat,
+                "quantity": qty,
+                "location": loc,
+            }])
+            saved += 1
+        except Exception:
+            saved += 1  # Count anyway — local only
+
+    return html.Span(f"Saved {saved}/{len(table_data)} items!",
+                     style={"color": GREEN, "fontWeight": "bold"})
+
+
+# ── CSV Paste Import Callback ─────────────────────────────────────────────────
+
+@app.callback(
+    Output("batch-items-table", "data", allow_duplicate=True),
+    Output("batch-mode-panel", "style", allow_duplicate=True),
+    Output("csv-import-status", "children"),
+    Input("csv-import-btn", "n_clicks"),
+    State("csv-paste-input", "value"),
+    prevent_initial_call=True,
+)
+def csv_paste_import(n_clicks, csv_text):
+    """Parse pasted CSV text into the batch edit table."""
+    if not n_clicks or not csv_text:
+        raise dash.exceptions.PreventUpdate
+
+    import csv
+    import io
+
+    rows = []
+    reader = csv.reader(io.StringIO(csv_text.strip()))
+    header = None
+    for line in reader:
+        if not line:
+            continue
+        # Auto-detect header row
+        if header is None and any(h.lower().strip() in ("name", "item", "item name", "product") for h in line):
+            header = [h.strip().lower() for h in line]
+            continue
+        if header is None:
+            # No header — assume Name, Qty, Price, Category
+            header = ["name", "qty", "price", "category"]
+
+        row_dict = {}
+        for i, val in enumerate(line):
+            if i < len(header):
+                row_dict[header[i]] = val.strip()
+
+        name = row_dict.get("name", row_dict.get("item", row_dict.get("item name", row_dict.get("product", ""))))
+        try:
+            qty = int(row_dict.get("qty", row_dict.get("quantity", "1")))
+        except (ValueError, TypeError):
+            qty = 1
+        try:
+            price = float(row_dict.get("price", row_dict.get("unit price", "0")).replace("$", ""))
+        except (ValueError, TypeError):
+            price = 0
+        cat = row_dict.get("category", "Other")
+
+        if name:
+            rows.append({
+                "name": name,
+                "category": cat if cat else "Other",
+                "qty": qty,
+                "price": round(price, 2),
+                "location": "Tulsa, OK",
+            })
+
+    if not rows:
+        return dash.no_update, dash.no_update, html.Span("No valid rows found.", style={"color": RED})
+
+    return rows, {"display": "block", "marginTop": "12px", "padding": "12px",
+                  "backgroundColor": f"{GREEN}08", "borderRadius": "6px",
+                  "border": f"1px solid {GREEN}33"}, \
+        html.Span(f"Imported {len(rows)} items!", style={"color": GREEN, "fontWeight": "bold"})
+
+
+# ── CEO Periodic Health Check ─────────────────────────────────────────────────
+
+@app.callback(
+    Output("ceo-alert-banner", "children"),
+    Input("ceo-interval", "n_intervals"),
+    prevent_initial_call=True,
+)
+def ceo_periodic_check(n_intervals):
+    """Periodic CEO health re-check (every 15 min)."""
+    global _ceo_health
+    if _ceo_agent and _acct_pipeline:
+        try:
+            _ceo_health = _ceo_agent.run_periodic_check(_acct_pipeline)
+        except Exception:
+            pass
+    return _build_ceo_banner()
+
+
+# ── Mark Receipt Verified Callback ────────────────────────────────────────────
+
+@app.callback(
+    Output({"type": "receipt-verify-btn", "index": dash.MATCH}, "children"),
+    Output({"type": "receipt-verify-btn", "index": dash.MATCH}, "style"),
+    Output({"type": "receipt-verify-btn", "index": dash.MATCH}, "disabled"),
+    Input({"type": "receipt-verify-btn", "index": dash.MATCH}, "n_clicks"),
+    prevent_initial_call=True,
+)
+def mark_receipt_verified(n_clicks):
+    """Mark a missing receipt as manually verified (visual feedback)."""
+    if not n_clicks:
+        raise dash.exceptions.PreventUpdate
+    return (
+        "Verified",
+        {"fontSize": "9px", "padding": "2px 8px", "backgroundColor": f"{GREEN}22",
+         "color": GREEN, "border": f"1px solid {GREEN}66", "borderRadius": "4px",
+         "cursor": "default", "marginLeft": "4px", "fontWeight": "bold"},
+        True,
+    )
 
 
 # ── Run ──────────────────────────────────────────────────────────────────────

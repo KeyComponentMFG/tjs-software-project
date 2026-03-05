@@ -131,6 +131,7 @@ def publish_to_globals(pipeline: AccountingPipeline, target_module_name: str):
             k: {kk: float(vv) if isinstance(vv, Decimal) else vv for kk, vv in v.items()}
             for k, v in expense_result.by_category.items()
         })
+        setattr(mod, "expense_matched_count", len(expense_result.receipt_matches))
         setattr(mod, "expense_missing_receipts", pipeline.get_missing_receipts())
 
     print(f"[compat] Published {len(float_metrics) + len(int_metrics)} metrics to {target_module_name}")
