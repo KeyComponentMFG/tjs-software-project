@@ -12959,10 +12959,9 @@ app.layout = serve_layout
     Output("tab-content", "children"),
     Input("main-tabs", "value"),
     Input("strict-mode-store", "data"),
-    Input("data-version-store", "data"),
 )
-def render_active_tab(tab, _strict_flag, _data_version):
-    """Rebuild the active tab's content on every tab switch, strict mode toggle, or data upload."""
+def render_active_tab(tab, _strict_flag):
+    """Rebuild the active tab's content on every tab switch or strict mode toggle."""
     _rebuild_all_charts()
     stale_banner = _build_stale_data_banner()
     if tab == "tab-overview":
@@ -14612,7 +14611,6 @@ def init_datahub_files(_trigger):
     Output("datahub-activity-log", "children"),
     Output("datahub-summary-strip", "children"),
     Output("app-header-content", "children"),
-    Output("data-version-store", "data"),
     Input("datahub-etsy-upload", "contents"),
     Input("datahub-receipt-upload", "contents"),
     Input("datahub-bank-upload", "contents"),
@@ -14620,12 +14618,11 @@ def init_datahub_files(_trigger):
     State("datahub-receipt-upload", "filename"),
     State("datahub-bank-upload", "filename"),
     State("datahub-activity-log", "children"),
-    State("data-version-store", "data"),
     prevent_initial_call=True,
 )
 def handle_datahub_upload(etsy_contents, receipt_contents, bank_contents,
                           etsy_filename, receipt_filename, bank_filename,
-                          activity_log, data_version):
+                          activity_log):
     """Handle file uploads from all 3 Data Hub zones."""
     global DATA, BANK_TXNS
     import datetime as _dt
@@ -14641,7 +14638,6 @@ def handle_datahub_upload(etsy_contents, receipt_contents, bank_contents,
     new_log = activity_log or []
     summary = nu
     header = nu
-    new_version = (data_version or 0) + 1
 
     # ── Etsy CSV Upload ──────────────────────────────────────────────────
     if "datahub-etsy-upload" in trigger and etsy_contents:
@@ -14925,7 +14921,7 @@ def handle_datahub_upload(etsy_contents, receipt_contents, bank_contents,
     return (etsy_status, etsy_file_list, etsy_stats,
             rcpt_status, rcpt_file_list, rcpt_stats,
             bank_status, bank_file_list, bank_stats,
-            new_log, summary, header, new_version)
+            new_log, summary, header)
 
 
 # ── CSV Download Callbacks ────────────────────────────────────────────────────
