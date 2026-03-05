@@ -7599,6 +7599,52 @@ def api_diagnostics():
     })
 
 
+@server.route("/api/debug-expenses")
+def api_debug_expenses():
+    """Debug endpoint for expense completeness."""
+    try:
+        result = {
+            "pipeline_exists": _acct_pipeline is not None,
+            "invoices_count": len(INVOICES),
+            "bank_txns_count": len(BANK_TXNS),
+        }
+        if _acct_pipeline is not None:
+            ec = _acct_pipeline.get_expense_completeness()
+            if ec is None:
+                result["expense_result"] = "None (agent didn't run or returned None)"
+                # Try running it manually
+                try:
+                    from accounting.agents.expense_completeness import ExpenseCompletenessAgent
+                    agent = ExpenseCompletenessAgent()
+                    import json as _json
+                    vmap_path = os.path.join(BASE_DIR, "data", "vendor_map.json")
+                    try:
+                        with open(vmap_path) as f:
+                            agent.vendor_map = _json.load(f)
+                    except Exception:
+                        pass
+                    manual_result = agent.run(_acct_pipeline.journal, INVOICES)
+                    result["manual_run"] = {
+                        "matched": len(manual_result.receipt_matches),
+                        "missing": len(manual_result.missing_receipts),
+                        "gap": float(manual_result.gap_total),
+                    }
+                except Exception as e2:
+                    result["manual_run_error"] = str(e2)
+                    import traceback
+                    result["manual_run_trace"] = traceback.format_exc()
+            else:
+                result["expense_result"] = {
+                    "matched": len(ec.receipt_matches),
+                    "missing": len(ec.missing_receipts),
+                    "gap": float(ec.gap_total),
+                }
+        return flask.jsonify(result)
+    except Exception as e:
+        import traceback
+        return flask.jsonify({"error": str(e), "trace": traceback.format_exc()}), 500
+
+
 # ── CORS helper for React app integration ────────────────────────────────────
 
 def _add_cors_headers(response):
