@@ -15,5 +15,6 @@ etsy_dashboard/
 
 # Debug/temp files
 _*.py
+!__init__.py
 deepdive_resp.json
 nul
