@@ -7607,23 +7607,49 @@ def api_diagnostics():
 @server.route("/api/debug-pipeline")
 def api_debug_pipeline():
     """Debug: try building pipeline fresh and capture any errors."""
+    results = {}
+    # Step 1: try importing accounting package piece by piece
+    try:
+        import accounting.models
+        results["step1_models"] = "OK"
+    except Exception as e:
+        results["step1_models"] = f"FAIL: {e}"
+        import traceback
+        results["step1_trace"] = traceback.format_exc()
+    try:
+        import accounting.ledger
+        results["step2_ledger"] = "OK"
+    except Exception as e:
+        results["step2_ledger"] = f"FAIL: {e}"
+    try:
+        import accounting.journal
+        results["step3_journal"] = "OK"
+    except Exception as e:
+        results["step3_journal"] = f"FAIL: {e}"
+    try:
+        import accounting.pipeline
+        results["step4_pipeline"] = "OK"
+    except Exception as e:
+        results["step4_pipeline"] = f"FAIL: {e}"
+        import traceback
+        results["step4_trace"] = traceback.format_exc()
     try:
         from accounting import get_pipeline as _gp
-        from accounting.compat import publish_to_globals as _ptg
+        results["step5_get_pipeline"] = "OK"
         p = _gp()
         p.full_rebuild(DATA, BANK_TXNS, CONFIG, invoices=INVOICES)
+        results["step6_rebuild"] = "OK"
         ec = p.get_expense_completeness()
-        return flask.jsonify({
-            "success": True,
-            "ledger_summary": p.ledger.summary() if p.ledger else "no ledger",
-            "expense_completeness": {
-                "matched": len(ec.receipt_matches) if ec else 0,
-                "missing": len(ec.missing_receipts) if ec else 0,
-            } if ec else "None",
-        })
+        results["step7_expenses"] = {
+            "matched": len(ec.receipt_matches) if ec else 0,
+            "missing": len(ec.missing_receipts) if ec else 0,
+        } if ec else "None"
     except Exception as e:
         import traceback
-        return flask.jsonify({"success": False, "error": str(e), "trace": traceback.format_exc()}), 500
+        results["build_error"] = str(e)
+        results["build_trace"] = traceback.format_exc()
+    results["global_pipeline_exists"] = _acct_pipeline is not None
+    return flask.jsonify(results)
 
 
 @server.route("/api/debug-expenses")
