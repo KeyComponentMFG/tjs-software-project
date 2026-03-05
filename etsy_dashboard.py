@@ -12909,6 +12909,8 @@ def serve_layout():
         # Strict mode state
         dcc.Store(id="strict-mode-store", data=False, storage_type="local"),
         dcc.Store(id="data-version-store", data=0),
+        dcc.Store(id="upload-reload-trigger", data=0),
+        html.Div(id="upload-reload-dummy", style={"display": "none"}),
 
         # Header
         html.Div([
@@ -12960,9 +12962,7 @@ def serve_layout():
         # Periodic CEO health check (every 15 min)
         dcc.Interval(id="ceo-interval", interval=15 * 60 * 1000, n_intervals=0),
 
-        html.Div(id="tab-content", children=[
-            _build_stale_data_banner(), build_tab1_overview()
-        ]),
+        html.Div(id="tab-content"),
 
         # Toast notification container
         html.Div(id="toast-container", style={
@@ -12987,10 +12987,9 @@ app.layout = serve_layout
 # ── Dynamic Tab Rendering ────────────────────────────────────────────────────
 
 @app.callback(
-    Output("tab-content", "children", allow_duplicate=True),
+    Output("tab-content", "children"),
     Input("main-tabs", "value"),
     Input("strict-mode-store", "data"),
-    prevent_initial_call=True,
 )
 def render_active_tab(tab, _strict_flag):
     """Rebuild the active tab's content on every tab switch or strict mode toggle."""
@@ -14366,6 +14365,24 @@ app.clientside_callback(
     prevent_initial_call=True,
 )
 
+# After a successful upload, reload the page so ALL tabs show fresh data.
+# The upload callback sets upload-reload-trigger to a timestamp;
+# this clientside callback watches it and reloads after a 1.5s delay
+# (giving the user time to see the success message).
+app.clientside_callback(
+    """
+    function(trigger) {
+        if (trigger && trigger > 1) {
+            setTimeout(function() { window.location.reload(); }, 1500);
+        }
+        return '';
+    }
+    """,
+    Output("upload-reload-dummy", "children"),
+    Input("upload-reload-trigger", "data"),
+    prevent_initial_call=True,
+)
+
 
 @app.callback(
     Output("qa-status", "children"),
@@ -14631,7 +14648,6 @@ def init_datahub_files(_trigger):
 # ── Data Hub: Upload Callback ───────────────────────────────────────────────
 
 @app.callback(
-    Output("tab-content", "children", allow_duplicate=True),
     Output("datahub-etsy-status", "children"),
     Output("datahub-etsy-files", "children", allow_duplicate=True),
     Output("datahub-etsy-stats", "children", allow_duplicate=True),
@@ -14644,6 +14660,7 @@ def init_datahub_files(_trigger):
     Output("datahub-activity-log", "children"),
     Output("datahub-summary-strip", "children"),
     Output("app-header-content", "children"),
+    Output("upload-reload-trigger", "data"),
     Input("datahub-etsy-upload", "contents"),
     Input("datahub-receipt-upload", "contents"),
     Input("datahub-bank-upload", "contents"),
@@ -14658,9 +14675,8 @@ def handle_datahub_upload(etsy_contents, receipt_contents, bank_contents,
                           activity_log):
     """Handle file uploads from all 3 Data Hub zones.
 
-    Rebuilds the full Data Hub tab content (tab-content) after upload so that
-    KPI cards, charts, and summaries refresh with the new data. The individual
-    datahub-* outputs update the upload status elements inside the rebuilt tab.
+    After processing, sets upload-reload-trigger which fires a clientside
+    callback to reload the page — ensuring ALL tabs show fresh data.
     """
     global DATA, BANK_TXNS
     import datetime as _dt
@@ -14672,13 +14688,13 @@ def handle_datahub_upload(etsy_contents, receipt_contents, bank_contents,
     print(f"[UPLOAD] Callback fired! trigger={trigger}, IS_RAILWAY={IS_RAILWAY}")
 
     # Initialize outputs — all no_update by default
-    tab_content = nu  # rebuilt after successful upload
     etsy_status, etsy_file_list, etsy_stats = nu, nu, nu
     rcpt_status, rcpt_file_list, rcpt_stats = nu, nu, nu
     bank_status, bank_file_list, bank_stats = nu, nu, nu
     new_log = activity_log or []
     summary = nu
     header = nu
+    reload_trigger = nu  # set to timestamp after successful upload to force page reload
 
     # ── Etsy CSV Upload ──────────────────────────────────────────────────
     if "datahub-etsy-upload" in trigger and etsy_contents:
@@ -14962,20 +14978,16 @@ def handle_datahub_upload(etsy_contents, receipt_contents, bank_contents,
         except Exception as e:
             bank_status = html.Div(f"Error: {e}", style={"color": RED, "fontSize": "13px"})
 
-    # Rebuild the Data Hub tab so KPIs, charts, and summaries show fresh data.
-    # The individual datahub-* outputs are applied ON TOP of this rebuilt content.
+    # If any upload succeeded, trigger a page reload after a short delay
+    # so ALL tabs (not just Data Hub) show fresh data.
     if any(x is not nu for x in [etsy_status, rcpt_status, bank_status]):
-        try:
-            stale_banner = _build_stale_data_banner()
-            tab_content = html.Div([stale_banner, build_tab7_data_hub()])
-        except Exception as _tab_err:
-            print(f"WARNING: Tab rebuild after upload failed: {_tab_err}")
+        import time
+        reload_trigger = time.time()  # unique value triggers clientside reload
 
-    return (tab_content,
-            etsy_status, etsy_file_list, etsy_stats,
+    return (etsy_status, etsy_file_list, etsy_stats,
             rcpt_status, rcpt_file_list, rcpt_stats,
             bank_status, bank_file_list, bank_stats,
-            new_log, summary, header)
+            new_log, summary, header, reload_trigger)
 
 
 # ── CSV Download Callbacks ────────────────────────────────────────────────────
