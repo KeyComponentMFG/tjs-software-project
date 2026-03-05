@@ -7594,6 +7594,8 @@ def api_diagnostics():
             "profit": round(profit, 2),
             "profit_margin": round(real_profit_margin, 1),
         },
+        "missing_receipts_count": len(expense_missing_receipts),
+        "expense_matched_count": expense_matched_count,
     })
 
 
