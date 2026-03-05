@@ -8352,6 +8352,9 @@ def api_reload():
         INVOICES = sb["INVOICES"]
         BANK_TXNS = sb["BANK_TXNS"]
 
+        _bank_debit_sum = sum(t["amount"] for t in BANK_TXNS if t["type"] == "debit")
+        print(f"[reload] Loaded: {len(DATA)} etsy, {len(BANK_TXNS)} bank ({_bank_debit_sum:.2f} debits), {len(INVOICES)} inv")
+
         # 2. Rebuild Etsy-derived DataFrames, aggregations, and fee/shipping breakdowns
         _rebuild_etsy_derived()
 
@@ -8362,7 +8365,7 @@ def api_reload():
         _cascade_reload("supabase")
 
         _sales_count = len(DATA[DATA["Type"] == "Sale"]) if len(DATA) > 0 else 0
-        print(f"[reload] Complete: {len(DATA)} rows, {_sales_count} sales, gross=${gross_sales:.2f}")
+        print(f"[reload] Complete: {len(DATA)} rows, {_sales_count} sales, gross=${gross_sales:.2f}, debits=${bank_total_debits:.2f}")
         return flask.jsonify({
             "status": "ok",
             "etsy_rows": len(DATA),
