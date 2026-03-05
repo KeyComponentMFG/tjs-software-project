@@ -165,7 +165,7 @@ INVOICES = _sb["INVOICES"]
 import glob as _glob_mod
 _etsy_dir = os.path.join(BASE_DIR, "data", "etsy_statements")
 _etsy_frames = []
-_on_railway = bool(os.environ.get("RAILWAY_ENVIRONMENT") or os.environ.get("RAILWAY_PROJECT_ID"))
+_on_railway = IS_RAILWAY
 if _on_railway:
     print("[startup] Railway detected — skipping local CSVs, using Supabase only")
 elif os.path.isdir(_etsy_dir):
@@ -1107,7 +1107,7 @@ def _reload_etsy_data():
     """
     global DATA
 
-    _on_rw = bool(os.environ.get("RAILWAY_ENVIRONMENT") or os.environ.get("RAILWAY_PROJECT_ID"))
+    _on_rw = IS_RAILWAY
 
     # Read from local CSV files (skip on Railway — Supabase is source of truth)
     import glob as _gl
@@ -7560,6 +7560,12 @@ def api_diagnostics():
         "supabase": sb_status,
         "env_has_supabase_url": bool(os.environ.get("SUPABASE_URL", "")),
         "env_has_supabase_key": bool(os.environ.get("SUPABASE_KEY", "")),
+        "is_railway": IS_RAILWAY,
+        "railway_env": os.environ.get("RAILWAY_ENVIRONMENT", ""),
+        "railway_service": os.environ.get("RAILWAY_SERVICE_NAME", ""),
+        "railway_project": os.environ.get("RAILWAY_PROJECT_ID", ""),
+        "has_anthropic_key": bool(os.environ.get("ANTHROPIC_API_KEY", "")),
+        "sales_count": len(DATA[DATA["Type"] == "Sale"]) if len(DATA) > 0 else 0,
         "etsy": {
             "rows": len(DATA),
             "gross_sales": round(gross_sales, 2),
