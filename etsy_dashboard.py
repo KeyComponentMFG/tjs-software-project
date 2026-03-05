@@ -7604,6 +7604,28 @@ def api_diagnostics():
     })
 
 
+@server.route("/api/debug-pipeline")
+def api_debug_pipeline():
+    """Debug: try building pipeline fresh and capture any errors."""
+    try:
+        from accounting import get_pipeline as _gp
+        from accounting.compat import publish_to_globals as _ptg
+        p = _gp()
+        p.full_rebuild(DATA, BANK_TXNS, CONFIG, invoices=INVOICES)
+        ec = p.get_expense_completeness()
+        return flask.jsonify({
+            "success": True,
+            "ledger_summary": p.ledger.summary() if p.ledger else "no ledger",
+            "expense_completeness": {
+                "matched": len(ec.receipt_matches) if ec else 0,
+                "missing": len(ec.missing_receipts) if ec else 0,
+            } if ec else "None",
+        })
+    except Exception as e:
+        import traceback
+        return flask.jsonify({"success": False, "error": str(e), "trace": traceback.format_exc()}), 500
+
+
 @server.route("/api/debug-expenses")
 def api_debug_expenses():
     """Debug endpoint for expense completeness."""
