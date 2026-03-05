@@ -12922,7 +12922,6 @@ def serve_layout():
         dcc.Store(id="strict-mode-store", data=False, storage_type="local"),
         dcc.Store(id="data-version-store", data=0),
         dcc.Store(id="upload-reload-trigger", data=0),
-        html.Div(id="upload-reload-dummy", style={"display": "none"}),
 
         # Header
         html.Div([
@@ -13002,9 +13001,10 @@ app.layout = serve_layout
     Output("tab-content", "children"),
     Input("main-tabs", "value"),
     Input("strict-mode-store", "data"),
+    Input("upload-reload-trigger", "data"),
 )
-def render_active_tab(tab, _strict_flag):
-    """Rebuild the active tab's content on every tab switch or strict mode toggle."""
+def render_active_tab(tab, _strict_flag, _upload_trigger):
+    """Rebuild the active tab's content on every tab switch, strict mode toggle, or upload."""
     _rebuild_all_charts()
     stale_banner = _build_stale_data_banner()
     if tab == "tab-overview":
@@ -14381,19 +14381,8 @@ app.clientside_callback(
 # The upload callback sets upload-reload-trigger to a timestamp;
 # this clientside callback watches it and reloads after a 1.5s delay
 # (giving the user time to see the success message).
-app.clientside_callback(
-    """
-    function(trigger) {
-        if (trigger && trigger > 1) {
-            setTimeout(function() { window.location.reload(); }, 1500);
-        }
-        return '';
-    }
-    """,
-    Output("upload-reload-dummy", "children"),
-    Input("upload-reload-trigger", "data"),
-    prevent_initial_call=True,
-)
+# No clientside page reload needed — upload-reload-trigger is now an Input
+# to render_active_tab, which rebuilds the current tab with fresh data.
 
 
 @app.callback(
@@ -14777,13 +14766,19 @@ def handle_datahub_upload(etsy_contents, receipt_contents, bank_contents,
                     print(f"[UPLOAD] Stats: {stats}")
                     _cascade_reload("etsy")
                     print(f"[UPLOAD] cascade_reload done. gross_sales={gross_sales}, etsy_balance={etsy_balance}")
-                    # Full sync to Supabase (DATA is the merged complete dataset)
-                    _sb_ok = _sync_etsy_to_supabase(DATA)
+                    # Sync to Supabase in background so callback returns fast
+                    import threading
+                    _sync_df = DATA.copy()
+                    threading.Thread(target=_sync_etsy_to_supabase, args=(_sync_df,), daemon=True).start()
+                    _sb_ok = True  # optimistic — sync runs in background
                 else:
                     stats = _reload_etsy_data()
                     _cascade_reload("etsy")
-                    # Full sync to Supabase (delete-and-replace to prevent duplicates)
-                    _sb_ok = _sync_etsy_to_supabase(DATA)
+                    # Sync to Supabase in background so callback returns fast
+                    import threading
+                    _sync_df = DATA.copy()
+                    threading.Thread(target=_sync_etsy_to_supabase, args=(_sync_df,), daemon=True).start()
+                    _sb_ok = True
             
 
                 if not _sb_ok:
@@ -14961,12 +14956,17 @@ def handle_datahub_upload(etsy_contents, receipt_contents, bank_contents,
                     stats = {"transactions": len(BANK_TXNS), "statements": 0,
                              "net_cash": round(_final_bal, 2)}
                     _cascade_reload("bank")
-                    _sb_ok = _append_bank_to_supabase(_new_txns)
+                    import threading
+                    _bank_copy = list(_new_txns)
+                    threading.Thread(target=_append_bank_to_supabase, args=(_bank_copy,), daemon=True).start()
+                    _sb_ok = True
                 else:
                     stats = _reload_bank_data()
                     _cascade_reload("bank")
-                    # Full sync to Supabase (delete-and-replace to prevent duplicates)
-                    _sb_ok = _sync_bank_to_supabase(BANK_TXNS)
+                    import threading
+                    _bank_copy = list(BANK_TXNS)
+                    threading.Thread(target=_sync_bank_to_supabase, args=(_bank_copy,), daemon=True).start()
+                    _sb_ok = True
             
                 _bank_warn = "" if _sb_ok else " (WARNING: Supabase sync failed)"
                 bank_status = html.Div([
