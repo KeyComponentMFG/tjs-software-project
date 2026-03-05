@@ -11483,7 +11483,7 @@ def build_tab2_deep_dive():
 def _build_shipping_compare():
     """Build monthly shipping label cost chart."""
     fig = go.Figure()
-    if months_sorted and monthly_shipping:
+    if len(months_sorted) > 0 and len(monthly_shipping) > 0:
         m_vals = [monthly_shipping.get(m, 0) for m in months_sorted]
         fig.add_trace(go.Bar(
             name="Label Cost", x=months_sorted, y=m_vals,
