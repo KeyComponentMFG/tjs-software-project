@@ -160,11 +160,15 @@ CONFIG = _sb["CONFIG"]
 INVOICES = _sb["INVOICES"]
 
 # Re-parse Etsy data from local CSVs so new uploads are picked up immediately.
-# But prefer Supabase if it has MORE rows (local git files may be stale on Railway).
+# On Railway, skip local CSVs entirely — they're stale git copies and Supabase is
+# the single source of truth. Merging both sources caused data inflation bugs.
 import glob as _glob_mod
 _etsy_dir = os.path.join(BASE_DIR, "data", "etsy_statements")
 _etsy_frames = []
-if os.path.isdir(_etsy_dir):
+_on_railway = bool(os.environ.get("RAILWAY_ENVIRONMENT") or os.environ.get("RAILWAY_PROJECT_ID"))
+if _on_railway:
+    print("[startup] Railway detected — skipping local CSVs, using Supabase only")
+elif os.path.isdir(_etsy_dir):
     for _ef in sorted(_glob_mod.glob(os.path.join(_etsy_dir, "etsy_statement*.csv"))):
         try:
             _etsy_frames.append(pd.read_csv(_ef))
@@ -1103,15 +1107,18 @@ def _reload_etsy_data():
     """
     global DATA
 
-    # Read from local CSV files
+    _on_rw = bool(os.environ.get("RAILWAY_ENVIRONMENT") or os.environ.get("RAILWAY_PROJECT_ID"))
+
+    # Read from local CSV files (skip on Railway — Supabase is source of truth)
     import glob as _gl
     _ed = os.path.join(BASE_DIR, "data", "etsy_statements")
     _frames = []
-    for _f in sorted(_gl.glob(os.path.join(_ed, "etsy_statement*.csv"))):
-        try:
-            _frames.append(pd.read_csv(_f))
-        except Exception:
-            pass
+    if not _on_rw:
+        for _f in sorted(_gl.glob(os.path.join(_ed, "etsy_statement*.csv"))):
+            try:
+                _frames.append(pd.read_csv(_f))
+            except Exception:
+                pass
 
     # Also load Supabase data to merge (preserves rows uploaded via Railway)
     _sb_df = None
@@ -1149,6 +1156,7 @@ def _reload_etsy_data():
             DATA = _local_df
     elif _sb_df is not None:
         DATA = _sb_df
+        print(f"[Reload] Using {len(DATA)} rows from Supabase (Railway mode)")
     # else: DATA stays as-is
 
     # Rebuild computed columns
@@ -8347,9 +8355,13 @@ def api_reload():
         # 4. Run pipeline + publish financial metrics + recompute charts/analytics/tax/valuation
         _cascade_reload("supabase")
 
+        _sales_count = len(DATA[DATA["Type"] == "Sale"]) if len(DATA) > 0 else 0
+        print(f"[reload] Complete: {len(DATA)} rows, {_sales_count} sales, gross=${gross_sales:.2f}")
         return flask.jsonify({
             "status": "ok",
             "etsy_rows": len(DATA),
+            "sales_count": _sales_count,
+            "gross_sales": round(gross_sales, 2),
             "bank_txns": len(BANK_TXNS),
             "invoices": len(INVOICES),
             "profit": round(profit, 2),
@@ -14765,8 +14777,8 @@ def handle_datahub_upload(etsy_contents, receipt_contents, bank_contents,
                     print(f"[UPLOAD] Stats: {stats}")
                     _cascade_reload("etsy")
                     print(f"[UPLOAD] cascade_reload done. gross_sales={gross_sales}, etsy_balance={etsy_balance}")
-                    # Sync to Supabase SYNCHRONOUSLY before returning
-                    _sb_ok = _append_etsy_to_supabase(_new_df)
+                    # Full sync to Supabase (DATA is the merged complete dataset)
+                    _sb_ok = _sync_etsy_to_supabase(DATA)
                 else:
                     stats = _reload_etsy_data()
                     _cascade_reload("etsy")
