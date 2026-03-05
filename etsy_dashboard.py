@@ -1342,7 +1342,7 @@ def _reload_inventory_data(new_order):
     except Exception:
         pass
     _sb_ok = _save_new_order(new_order)
-    _notify_railway_reload()
+
     if not _sb_ok:
         print(f"WARNING: Failed to save order {new_order.get('order_num', '?')} to Supabase")
 
@@ -4080,7 +4080,7 @@ def _rebuild_all_charts():
         ("Best Buy CC", bank_by_cat.get("Business Credit Card", 0), "#2e86c1"),
         ("Owner Draws", bank_owner_draw_total, "#ffb74d"),
     ]:
-        if val > 0:
+        if val is not None and val > 0:
             expense_labels_list.append(name)
             expense_values_list.append(val)
             expense_colors_list.append(clr)
@@ -4637,12 +4637,12 @@ def _rebuild_all_charts():
         (f"Adjustments ({ship_adjust_count})", ship_adjustments, ORANGE),
         (f"Insurance ({ship_insurance_count})", ship_insurance, TEAL),
     ]:
-        if val > 0:
+        if val is not None and val > 0:
             ship_type_names.append(nm)
             ship_type_vals.append(val)
             ship_type_colors.append(clr)
 
-    if ship_credits != 0:
+    if ship_credits is not None and ship_credits != 0:
         ship_type_names.append(f"Credits ({ship_credit_count})")
         ship_type_vals.append(abs(ship_credits))
         ship_type_colors.append(GREEN)
@@ -11510,11 +11510,11 @@ def _build_ship_type():
         (f"Adjustments ({ship_adjust_count})", ship_adjustments, ORANGE),
         (f"Insurance ({ship_insurance_count})", ship_insurance, TEAL),
     ]:
-        if val > 0:
+        if val is not None and val > 0:
             names.append(nm)
             vals.append(val)
             colors.append(clr)
-    if ship_credits != 0:
+    if ship_credits is not None and ship_credits != 0:
         names.append(f"Credits ({ship_credit_count})")
         vals.append(abs(ship_credits))
         colors.append(GREEN)
@@ -14023,7 +14023,7 @@ def handle_receipt_wizard(contents, save_clicks, skip_clicks, done_clicks, back_
 
         # Push to Supabase
         _sb_ok = _save_new_order(order)
-        _notify_railway_reload()
+    
         if not _sb_ok:
             print(f"WARNING: Failed to save order {order.get('order_num', '?')} to Supabase (wizard)")
 
@@ -14692,22 +14692,31 @@ def handle_datahub_upload(etsy_contents, receipt_contents, bank_contents,
                     _new_df["Fees_Clean"] = _new_df["Fees & Taxes"].apply(parse_money)
                     _new_df["Date_Parsed"] = pd.to_datetime(_new_df["Date"], format="%B %d, %Y", errors="coerce")
                     _new_df["Month"] = _new_df["Date_Parsed"].dt.to_period("M").astype(str)
-                    DATA = pd.concat([DATA, _new_df], ignore_index=True).drop_duplicates(
-                        subset=["Date", "Type", "Title", "Info", "Amount", "Fees & Taxes", "Net"],
-                        keep="last",
-                    )
+                    _new_df["Week"] = _new_df["Date_Parsed"].dt.to_period("W").apply(lambda p: p.start_time)
+                    # Rank-based dedup: keep max(existing_count, new_count) per unique row
+                    _dedup_cols_rw = ["Date", "Type", "Title", "Info", "Amount", "Fees & Taxes", "Net"]
+                    _old = DATA.copy()
+                    _old["_src"] = "old"
+                    _new_df["_src"] = "new"
+                    _merged = pd.concat([_old, _new_df], ignore_index=True)
+                    _merged["_dup_rank"] = _merged.groupby(
+                        _dedup_cols_rw + ["_src"], sort=False
+                    ).cumcount()
+                    DATA = _merged.drop_duplicates(
+                        subset=_dedup_cols_rw + ["_dup_rank"], keep="last"
+                    ).drop(columns=["_src", "_dup_rank"]).reset_index(drop=True)
                     _rebuild_etsy_derived()
                     stats = {"transactions": len(DATA), "orders": len(sales_df),
                              "gross_sales": sales_df["Net_Clean"].sum()}
                     _cascade_reload("etsy")
-                    # Append-only sync to Supabase (dedup, no delete)
+                    # Sync to Supabase SYNCHRONOUSLY before returning
                     _sb_ok = _append_etsy_to_supabase(_new_df)
                 else:
                     stats = _reload_etsy_data()
                     _cascade_reload("etsy")
                     # Full sync to Supabase (delete-and-replace to prevent duplicates)
                     _sb_ok = _sync_etsy_to_supabase(DATA)
-                _notify_railway_reload()
+            
 
                 if not _sb_ok:
                     msg += " (WARNING: Supabase sync failed — data may not persist after restart)"
@@ -14890,7 +14899,7 @@ def handle_datahub_upload(etsy_contents, receipt_contents, bank_contents,
                     _cascade_reload("bank")
                     # Full sync to Supabase (delete-and-replace to prevent duplicates)
                     _sb_ok = _sync_bank_to_supabase(BANK_TXNS)
-                _notify_railway_reload()
+            
                 _bank_warn = "" if _sb_ok else " (WARNING: Supabase sync failed)"
                 bank_status = html.Div([
                     html.Span("\u2713 ", style={"color": GREEN, "fontWeight": "bold"}),
