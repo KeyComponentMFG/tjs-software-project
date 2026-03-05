@@ -186,26 +186,31 @@ def _pm(val):
 if _etsy_frames:
     _local_data = pd.concat(_etsy_frames, ignore_index=True)
     _sb_data = _sb["DATA"]
-    # Use whichever source has more rows (Supabase may be newer than git-committed CSVs)
-    if len(_sb_data) > len(_local_data):
-        DATA = _sb_data
-        print(f"Using Supabase Etsy data ({len(_sb_data)} rows > {len(_local_data)} local CSV rows)")
+    _dedup_startup_cols = ["Date", "Type", "Title", "Info", "Amount", "Fees & Taxes", "Net"]
+    if len(_sb_data) > 0:
+        # Merge both sources — normalise NaN/'nan' so dedup works across CSV vs Supabase
+        for _dc in _dedup_startup_cols:
+            _sb_data[_dc] = _sb_data[_dc].fillna("").replace("nan", "")
+            _local_data[_dc] = _local_data[_dc].fillna("").replace("nan", "")
+        DATA = pd.concat([_sb_data, _local_data], ignore_index=True).drop_duplicates(
+            subset=_dedup_startup_cols, keep="last"
+        )
+        print(f"Merged {len(_local_data)} local + {len(_sb_data)} Supabase -> {len(DATA)} unique Etsy rows")
     else:
         DATA = _local_data
-        # Add computed columns (same as supabase_loader._add_computed_columns)
-        DATA["Amount_Clean"] = DATA["Amount"].apply(_pm)
-        DATA["Net_Clean"] = DATA["Net"].apply(_pm)
-        DATA["Fees_Clean"] = DATA["Fees & Taxes"].apply(_pm)
-        DATA["Date_Parsed"] = pd.to_datetime(DATA["Date"], format="%B %d, %Y", errors="coerce")
-        DATA["Month"] = DATA["Date_Parsed"].dt.to_period("M").astype(str)
-        DATA["Week"] = DATA["Date_Parsed"].dt.to_period("W").apply(lambda p: p.start_time)
-        print(f"Loaded {len(DATA)} Etsy transactions from local CSVs")
-        if _parse_warnings:
-            print(f"WARNING: {len(_parse_warnings)} money values failed to parse (treated as $0.00)")
-            for w in _parse_warnings[:5]:  # Show first 5
-                print(f"  {w}")
-            if len(_parse_warnings) > 5:
-                print(f"  ... and {len(_parse_warnings) - 5} more")
+    # Add computed columns (same as supabase_loader._add_computed_columns)
+    DATA["Amount_Clean"] = DATA["Amount"].apply(_pm)
+    DATA["Net_Clean"] = DATA["Net"].apply(_pm)
+    DATA["Fees_Clean"] = DATA["Fees & Taxes"].apply(_pm)
+    DATA["Date_Parsed"] = pd.to_datetime(DATA["Date"], format="%B %d, %Y", errors="coerce")
+    DATA["Month"] = DATA["Date_Parsed"].dt.to_period("M").astype(str)
+    DATA["Week"] = DATA["Date_Parsed"].dt.to_period("W").apply(lambda p: p.start_time)
+    if _parse_warnings:
+        print(f"WARNING: {len(_parse_warnings)} money values failed to parse (treated as $0.00)")
+        for w in _parse_warnings[:5]:  # Show first 5
+            print(f"  {w}")
+        if len(_parse_warnings) > 5:
+            print(f"  ... and {len(_parse_warnings) - 5} more")
 else:
     DATA = _sb["DATA"]
     print("Using Etsy data from Supabase (no local CSVs found)")
@@ -1051,7 +1056,10 @@ def _rebuild_etsy_derived():
 
 
 def _reload_etsy_data():
-    """Re-read all Etsy CSVs from local files and rebuild DataFrames and aggregations.
+    """Re-read all Etsy CSVs from local files, merge with Supabase data, and rebuild.
+
+    Merges local CSV data with Supabase data so that rows uploaded via Railway
+    (which only exist in Supabase) are not lost when uploading locally.
 
     Financial metrics (gross_sales, etsy_balance, real_profit, etc.) are set by the pipeline in _cascade_reload().
 
@@ -1068,14 +1076,45 @@ def _reload_etsy_data():
             _frames.append(pd.read_csv(_f))
         except Exception:
             pass
+
+    # Also load Supabase data to merge (preserves rows uploaded via Railway)
+    _sb_df = None
+    try:
+        from supabase_loader import load_data as _ld
+        _sb_result = _ld()
+        _sb_df = _sb_result.get("DATA")
+        if _sb_df is not None and len(_sb_df) == 0:
+            _sb_df = None
+    except Exception:
+        pass
+
+    _dedup_cols = ["Date", "Type", "Title", "Info", "Amount", "Fees & Taxes", "Net"]
+
     if _frames:
-        DATA = pd.concat(_frames, ignore_index=True)
-        DATA["Amount_Clean"] = DATA["Amount"].apply(parse_money)
-        DATA["Net_Clean"] = DATA["Net"].apply(parse_money)
-        DATA["Fees_Clean"] = DATA["Fees & Taxes"].apply(parse_money)
-        DATA["Date_Parsed"] = pd.to_datetime(DATA["Date"], format="%B %d, %Y", errors="coerce")
-        DATA["Month"] = DATA["Date_Parsed"].dt.to_period("M").astype(str)
-        DATA["Week"] = DATA["Date_Parsed"].dt.to_period("W").apply(lambda p: p.start_time)
+        _local_df = pd.concat(_frames, ignore_index=True)
+        if _sb_df is not None and len(_sb_df) > 0:
+            # Normalize NaN/'nan' before dedup — local CSVs have NaN, Supabase has 'nan' string
+            for _dc in _dedup_cols:
+                _sb_df[_dc] = _sb_df[_dc].fillna("").replace("nan", "")
+                _local_df[_dc] = _local_df[_dc].fillna("").replace("nan", "")
+            # Merge: concat both sources, keep last (local wins on conflicts)
+            DATA = pd.concat([_sb_df, _local_df], ignore_index=True).drop_duplicates(
+                subset=_dedup_cols, keep="last"
+            )
+            print(f"[Reload] Merged {len(_local_df)} local + {len(_sb_df)} Supabase rows -> {len(DATA)} unique")
+        else:
+            DATA = _local_df
+    elif _sb_df is not None:
+        DATA = _sb_df
+    # else: DATA stays as-is
+
+    # Rebuild computed columns
+    DATA["Amount_Clean"] = DATA["Amount"].apply(parse_money)
+    DATA["Net_Clean"] = DATA["Net"].apply(parse_money)
+    DATA["Fees_Clean"] = DATA["Fees & Taxes"].apply(parse_money)
+    DATA["Date_Parsed"] = pd.to_datetime(DATA["Date"], format="%B %d, %Y", errors="coerce")
+    DATA["Month"] = DATA["Date_Parsed"].dt.to_period("M").astype(str)
+    DATA["Week"] = DATA["Date_Parsed"].dt.to_period("W").apply(lambda p: p.start_time)
 
     _rebuild_etsy_derived()
 
@@ -2502,7 +2541,7 @@ def run_analytics():
         f"${daily_etsy_net_avg:,.0f}/day Etsy net | ${daily_revenue_avg:,.0f}/day revenue | {orders_per_day:.1f} orders/day",
         f"Current monthly run rate: ${daily_revenue_avg * 30:,.0f} revenue, ${daily_etsy_net_avg * 30:,.0f} Etsy net. "
         f"To double Etsy net to ${etsy_net * 2:,.0f}, you'd need ~${revenue_to_double:,.0f} in total sales "
-        f"(~{extra_per_day:.1f} more orders/day at current avg order of ${avg_order:.0f}). "
+        f"(~{extra_per_day:.1f} more orders/day, estimated using average order value of ${avg_order:.0f}). "
         f"FASTEST PATHS: 1) Raise prices 10% = instant ~${gross_sales * 0.10:,.0f} more revenue with same orders. "
         f"2) Cut free shipping (absorbed label cost UNKNOWN without per-order data). "
         f"3) Reduce refunds by 50% = save ~${total_refunds / 2:,.0f}. "
@@ -2752,21 +2791,23 @@ def _chatbot_answer_claude(question, history, api_key):
 
     ctx = _build_chat_context()
 
+    _date_range = f"{months_sorted[0]} through {months_sorted[-1]}" if months_sorted else "available period"
     system_prompt = (
-        "You are JARVIS, an AI business intelligence advisor for TJs Software Project, "
-        "an Etsy shop selling 3D printed products. You have deep knowledge of the business.\n\n"
+        "You are JARVIS, the AI Chief Executive Officer and strategic advisor for TJs Software Project, "
+        "an Etsy shop selling 3D printed products. You think like a CEO: growth opportunities, "
+        "resource allocation, risk management, and competitive positioning.\n\n"
         "RULES:\n"
         "- Answer questions using ONLY the data provided below. Never make up numbers.\n"
         "- Be specific with dollar amounts, percentages, and counts.\n"
         "- Be concise but thorough. Use markdown formatting.\n"
-        "- When giving advice, back it up with the actual numbers from the data.\n"
+        "- Don't just report numbers — interpret them and recommend actions.\n"
         "- The data is organized into VERIFIED, ESTIMATED, and UNAVAILABLE sections.\n"
         "- Only cite VERIFIED metrics as facts.\n"
         "- When citing ESTIMATED metrics, always say 'estimated' and briefly state the method.\n"
         "- Never present UNAVAILABLE data as having values — explain what data would be needed.\n"
         "- If asked about buyer-paid shipping, shipping profit, or shipping margin: say these are "
         "unavailable because the Etsy Payments CSV only records the fee, not the buyer-paid amount.\n"
-        "- The data covers Oct 2025 through Feb 2026.\n\n"
+        f"- The data covers {_date_range}.\n\n"
         f"=== BUSINESS DATA ===\n{ctx}"
     )
 
@@ -2792,13 +2833,28 @@ def _chatbot_answer_claude(question, history, api_key):
 
 
 def chatbot_answer(question, history=None):
-    """AI-powered chatbot with keyword fallback."""
+    """AI-powered chatbot: tool-based agent → context-dump fallback → keyword fallback."""
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
     if api_key:
+        # Primary: tool-based agentic chat with accounting pipeline
+        if _acct_pipeline is not None and _acct_pipeline.ledger is not None:
+            try:
+                from accounting.chat_tools import run_agent_chat
+                return run_agent_chat(
+                    question=question,
+                    history=history,
+                    api_key=api_key,
+                    pipeline=_acct_pipeline,
+                    model="claude-sonnet-4-20250514",
+                    max_rounds=5,
+                )
+            except Exception as e:
+                print(f"[Jarvis] Agent chat failed, falling back to context-dump: {e}")
+        # Fallback 1: context-dump to Haiku
         try:
             return _chatbot_answer_claude(question, history, api_key)
-        except Exception:
-            pass  # fall through to keyword system
+        except Exception as e:
+            print(f"[Jarvis] Claude context-dump failed, falling back to keywords: {e}")
     try:
         return _chatbot_answer_inner(question)
     except Exception as e:
@@ -4377,6 +4433,13 @@ def _rebuild_all_charts():
             name="Confidence Range", x=proj_months, y=list(lower),
             mode="lines", line=dict(width=0), fill="tonexty", fillcolor="rgba(46,204,113,0.15)",
         ))
+        # Add PROJECTED annotation on forecast area
+        proj_chart.add_annotation(
+            x=proj_months[1], y=max(np.maximum(analytics_projections["proj_sales"], 0)) * 1.08,
+            text="PROJECTED", showarrow=False,
+            font=dict(size=14, color=ORANGE, family="Arial Black"),
+            bgcolor="rgba(0,0,0,0.5)", borderpad=4,
+        )
     make_chart(proj_chart, 380)
     proj_chart.update_layout(title="Revenue Projection (Linear Regression, 3-Month Forecast)",
         xaxis_title="Month", yaxis_title="Amount ($)")
@@ -8238,7 +8301,17 @@ def build_tab5_tax_forms():
     def divider(color=ORANGE):
         return html.Div(style={"borderTop": f"2px solid {color}44", "margin": "6px 0"})
 
+    _sm = strict_mode if isinstance(strict_mode, bool) else False
     children = []
+
+    # Strict mode banner
+    if _sm:
+        children.append(html.Div([
+            html.Span("STRICT MODE", style={"color": RED, "fontWeight": "bold", "fontSize": "13px", "letterSpacing": "1px"}),
+            html.Span(" — Income tax estimates use progressive brackets and assumptions. Treat as rough guidance only.",
+                      style={"color": ORANGE, "fontSize": "12px"}),
+        ], style={"backgroundColor": "#1a0000", "border": f"1px solid {RED}44", "borderRadius": "6px",
+                  "padding": "8px 14px", "marginBottom": "10px"}))
 
     # ── Compute per-partner totals for summary bubbles ──
     _tj_total_tax = 0
@@ -9038,6 +9111,20 @@ def build_tab5_tax_forms():
 
 def build_tab6_valuation():
     """Tab 6 - Business Valuation: Comprehensive business value analysis from every angle."""
+    _sm = strict_mode if isinstance(strict_mode, bool) else False
+    if _sm:
+        return html.Div([
+            html.Div([
+                html.Span("STRICT MODE", style={"color": RED, "fontWeight": "bold", "fontSize": "16px", "letterSpacing": "1px"}),
+            ], style={"marginBottom": "10px"}),
+            html.P("Business valuations are estimates based on industry multiples and annualized projections. "
+                   "None of these numbers are verified facts.",
+                   style={"color": GRAY, "fontSize": "14px", "lineHeight": "1.6"}),
+            html.P("Disable strict mode to view valuation estimates.",
+                   style={"color": ORANGE, "fontSize": "13px", "marginTop": "10px"}),
+        ], style={"backgroundColor": "#1a0000", "border": f"1px solid {RED}44", "borderRadius": "10px",
+                  "padding": "30px", "marginTop": "20px", "textAlign": "center"})
+
     children = []
 
     # ── HERO KPI STRIP (6 bubbles) ──
@@ -9781,12 +9868,22 @@ def build_tab1_overview():
     # Strict mode banner
     _strict_banner = html.Div([
         html.Span("STRICT MODE", style={"color": RED, "fontWeight": "bold", "fontSize": "13px", "letterSpacing": "1px"}),
-        html.Span(" — Only VERIFIED and DERIVED metrics shown. Estimates are hidden.", style={"color": GRAY, "fontSize": "12px"}),
+        html.Span(" — Only VERIFIED metrics shown. Estimates, projections, and scores are hidden.",
+                  style={"color": ORANGE, "fontSize": "12px"}),
     ], style={"backgroundColor": "#1a0000", "border": f"1px solid {RED}44", "borderRadius": "6px",
               "padding": "8px 14px", "marginBottom": "10px"}) if _sm else html.Div()
 
+    # Missing receipts warning
+    _missing_receipt_banner = html.Div([
+        html.Span(f"{len(expense_missing_receipts)} bank debits missing receipts", style={"color": ORANGE, "fontWeight": "bold", "fontSize": "13px"}),
+        html.Span(f" — ${expense_gap:,.2f} unverified expenses", style={"color": GRAY, "fontSize": "12px"}),
+        html.Span(" (see Financials tab)", style={"color": DARKGRAY, "fontSize": "11px"}),
+    ], style={"backgroundColor": "#1a1000", "border": f"1px solid {ORANGE}44", "borderRadius": "6px",
+              "padding": "8px 14px", "marginBottom": "10px"}) if len(expense_missing_receipts) > 0 else html.Div()
+
     return html.Div([
         _strict_banner,
+        _missing_receipt_banner,
         # KPI Strip (4 pills)
         html.Div([
             _build_kpi_pill("\U0001f4ca", "REVENUE", money(gross_sales), TEAL,
@@ -9803,8 +9900,8 @@ def build_tab1_overview():
                             f"Best Buy Citi CC -- {money(bb_cc_available)} available of {money(bb_cc_limit)} limit.", status="verified"),
         ], style={"display": "flex", "gap": "8px", "marginBottom": "14px", "flexWrap": "wrap"}),
 
-        # Dashboard Health / To-Do panel
-        _build_health_checks(),
+        # Dashboard Health / To-Do panel (hidden in strict mode — composite estimate)
+        _build_health_checks() if not _sm else html.Div(),
 
         # Simplified data sources one-liner
         html.Div([
@@ -9841,7 +9938,7 @@ def build_tab1_overview():
             ], style={"backgroundColor": CARD, "padding": "16px", "borderRadius": "10px",
                       "flex": "1", "minWidth": "280px"}),
 
-            # Monthly Performance chart
+            # Monthly Performance chart (actuals only, no projections in strict mode)
             html.Div([
                 dcc.Graph(figure=monthly_fig, config={"displayModeBar": False}),
             ], style={"flex": "2"}),
@@ -10637,6 +10734,7 @@ def _build_goal_tracker():
 
 def build_tab2_deep_dive():
     """Tab 2 - JARVIS: Business Intelligence Command Center"""
+    _sm = strict_mode if isinstance(strict_mode, bool) else False
 
     # Compute JARVIS data
     score, sub_scores, weights = _compute_health_score()
@@ -10662,12 +10760,22 @@ def build_tab2_deep_dive():
             "borderLeft": f"4px solid {sc}", "marginBottom": "8px",
         }))
 
+    # Strict mode banner for deep dive
+    _strict_banner_dd = html.Div([
+        html.Span("STRICT MODE", style={"color": RED, "fontWeight": "bold", "fontSize": "13px", "letterSpacing": "1px"}),
+        html.Span(" — Only VERIFIED metrics shown. Estimates, projections, and scores are hidden.",
+                  style={"color": ORANGE, "fontSize": "12px"}),
+    ], style={"backgroundColor": "#1a0000", "border": f"1px solid {RED}44", "borderRadius": "6px",
+              "padding": "8px 14px", "marginBottom": "10px"}) if _sm else html.Div()
+
     return html.Div([
+        _strict_banner_dd,
+
         # ══ JARVIS HEADER ══
         _build_jarvis_header(),
 
-        # ══ HEALTH SCORE + DAILY BRIEFING ══
-        _build_health_section(score, sub_scores, weights, briefing),
+        # ══ HEALTH SCORE + DAILY BRIEFING (hidden in strict mode — composite estimate) ══
+        _build_health_section(score, sub_scores, weights, briefing) if not _sm else html.Div(),
 
         # ══ PRIORITY ACTIONS ══
         _build_actions_section(actions),
@@ -10675,8 +10783,8 @@ def build_tab2_deep_dive():
         # ══ PATTERN DETECTION ══
         _build_patterns_section(patterns),
 
-        # ══ GOAL TRACKING ══
-        _build_goal_tracker(),
+        # ══ GOAL TRACKING (hidden in strict mode — uses estimates) ══
+        _build_goal_tracker() if not _sm else html.Div(),
 
         # ══════════════════════════════════════════════════════════════
         # DETAILED CHARTS (collapsible sections — all existing charts)
@@ -10708,8 +10816,11 @@ def build_tab2_deep_dive():
                     ],
                     look_for="Dashed lines trending up = growing business. R\u00b2 close to 1.0 = very predictable trend.",
                     simple="Solid lines = your actual sales and profit each month. Dashed lines = where a computer model predicts you're headed. If dashed lines point up, the business is growing."
-                ),
-                dcc.Graph(figure=proj_chart, config={"displayModeBar": False}, style={"height": "380px"}),
+                ) if not _sm else html.Div(),
+                dcc.Graph(figure=proj_chart, config={"displayModeBar": False}, style={"height": "380px"}) if not _sm else html.Div(
+                    "Projection chart hidden in strict mode (estimates).",
+                    style={"color": GRAY, "fontSize": "12px", "fontStyle": "italic", "padding": "20px", "textAlign": "center",
+                           "backgroundColor": "#ffffff06", "borderRadius": "6px", "marginBottom": "10px"}),
                 html.Div(insight_cards),
 
                 chart_context(
@@ -11101,19 +11212,22 @@ def build_tab2_deep_dive():
 
 
 def _build_shipping_compare():
-    """Build Shipping Label Costs chart (buyer-paid is unavailable)."""
+    """Build monthly shipping label cost chart."""
     fig = go.Figure()
-    fig.add_trace(go.Bar(
-        name="Your Label Cost", x=["Shipping"], y=[total_shipping_cost],
-        marker_color=RED, text=[f"${total_shipping_cost:,.2f}"], textposition="outside", width=0.4,
-    ))
-    fig.add_annotation(
-        x="Shipping", y=total_shipping_cost + 200,
-        text="Buyer-paid amount: N/A (not in Etsy CSV)",
-        showarrow=False, font=dict(size=14, color=ORANGE, family="Arial"),
-    )
+    if months_sorted and monthly_shipping:
+        m_vals = [monthly_shipping.get(m, 0) for m in months_sorted]
+        fig.add_trace(go.Bar(
+            name="Label Cost", x=months_sorted, y=m_vals,
+            marker_color=RED,
+            text=[f"${v:,.0f}" for v in m_vals], textposition="outside",
+        ))
+    else:
+        fig.add_trace(go.Bar(
+            name="Total Label Cost", x=["Total"], y=[total_shipping_cost],
+            marker_color=RED, text=[f"${total_shipping_cost:,.2f}"], textposition="outside", width=0.4,
+        ))
     make_chart(fig, 340, False)
-    fig.update_layout(title="Shipping Label Costs (Buyer-Paid Amount Unavailable)", showlegend=True, yaxis_title="Amount ($)")
+    fig.update_layout(title="Monthly Shipping Label Costs", showlegend=False, yaxis_title="Amount ($)")
     return fig
 
 
@@ -11228,7 +11342,8 @@ def build_tab3_financials():
     # Strict mode banner (financials)
     _strict_banner_fin = html.Div([
         html.Span("STRICT MODE", style={"color": RED, "fontWeight": "bold", "fontSize": "13px", "letterSpacing": "1px"}),
-        html.Span(" — Only VERIFIED and DERIVED metrics shown. Estimates hidden.", style={"color": GRAY, "fontSize": "12px"}),
+        html.Span(" — Only VERIFIED metrics shown. Estimates, projections, and scores are hidden.",
+                  style={"color": ORANGE, "fontSize": "12px"}),
     ], style={"backgroundColor": "#1a0000", "border": f"1px solid {RED}44", "borderRadius": "6px",
               "padding": "8px 14px", "marginBottom": "10px"}) if _sm else html.Div()
 
@@ -11510,15 +11625,15 @@ def build_tab3_financials():
             html.Div([
                 html.Div([
                     html.Div("RECEIPT-VERIFIED", style={"fontSize": "9px", "color": GRAY, "textTransform": "uppercase"}),
-                    html.Div(f"${expense_receipt_verified:,.2f}", style={"fontSize": "16px", "fontWeight": "bold", "color": GREEN, "fontFamily": "monospace"}),
+                    html.Div(f"${expense_receipt_verified:,.2f}", style={"fontSize": "22px", "fontWeight": "bold", "color": GREEN, "fontFamily": "monospace"}),
                 ], style={"backgroundColor": "#ffffff08", "padding": "8px 14px", "borderRadius": "6px", "border": f"1px solid {GREEN}44", "flex": "1", "textAlign": "center"}),
                 html.Div([
                     html.Div("BANK-RECORDED", style={"fontSize": "9px", "color": GRAY, "textTransform": "uppercase"}),
-                    html.Div(f"${expense_bank_recorded:,.2f}", style={"fontSize": "16px", "fontWeight": "bold", "color": WHITE, "fontFamily": "monospace"}),
+                    html.Div(f"${expense_bank_recorded:,.2f}", style={"fontSize": "22px", "fontWeight": "bold", "color": WHITE, "fontFamily": "monospace"}),
                 ], style={"backgroundColor": "#ffffff08", "padding": "8px 14px", "borderRadius": "6px", "border": "1px solid #ffffff22", "flex": "1", "textAlign": "center"}),
                 html.Div([
                     html.Div("UNVERIFIED GAP", style={"fontSize": "9px", "color": GRAY, "textTransform": "uppercase"}),
-                    html.Div(f"${expense_gap:,.2f}", style={"fontSize": "16px", "fontWeight": "bold", "color": ORANGE, "fontFamily": "monospace"}),
+                    html.Div(f"${expense_gap:,.2f}", style={"fontSize": "22px", "fontWeight": "bold", "color": ORANGE, "fontFamily": "monospace"}),
                 ], style={"backgroundColor": "#ffffff08", "padding": "8px 14px", "borderRadius": "6px", "border": f"1px solid {ORANGE}44", "flex": "1", "textAlign": "center"}),
             ], style={"display": "flex", "gap": "8px", "marginBottom": "8px"}),
             # ── Per-category breakdown table ──
@@ -11542,7 +11657,7 @@ def build_tab3_financials():
                     ]),
                 ], style={"width": "100%", "borderCollapse": "collapse"}),
             ], style={"backgroundColor": "#ffffff06", "borderRadius": "6px", "padding": "6px", "marginBottom": "8px"}),
-            # ── Missing Receipt Queue (collapsible) ──
+            # ── Missing Receipt Queue (open by default) ──
             html.Details([
                 html.Summary([
                     html.Span("\u25b6 ", style={"fontSize": "12px"}),
@@ -11565,7 +11680,7 @@ def build_tab3_financials():
                        style={"color": GRAY, "fontSize": "10px", "padding": "4px 0"})]
                      if len(expense_missing_receipts) > 50 else []),
                 style={"padding": "8px 12px", "maxHeight": "300px", "overflowY": "auto"}),
-            ], style={"marginBottom": "8px"}),
+            ], open=True, style={"marginBottom": "8px"}),
         ], style={"display": "flex", "gap": "8px", "flexWrap": "wrap", "marginBottom": "10px"}),
             ], style={"paddingTop": "10px"}),
         ], style={"marginBottom": "8px"}),
@@ -11574,35 +11689,27 @@ def build_tab3_financials():
             html.Summary([
                 html.Span("\u25b6 ", style={"fontSize": "12px"}),
                 html.Span("SHIPPING", style={"fontWeight": "bold"}),
-                html.Span(" \u2014 are you making or losing money on shipping?", style={"color": GRAY, "fontWeight": "normal", "fontSize": "12px"}),
+                html.Span(f" \u2014 {total_label_count} labels, {money(total_shipping_cost)} total cost", style={"color": GRAY, "fontWeight": "normal", "fontSize": "12px"}),
             ], style={"color": CYAN, "fontSize": "14px", "fontWeight": "bold",
                 "cursor": "pointer", "padding": "10px 14px", "listStyle": "none",
                 "backgroundColor": "#ffffff08", "borderRadius": "6px",
                 "border": f"1px solid {CYAN}33"}),
             html.Div([
 
-        # Shipping KPIs
+        # Shipping KPIs — only real data, no UNKNOWN cards
         html.Div([
-            kpi_card("NET SHIPPING P&L", "UNKNOWN", ORANGE,
-                "Requires buyer-paid shipping data",
-                f"Shipping P/L is UNKNOWN — Etsy CSVs do not include buyer-paid shipping amounts. "
-                f"Labels cost {money(total_shipping_cost)}. Need: order-level CSV with shipping revenue.", status="na"),
             kpi_card("TOTAL LABEL COST", money(-total_shipping_cost if total_shipping_cost is not None else None), RED,
                 f"{total_label_count} labels purchased",
                 f"USPS outbound: {usps_outbound_count} labels ({money(usps_outbound)}). USPS return: {usps_return_count} labels ({money(usps_return)}). Asendia intl: {asendia_count} labels ({money(asendia_labels)}). Adjustments: {money(ship_adjustments)}. Credits back: {money(abs(ship_credits) if ship_credits is not None else None)}.", status="verified"),
-            kpi_card("BUYER PAID", "UNKNOWN", TEAL,
-                f"{paid_ship_count} paid-shipping orders",
-                f"Buyer-paid shipping amount is UNKNOWN. Etsy CSVs do not include per-order shipping revenue. "
-                f"Need: Etsy order-level CSV with 'Shipping charged to buyer' column.", status="na"),
-            kpi_card("FREE ORDERS", str(free_ship_count), ORANGE,
-                f"Avg label: {money(avg_outbound_label)}",
-                f"{free_ship_count} orders shipped free (you absorbed the label cost). Avg label cost: {money(avg_outbound_label)}.", status="verified"),
-            kpi_card("RETURN LABELS", str(usps_return_count), PINK,
-                money(-usps_return if usps_return is not None else None) + " in return label cost",
-                f"{usps_return_count} return shipping labels purchased for refunded orders. Total return label cost: {money(usps_return)}. This is on top of the original outbound label cost and the refund amount -- returns are triple losses.", status="verified"),
             kpi_card("AVG LABEL", money(avg_outbound_label), BLUE,
                 f"USPS {money(usps_min)}-{money(usps_max)}" if usps_outbound_count else "No USPS labels",
                 f"Average cost of a USPS outbound label. Range: {money(usps_min)} (lightest) to {money(usps_max)} (heaviest). {usps_outbound_count} labels total. Heavier/larger items cost more to ship.", status="verified"),
+            kpi_card("PAID / FREE ORDERS", f"{paid_ship_count} / {free_ship_count}", TEAL,
+                f"{paid_ship_count} paid + {free_ship_count} free shipping",
+                f"{paid_ship_count} orders where buyer paid for shipping, {free_ship_count} orders shipped free (you absorbed the label cost). Avg label cost: {money(avg_outbound_label)}.", status="verified"),
+            kpi_card("RETURN LABELS", str(usps_return_count), PINK,
+                money(-usps_return if usps_return is not None else None) + " in return label cost",
+                f"{usps_return_count} return shipping labels purchased for refunded orders. Total return label cost: {money(usps_return)}. This is on top of the original outbound label cost and the refund amount -- returns are triple losses.", status="verified"),
         ], style={"display": "flex", "gap": "8px", "marginBottom": "14px", "flexWrap": "wrap"}),
 
         # Shipping charts — built inline so they always reflect current data
@@ -11611,34 +11718,24 @@ def build_tab3_financials():
             html.Div([dcc.Graph(figure=_build_ship_type(), config={"displayModeBar": False})], style={"flex": "1"}),
         ], style={"display": "flex", "gap": "8px", "marginBottom": "10px"}),
 
-        # Shipping P&L section
-        section("SHIPPING PROFIT & LOSS", [
-            row_item("Buyer-Paid Shipping Revenue", None, bold=True, color=ORANGE),
-            html.P("UNKNOWN — Etsy CSV does not include buyer-paid shipping amounts",
-                   style={"color": ORANGE, "fontSize": "11px", "margin": "2px 0 8px 16px"}),
-            html.Div(style={"borderTop": f"1px solid {DARKGRAY}", "margin": "8px 0"}),
+        # Shipping Cost Breakdown
+        section("SHIPPING COST BREAKDOWN", [
             row_item(f"USPS Outbound Labels ({usps_outbound_count})", -usps_outbound, indent=1),
             row_item(f"USPS Return Labels ({usps_return_count})", -usps_return, indent=1),
             row_item(f"Asendia / International ({asendia_count})", -asendia_labels, indent=1),
             row_item(f"Label Adjustments ({ship_adjust_count})", -ship_adjustments, indent=1),
             row_item(f"Insurance ({ship_insurance_count})", -ship_insurance, indent=1) if ship_insurance > 0 else html.Div(),
             row_item(f"Label Credits ({ship_credit_count})", ship_credits, indent=1, color=GREEN),
-            row_item("TOTAL LABEL COST", -total_shipping_cost, bold=True),
-            html.Div(style={"borderTop": f"3px solid {ORANGE}", "marginTop": "8px"}),
-            html.Div([
-                html.Span("NET SHIPPING P&L", style={"color": ORANGE, "fontWeight": "bold", "fontSize": "20px"}),
-                html.Span("UNKNOWN",
-                          style={"color": ORANGE, "fontWeight": "bold", "fontSize": "20px", "fontFamily": "monospace"}),
-            ], style={"display": "flex", "justifyContent": "space-between", "padding": "10px 0"}),
-        ], ORANGE),
+            html.Div(style={"borderTop": f"2px solid {RED}", "marginTop": "8px"}),
+            row_item("TOTAL LABEL COST", -total_shipping_cost, bold=True, color=RED),
+            html.P("Upload Etsy order-level CSV with 'Shipping charged to buyer' column for full shipping P&L analysis.",
+                   style={"color": DARKGRAY, "fontSize": "11px", "margin": "10px 0 0 0", "fontStyle": "italic"}),
+        ], RED),
 
         # Paid vs Free order counts
         section("PAID vs FREE SHIPPING ORDERS", [
             html.P("PAID SHIPPING", style={"color": TEAL, "fontWeight": "bold", "fontSize": "13px", "margin": "0 0 4px 0"}),
             row_item(f"Orders with paid shipping", paid_ship_count, color=TEAL, indent=1),
-            row_item(f"Total buyer-paid shipping", None, color=ORANGE, indent=1),
-            html.P("Buyer-paid shipping amount: UNKNOWN (not in Etsy CSV)",
-                   style={"color": ORANGE, "fontSize": "11px", "margin": "2px 0 8px 16px"}),
             html.Div(style={"borderTop": f"1px solid {DARKGRAY}", "margin": "8px 0"}),
             html.P("FREE SHIPPING", style={"color": ORANGE, "fontWeight": "bold", "fontSize": "13px", "margin": "0 0 4px 0"}),
             row_item(f"Orders with free shipping", free_ship_count, color=ORANGE, indent=1),
@@ -12457,9 +12554,9 @@ def build_tab7_data_hub():
 
 def _header_text():
     """Build the dynamic header subtitle string."""
-    return (f"Oct 2025 -- Feb 2026  |  {order_count} orders  |  "
-            f"Profit: ${profit:,.2f} ({profit_margin:.1f}%)  |  "
-            f"Cash: ${bank_cash_on_hand:,.2f}")
+    return (f"Oct 2025 -- Mar 2026  |  {order_count} orders  |  "
+            f"Profit: {money(profit)} ({_fmt(profit_margin, prefix='', fmt='.1f', unknown='?')}%)  |  "
+            f"Cash: {money(bank_cash_on_hand)}")
 
 
 def serve_layout():
