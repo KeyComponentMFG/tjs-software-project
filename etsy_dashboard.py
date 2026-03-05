@@ -8295,6 +8295,32 @@ def api_reconciliation():
     })
 
 
+@server.route("/api/test-upload")
+def api_test_upload():
+    """Test the upload data processing path (without file upload).
+
+    Re-runs _cascade_reload and reports all key metrics.
+    Useful for debugging whether the pipeline updates globals correctly.
+    """
+    try:
+        _rebuild_etsy_derived()
+        _cascade_reload("test")
+        return flask.jsonify({
+            "status": "ok",
+            "rows": len(DATA),
+            "orders": int(order_count) if order_count else 0,
+            "gross_sales": round(gross_sales, 2) if gross_sales else None,
+            "etsy_net": round(etsy_net, 2) if etsy_net else None,
+            "etsy_balance": round(etsy_balance, 2) if etsy_balance else None,
+            "total_fees": round(total_fees, 2) if total_fees else None,
+            "real_profit": round(real_profit, 2),
+            "bank_cash_on_hand": round(bank_cash_on_hand, 2),
+        })
+    except Exception as e:
+        import traceback
+        return flask.jsonify({"status": "error", "message": str(e), "trace": traceback.format_exc()}), 500
+
+
 @server.route("/api/reload")
 def api_reload():
     """Force-reload all data from Supabase. Use after migrating data to refresh Railway.
@@ -12934,7 +12960,9 @@ def serve_layout():
         # Periodic CEO health check (every 15 min)
         dcc.Interval(id="ceo-interval", interval=15 * 60 * 1000, n_intervals=0),
 
-        html.Div(id="tab-content"),
+        html.Div(id="tab-content", children=[
+            _build_stale_data_banner(), build_tab1_overview()
+        ]),
 
         # Toast notification container
         html.Div(id="toast-container", style={
@@ -12959,9 +12987,10 @@ app.layout = serve_layout
 # ── Dynamic Tab Rendering ────────────────────────────────────────────────────
 
 @app.callback(
-    Output("tab-content", "children"),
+    Output("tab-content", "children", allow_duplicate=True),
     Input("main-tabs", "value"),
     Input("strict-mode-store", "data"),
+    prevent_initial_call=True,
 )
 def render_active_tab(tab, _strict_flag):
     """Rebuild the active tab's content on every tab switch or strict mode toggle."""
@@ -14640,6 +14669,8 @@ def handle_datahub_upload(etsy_contents, receipt_contents, bank_contents,
     now_str = _dt.datetime.now().strftime("%I:%M:%S %p")
     nu = dash.no_update  # shorthand
 
+    print(f"[UPLOAD] Callback fired! trigger={trigger}, IS_RAILWAY={IS_RAILWAY}")
+
     # Initialize outputs — all no_update by default
     tab_content = nu  # rebuilt after successful upload
     etsy_status, etsy_file_list, etsy_stats = nu, nu, nu
@@ -14711,10 +14742,13 @@ def handle_datahub_upload(etsy_contents, receipt_contents, bank_contents,
                     DATA = _merged.drop_duplicates(
                         subset=_dedup_cols_rw + ["_dup_rank"], keep="last"
                     ).drop(columns=["_src", "_dup_rank"]).reset_index(drop=True)
+                    print(f"[UPLOAD] Railway merge: {len(_old)}->{len(DATA)} rows")
                     _rebuild_etsy_derived()
                     stats = {"transactions": len(DATA), "orders": len(sales_df),
                              "gross_sales": sales_df["Net_Clean"].sum()}
+                    print(f"[UPLOAD] Stats: {stats}")
                     _cascade_reload("etsy")
+                    print(f"[UPLOAD] cascade_reload done. gross_sales={gross_sales}, etsy_balance={etsy_balance}")
                     # Sync to Supabase SYNCHRONOUSLY before returning
                     _sb_ok = _append_etsy_to_supabase(_new_df)
                 else:
