@@ -828,16 +828,21 @@ try:
     _acct_pipeline.full_rebuild(DATA, BANK_TXNS, CONFIG, invoices=INVOICES)
     _publish_to_globals(_acct_pipeline, __name__)
     print(f"[Dashboard] Accounting pipeline active: {_acct_pipeline.ledger.summary()}")
-
-    # Run CEO Agent startup check (21 agents)
-    from accounting.agents.ceo import CEOAgent
-    _ceo_agent = CEOAgent()
-    _ceo_health = _ceo_agent.run_startup_check(_acct_pipeline)
 except Exception as _pipe_err:
     print(f"WARNING: Accounting pipeline failed, using legacy calculations: {_pipe_err}")
     import traceback
     traceback.print_exc()
     _acct_pipeline = None
+
+# Run CEO Agent startup check (separate try so it doesn't kill the pipeline)
+try:
+    from accounting.agents.ceo import CEOAgent
+    _ceo_agent = CEOAgent()
+    _ceo_health = _ceo_agent.run_startup_check(_acct_pipeline) if _acct_pipeline else None
+except Exception as _ceo_err:
+    print(f"WARNING: CEO Agent failed (pipeline still active): {_ceo_err}")
+    import traceback
+    traceback.print_exc()
 
 try:
     _ceo_agent
