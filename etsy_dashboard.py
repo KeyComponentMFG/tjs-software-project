@@ -5684,61 +5684,43 @@ def _build_category_manager():
 
 
 def _build_inventory_editor():
-    """Build the Inventory Editor — clean per-item form for naming, categorizing, and locating."""
+    """Build the Inventory Editor — flat DataTable for fast inline naming, categorizing, locating."""
     if len(INV_ITEMS) == 0:
         return html.Div(id="editor-items-container")
 
-    # Sort: recent uploads first, then by date descending
-    _recent = [o for o in INVOICES if o["order_num"] in _RECENT_UPLOADS]
-    _rest = [o for o in INVOICES if o["order_num"] not in _RECENT_UPLOADS]
-    _recent.sort(key=lambda o: o.get("date", ""), reverse=True)
-    _rest.sort(key=lambda o: o.get("date", ""), reverse=True)
-    sorted_orders = _recent + _rest
-    order_cards = []
+    # Build flat row list from all invoices
+    table_rows = []
     saved_count = 0
     total_items = 0
+    _seen_names = {}
 
-    for inv in sorted_orders:
+    for inv in sorted(INVOICES, key=lambda o: o.get("date", ""), reverse=True):
         onum = inv["order_num"]
         is_personal = inv["source"] == "Personal Amazon" or ("file" in inv and isinstance(inv.get("file"), str) and "Gigi" in inv.get("file", ""))
-
-        source_label = "Personal Amazon" if is_personal else ("Amazon" if inv["source"] in ("Key Component Mfg",) else inv["source"])
+        if is_personal:
+            continue
         ship_addr = inv.get("ship_address", "")
         orig_location = classify_location(ship_addr)
 
-        item_cards = []
-        _seen_names = {}
-        order_saved = 0
-        order_total_items = 0
         for item in inv["items"]:
             item_name = item["name"]
             if item_name.startswith("Your package was left near the front door or porch."):
                 item_name = item_name.replace("Your package was left near the front door or porch.", "").strip()
             auto_cat = categorize_item(item_name)
+            if auto_cat in ("Personal/Gift", "Business Fees"):
+                continue
 
             total_items += 1
-            order_total_items += 1
             orig_qty = item["qty"]
             price = item["price"]
             orig_total = round(price * orig_qty, 2)
 
-            _seen_names[item_name] = _seen_names.get(item_name, 0) + 1
-            if _seen_names[item_name] > 1:
-                idx = f"{onum}__{item_name}__{_seen_names[item_name]}"
-            else:
-                idx = f"{onum}__{item_name}"
-
-            img_url = _IMAGE_URLS.get(item_name, "")
-
-            # Load existing saved details
             detail_key = (onum, item_name)
             existing = _ITEM_DETAILS.get(detail_key, [])
             has_details = bool(existing)
             if has_details:
                 saved_count += 1
-                order_saved += 1
 
-            # Values for form fields
             if existing:
                 det0 = existing[0]
                 det_name = det0["display_name"]
@@ -5751,75 +5733,20 @@ def _build_inventory_editor():
                 det_qty = orig_qty
                 det_loc = orig_location
 
-            is_split = len(existing) > 1
+            table_rows.append({
+                "status": "Saved" if has_details else "Unsaved",
+                "date": inv.get("date", ""),
+                "order_num": str(onum),
+                "orig_name": item_name,
+                "display_name": det_name,
+                "category": det_cat,
+                "location": det_loc,
+                "qty": det_qty,
+                "total": f"${orig_total:.2f}",
+                "_orig_qty": orig_qty,
+            })
 
-            item_cards.append(_build_item_row(
-                idx, item_name, img_url, det_name, det_cat, det_qty, det_loc,
-                has_details, orig_qty, orig_total, is_split, existing, onum))
-
-        if not item_cards:
-            continue
-
-        order_total = sum(it["price"] * it["qty"] for it in inv["items"])
-        _loc_color = TEAL if "Tulsa" in orig_location else (ORANGE if "Texas" in orig_location else GRAY)
-        _prog_color = GREEN if order_saved == order_total_items else ORANGE
-        _order_all_done = order_saved == order_total_items and order_total_items > 0
-        _order_pct = round(order_saved / order_total_items * 100) if order_total_items > 0 else 0
-
-        # Progress bar (80px)
-        mini_progress = html.Div([
-            html.Div(style={"width": f"{max(_order_pct, 5)}%", "height": "6px",
-                            "background": f"linear-gradient(90deg, {_prog_color}88, {_prog_color})",
-                            "borderRadius": "3px", "transition": "width 0.3s ease"}),
-        ], style={"width": "80px", "height": "6px", "backgroundColor": "#0d0d1a",
-                  "borderRadius": "3px", "display": "inline-block", "verticalAlign": "middle",
-                  "marginLeft": "8px", "overflow": "hidden"})
-
-        _is_recent_upload = onum in _RECENT_UPLOADS
-        _done_pill = html.Span("\u2713 DONE", style={
-            "fontSize": "10px", "fontWeight": "bold", "padding": "2px 10px",
-            "borderRadius": "8px", "backgroundColor": f"{GREEN}22", "color": GREEN,
-            "border": f"1px solid {GREEN}44", "marginLeft": "8px"}) if _order_all_done else None
-        _new_pill = html.Span("NEW", style={"fontSize": "9px", "fontWeight": "bold",
-                    "padding": "2px 8px", "borderRadius": "6px",
-                    "backgroundColor": f"{CYAN}22", "color": CYAN,
-                    "border": f"1px solid {CYAN}55", "marginLeft": "8px"}) if _is_recent_upload else None
-
-        # ── Order header ──
-        order_header = html.Div([c for c in [
-            html.Span(f"Order #{onum}", style={"color": CYAN, "fontWeight": "bold", "fontSize": "14px"}),
-            html.Span(orig_location,
-                      style={"fontSize": "11px", "padding": "2px 10px", "borderRadius": "10px",
-                             "backgroundColor": f"{_loc_color}18", "color": _loc_color,
-                             "marginLeft": "10px", "fontWeight": "600"}),
-            _new_pill,
-            _done_pill,
-            html.Span(style={"flex": "1"}),
-            html.Span(inv["date"], style={"color": GRAY, "fontSize": "12px"}),
-            html.Span(" \u00b7 ", style={"color": f"{DARKGRAY}44", "margin": "0 6px"}),
-            html.Span(source_label, style={"color": GRAY, "fontSize": "12px"}),
-            html.Span(" \u00b7 ", style={"color": f"{DARKGRAY}44", "margin": "0 6px"}),
-            html.Span(f"${order_total:.2f}", style={"color": WHITE, "fontSize": "13px", "fontWeight": "700"}),
-            html.Span(" \u00b7 ", style={"color": f"{DARKGRAY}44", "margin": "0 6px"}),
-            html.Span(f"{order_saved}/{order_total_items}",
-                      style={"color": _prog_color, "fontSize": "12px", "fontWeight": "bold"}),
-            mini_progress,
-        ] if c is not None],
-            className="order-header-compact",
-            style={"display": "flex", "alignItems": "center", "flexWrap": "wrap",
-                   "gap": "0", "padding": "10px 14px",
-                   "backgroundColor": CARD2,
-                   "borderBottom": f"1px solid {CYAN}15",
-                   "borderRadius": "8px 8px 0 0"})
-
-        order_card = html.Div([
-            order_header,
-            html.Div(item_cards, style={"padding": "4px 0"}),
-        ], className="order-card order-card-saved" if _order_all_done else "order-card",
-           style={"backgroundColor": f"#2ecc7108" if _order_all_done else f"{CARD2}88",
-                  "borderRadius": "8px", "marginBottom": "12px",
-                  "border": f"1px solid {GREEN}44" if _order_all_done else f"1px solid {CYAN}12"})
-        order_cards.append(order_card)
+    unsaved_count = total_items - saved_count
 
     # Progress bar
     pct = round(saved_count / total_items * 100) if total_items > 0 else 0
@@ -5846,94 +5773,137 @@ def _build_inventory_editor():
     ], style={"marginBottom": "18px", "padding": "14px 16px", "backgroundColor": "#0f1225",
               "borderRadius": "8px", "boxShadow": "0 1px 4px rgba(0,0,0,0.2)"})
 
-    # Filter bar
-    editor_cats = ["All"] + sorted(set(
-        categorize_item(it["name"])
-        for inv in INVOICES if inv["source"] != "Personal Amazon"
-        for it in inv["items"]
-        if categorize_item(it["name"]) not in ("Personal/Gift", "Business Fees")
-    ))
-    filter_bar = html.Div([
-        html.Div([
-            html.Span("\U0001f50d", style={"fontSize": "14px", "marginRight": "6px"}),
-            dcc.Input(id="editor-search", type="text", placeholder="Search items...",
-                      style={"backgroundColor": "#0d0d1a", "color": WHITE,
-                             "border": f"1px solid {DARKGRAY}44", "borderRadius": "6px",
-                             "padding": "8px 14px", "fontSize": "13px", "width": "240px"}),
-        ], style={"display": "flex", "alignItems": "center"}),
-        html.Div(style={"width": "1px", "height": "24px", "backgroundColor": f"{DARKGRAY}33"}),
-        html.Div([
-            html.Span("Category:", style={"color": GRAY, "fontSize": "12px", "marginRight": "6px",
-                                           "fontWeight": "500"}),
-            dbc.Select(id="editor-cat-filter",
-                       options=[{"label": c, "value": c} for c in editor_cats],
-                       value="All",
-                       style={"width": "170px", "fontSize": "13px",
-                              "backgroundColor": "#0d0d1a", "color": WHITE}),
-        ], style={"display": "flex", "alignItems": "center"}),
-        html.Div(style={"width": "1px", "height": "24px", "backgroundColor": f"{DARKGRAY}33"}),
-        html.Div([
-            html.Span("Show:", style={"color": GRAY, "fontSize": "12px", "marginRight": "6px",
-                                       "fontWeight": "500"}),
-            dbc.Select(id="editor-status-filter",
-                       options=[{"label": s, "value": s} for s in ["All", "Saved", "Unsaved"]],
-                       value="All",
-                       style={"width": "130px", "fontSize": "13px",
-                              "backgroundColor": "#0d0d1a", "color": WHITE}),
-        ], style={"display": "flex", "alignItems": "center"}),
-        html.Div(style={"flex": "1"}),
-        html.Button("\u2193 Jump to Next Unsaved", id="editor-jump-unsaved", n_clicks=0,
-                    style={"fontSize": "12px", "padding": "8px 18px",
-                           "background": f"linear-gradient(135deg, {ORANGE}, #e67e22)",
-                           "color": WHITE, "border": "none", "borderRadius": "6px",
-                           "cursor": "pointer", "fontWeight": "bold", "whiteSpace": "nowrap",
-                           "boxShadow": f"0 2px 8px {ORANGE}44"}),
-    ], style={"display": "flex", "alignItems": "center", "flexWrap": "wrap",
-              "gap": "16px", "marginBottom": "16px", "padding": "12px 16px",
-              "backgroundColor": "#0f1225", "borderRadius": "8px",
-              "boxShadow": "0 1px 4px rgba(0,0,0,0.2)"})
+    # DataTable columns
+    columns = [
+        {"name": "Status", "id": "status", "editable": False},
+        {"name": "Date", "id": "date", "editable": False},
+        {"name": "Order #", "id": "order_num", "editable": False},
+        {"name": "Original Name", "id": "orig_name", "editable": False},
+        {"name": "Display Name", "id": "display_name", "editable": True},
+        {"name": "Category", "id": "category", "presentation": "dropdown", "editable": True},
+        {"name": "Location", "id": "location", "presentation": "dropdown", "editable": True},
+        {"name": "Qty", "id": "qty", "type": "numeric", "editable": True},
+        {"name": "Total", "id": "total", "editable": False},
+    ]
 
-    return html.Div([
+    editor_table = dash_table.DataTable(
+        id="editor-datatable",
+        columns=columns,
+        data=table_rows,
+        dropdown={
+            "category": {"options": [{"label": c, "value": c} for c in CATEGORY_OPTIONS]},
+            "location": {"options": [
+                {"label": "Tulsa, OK", "value": "Tulsa, OK"},
+                {"label": "Texas", "value": "Texas"},
+                {"label": "Other", "value": "Other"},
+            ]},
+        },
+        editable=True,
+        filter_action="native",
+        sort_action="native",
+        sort_mode="multi",
+        page_size=25,
+        page_action="native",
+        hidden_columns=["_orig_qty"],
+        style_table={"overflowX": "auto"},
+        style_header={
+            "backgroundColor": "#1a1a2e", "color": CYAN,
+            "fontWeight": "bold", "fontSize": "12px",
+            "border": f"1px solid {CYAN}33",
+        },
+        style_cell={
+            "backgroundColor": CARD, "color": WHITE,
+            "border": f"1px solid {DARKGRAY}33", "fontSize": "12px",
+            "padding": "6px 10px", "textAlign": "left",
+            "minWidth": "60px", "maxWidth": "350px",
+            "overflow": "hidden", "textOverflow": "ellipsis",
+        },
+        style_cell_conditional=[
+            {"if": {"column_id": "status"}, "width": "70px", "textAlign": "center"},
+            {"if": {"column_id": "date"}, "width": "90px"},
+            {"if": {"column_id": "order_num"}, "width": "100px"},
+            {"if": {"column_id": "orig_name"}, "width": "250px"},
+            {"if": {"column_id": "display_name"}, "width": "250px"},
+            {"if": {"column_id": "category"}, "width": "140px"},
+            {"if": {"column_id": "location"}, "width": "100px"},
+            {"if": {"column_id": "qty"}, "width": "55px", "textAlign": "center"},
+            {"if": {"column_id": "total"}, "width": "80px", "textAlign": "right"},
+        ],
+        style_data_conditional=[
+            {"if": {"state": "active"}, "backgroundColor": f"{CYAN}15",
+             "border": f"1px solid {CYAN}"},
+            # Green tint for saved rows
+            {"if": {"filter_query": '{status} = "Saved"'},
+             "backgroundColor": f"{GREEN}08", "borderLeft": f"3px solid {GREEN}44"},
+            # Orange tint for unsaved rows
+            {"if": {"filter_query": '{status} = "Unsaved"'},
+             "backgroundColor": f"{ORANGE}08", "borderLeft": f"3px solid {ORANGE}44"},
+            # Status badge colors
+            {"if": {"filter_query": '{status} = "Saved"', "column_id": "status"},
+             "color": GREEN, "fontWeight": "bold"},
+            {"if": {"filter_query": '{status} = "Unsaved"', "column_id": "status"},
+             "color": ORANGE, "fontWeight": "bold"},
+        ],
+        style_filter={
+            "backgroundColor": "#0d0d1a", "color": WHITE,
+            "border": f"1px solid {DARKGRAY}44",
+        },
+    )
+
+    # Unsaved badge for section header
+    _unsaved_badge = f"{unsaved_count} unsaved" if unsaved_count > 0 else ""
+
+    save_all_row = html.Div([
+        html.Button("Save All Changes", id="editor-save-all-btn", n_clicks=0,
+                    style={"fontSize": "13px", "padding": "10px 28px",
+                           "background": f"linear-gradient(135deg, {GREEN}, #27ae60)",
+                           "color": WHITE, "border": "none", "borderRadius": "6px",
+                           "cursor": "pointer", "fontWeight": "bold",
+                           "boxShadow": f"0 2px 8px {GREEN}33"}),
+        html.Span(id="editor-save-all-status", children="",
+                  style={"color": GREEN, "fontSize": "12px", "fontWeight": "bold",
+                         "marginLeft": "10px"}),
+        html.Span(style={"flex": "1"}),
+        html.Button("Fetch Missing Images", id="editor-fetch-all-images-btn", n_clicks=0,
+                    style={"fontSize": "11px", "padding": "6px 14px",
+                           "backgroundColor": "transparent", "color": CYAN,
+                           "border": f"1px solid {CYAN}44", "borderRadius": "6px",
+                           "cursor": "pointer", "fontWeight": "600",
+                           "whiteSpace": "nowrap"}),
+        html.Span("", id="editor-fetch-all-images-status",
+                  style={"fontSize": "12px", "color": GREEN, "marginLeft": "10px",
+                         "fontWeight": "bold"}),
+    ], style={"display": "flex", "alignItems": "center", "gap": "8px",
+              "marginTop": "12px"})
+
+    # Hidden placeholders for removed filter components (keep callbacks happy)
+    _hidden_compat = html.Div([
+        dcc.Input(id="editor-search", type="text", value="", style={"display": "none"}),
+        dbc.Select(id="editor-cat-filter", value="All", style={"display": "none"}),
+        dbc.Select(id="editor-status-filter", value="All", style={"display": "none"}),
+        html.Button(id="editor-jump-unsaved", style={"display": "none"}),
+    ], style={"display": "none"})
+
+    editor_content = html.Div([
         html.Div([
-            html.Div([
-                html.H4("RECEIPTS TO INVENTORY OPTIMIZER",
-                         style={"color": ORANGE, "margin": "0", "fontSize": "20px", "fontWeight": "700",
-                                "letterSpacing": "1px"}),
-                html.Div(style={"flex": "1"}),
-                html.Button("Fetch Missing Images", id="editor-fetch-all-images-btn", n_clicks=0,
-                            style={"fontSize": "11px", "padding": "6px 14px",
-                                   "backgroundColor": "transparent", "color": CYAN,
-                                   "border": f"1px solid {CYAN}44", "borderRadius": "6px",
-                                   "cursor": "pointer", "fontWeight": "600",
-                                   "whiteSpace": "nowrap"}),
-                html.Span("", id="editor-fetch-all-images-status",
-                          style={"fontSize": "12px", "color": GREEN, "marginLeft": "10px",
-                                 "fontWeight": "bold"}),
-            ], style={"display": "flex", "alignItems": "center"}),
-            html.P([
-                "Edit ",
-                html.Span("name", style={"color": WHITE, "fontWeight": "600"}),
-                ", ",
-                html.Span("category", style={"color": WHITE, "fontWeight": "600"}),
-                " & ",
-                html.Span("location", style={"color": WHITE, "fontWeight": "600"}),
-                " inline \u2192 hit ",
-                html.Span("\u2713", style={"color": GREEN, "fontWeight": "bold"}),
-                " to save. Click ",
-                html.Span("\u22ef", style={"color": GRAY, "fontWeight": "bold"}),
-                " for image/split options.",
-            ], style={"color": GRAY, "fontSize": "13px", "margin": "6px 0 0 0"}),
+            html.H4("ITEM NAMING EDITOR",
+                     style={"color": ORANGE, "margin": "0", "fontSize": "20px", "fontWeight": "700",
+                            "letterSpacing": "1px"}),
+            html.P("Edit display name, category, and location inline. Use column filters to search. Click Save All when done.",
+                   style={"color": GRAY, "fontSize": "13px", "margin": "6px 0 0 0"}),
         ], style={"marginBottom": "16px"}),
         progress_bar,
-        filter_bar,
-        # ── Scrollable items area ──
-        html.Div(order_cards, id="editor-items-container",
-                 style={"maxHeight": "800px", "overflowY": "auto", "padding": "0",
-                        "scrollbarWidth": "thin"}),
+        html.Div(id="editor-items-container", children=[
+            editor_table,
+            save_all_row,
+        ]),
+        _hidden_compat,
     ], style={"backgroundColor": CARD, "padding": "24px", "borderRadius": "12px",
-              "marginBottom": "18px", "border": f"1px solid {ORANGE}22",
+              "border": f"1px solid {ORANGE}22",
               "borderTop": f"5px solid {ORANGE}",
               "boxShadow": "0 4px 20px rgba(0,0,0,0.3)"})
+
+    return editor_content, unsaved_count
 
 
 def _build_stock_table_html(stock_df, search="", cat_filter="All", status_filter="All", show_with_tax=False, sort_by="Category"):
@@ -6949,6 +6919,19 @@ def build_tab4_inventory():
             ], style={"borderBottom": "1px solid #ffffff10"})
         )
 
+    # Build editor (returns content + unsaved count)
+    _editor_result = _build_inventory_editor()
+    if isinstance(_editor_result, tuple):
+        _editor_content, _editor_unsaved = _editor_result
+    else:
+        _editor_content, _editor_unsaved = _editor_result, 0
+    _unsaved_badge = f"{_editor_unsaved} unsaved" if _editor_unsaved > 0 else ""
+    _editor_section = html.Details([
+        _sec_header("ITEM NAMING EDITOR", "Name, categorize, and locate receipt items", color=ORANGE, badge=_unsaved_badge),
+        _editor_content,
+    ], open=_editor_unsaved > 0,
+       style={"marginBottom": "14px"})
+
     return html.Div([
 
         # Strict mode banner
@@ -7001,17 +6984,36 @@ def build_tab4_inventory():
                   "borderLeft": f"4px solid {GREEN}"}),
 
         # ══════════════════════════════════════════════════════════════════════
-        # SECTION 1: RECEIPTS TO INVENTORY (review/organize items)
+        # SECTION 1: ALL ITEMS (stock overview) — open by default
         # ══════════════════════════════════════════════════════════════════════
-        _build_inventory_editor(),
+        html.Details([
+            _sec_header("ALL ITEMS", "Every inventory item sorted by cost", color=TEAL),
+            html.Div([
+                html.P("Business supplies only.", style={"color": GRAY, "fontSize": "12px", "marginBottom": "8px"}),
+                html.Div([
+                    html.Table([
+                        html.Thead(html.Tr([
+                            html.Th("", style={"padding": "6px 4px", "width": "44px"}),
+                            html.Th("Type", style={"textAlign": "center", "padding": "6px 8px", "width": "80px"}),
+                            html.Th("Item Name", style={"textAlign": "left", "padding": "6px 8px"}),
+                            html.Th("Category", style={"textAlign": "left", "padding": "6px 8px"}),
+                            html.Th("Store", style={"textAlign": "left", "padding": "6px 8px"}),
+                            html.Th("Shipped To", style={"textAlign": "left", "padding": "6px 8px"}),
+                            html.Th("Qty", style={"textAlign": "center", "padding": "6px 8px"}),
+                            html.Th("Unit Price", style={"textAlign": "right", "padding": "6px 8px"}),
+                            html.Th("Total", style={"textAlign": "right", "padding": "6px 8px"}),
+                            html.Th("Date", style={"textAlign": "left", "padding": "6px 8px"}),
+                        ], style={"borderBottom": f"2px solid {TEAL}"})),
+                        html.Tbody(item_table_rows),
+                    ], style={"width": "100%", "borderCollapse": "collapse", "color": WHITE}),
+                ], style={"maxHeight": "600px", "overflowY": "auto"}),
+            ], style={"padding": "14px"}),
+        ], open=True,
+           style={"backgroundColor": CARD2, "padding": "0", "borderRadius": "10px",
+                  "marginBottom": "14px", "border": f"1px solid {TEAL}33"}),
 
         # ══════════════════════════════════════════════════════════════════════
-        # SECTION 2: RECEIPT UPLOAD
-        # ══════════════════════════════════════════════════════════════════════
-        _build_receipt_upload_section(),
-
-        # ══════════════════════════════════════════════════════════════════════
-        # SECTION 3: WAREHOUSES (collapsible)
+        # SECTION 2: WAREHOUSES (collapsible)
         # ══════════════════════════════════════════════════════════════════════
         html.Details([
             _sec_header("WAREHOUSES", "Who has what \u2014 inventory by location", color=CYAN),
@@ -7020,7 +7022,61 @@ def build_tab4_inventory():
            style={"marginBottom": "14px"}),
 
         # ══════════════════════════════════════════════════════════════════════
-        # SECTION 4: SPENDING ANALYTICS (collapsible)
+        # SECTION 3: ITEM NAMING EDITOR (collapsible, auto-opens if unsaved)
+        # ══════════════════════════════════════════════════════════════════════
+        _editor_section,
+
+        # ══════════════════════════════════════════════════════════════════════
+        # SECTION 4: RECEIPT UPLOAD (collapsible)
+        # ══════════════════════════════════════════════════════════════════════
+        html.Details([
+            _sec_header("RECEIPT UPLOAD", "Upload purchase receipts to add inventory", color=GREEN),
+            _build_receipt_upload_section(),
+        ], open=False,
+           style={"marginBottom": "14px"}),
+
+        # ══════════════════════════════════════════════════════════════════════
+        # SECTION 5: ALL ORDERS (collapsible)
+        # ══════════════════════════════════════════════════════════════════════
+        html.Details([
+            _sec_header("ALL ORDERS", f"Every purchase order with date, store, and totals ({inv_order_count})", color=PURPLE),
+            html.Div([
+                html.Table([
+                    html.Thead(html.Tr([
+                        html.Th("Date", style={"textAlign": "left", "padding": "6px 8px"}),
+                        html.Th("Order #", style={"textAlign": "left", "padding": "6px 8px"}),
+                        html.Th("Store", style={"textAlign": "left", "padding": "6px 8px"}),
+                        html.Th("Shipped To", style={"textAlign": "left", "padding": "6px 8px"}),
+                        html.Th("Items", style={"textAlign": "center", "padding": "6px 8px"}),
+                        html.Th("Subtotal", style={"textAlign": "right", "padding": "6px 8px"}),
+                        html.Th("Tax", style={"textAlign": "right", "padding": "6px 8px"}),
+                        html.Th("Total", style={"textAlign": "right", "padding": "6px 8px"}),
+                    ], style={"borderBottom": f"2px solid {PURPLE}"})),
+                    html.Tbody(order_table_rows + [
+                        html.Tr([
+                            html.Td("TOTAL", style={"color": ORANGE, "fontWeight": "bold", "padding": "6px 8px"}),
+                            html.Td("", style={"padding": "6px 8px"}),
+                            html.Td("", style={"padding": "6px 8px"}),
+                            html.Td("", style={"padding": "6px 8px"}),
+                            html.Td(str(INV_DF["item_count"].sum()), style={"textAlign": "center", "color": ORANGE,
+                                                                             "fontWeight": "bold", "padding": "6px 8px"}),
+                            html.Td(f"${total_inv_subtotal:,.2f}", style={"textAlign": "right", "color": ORANGE,
+                                                                           "fontWeight": "bold", "padding": "6px 8px"}),
+                            html.Td(f"${total_inv_tax:,.2f}", style={"textAlign": "right", "color": ORANGE,
+                                                                       "fontWeight": "bold", "padding": "6px 8px"}),
+                            html.Td(f"${total_inventory_cost:,.2f}", style={"textAlign": "right", "color": ORANGE,
+                                                                             "fontWeight": "bold", "fontSize": "14px",
+                                                                             "padding": "6px 8px"}),
+                        ], style={"borderTop": f"3px solid {ORANGE}"}),
+                    ]),
+                ], style={"width": "100%", "borderCollapse": "collapse", "color": WHITE}),
+            ], style={"padding": "14px", "maxHeight": "500px", "overflowY": "auto"}),
+        ], open=False,
+           style={"backgroundColor": CARD2, "padding": "0", "borderRadius": "10px",
+                  "marginBottom": "14px", "border": f"1px solid {PURPLE}33"}),
+
+        # ══════════════════════════════════════════════════════════════════════
+        # SECTION 6: SPENDING ANALYTICS (collapsible)
         # ══════════════════════════════════════════════════════════════════════
         html.Details([
             _sec_header("SPENDING ANALYTICS", "Charts and trends for inventory spending", color=PURPLE),
@@ -7117,75 +7173,6 @@ def build_tab4_inventory():
            style={"backgroundColor": CARD2, "padding": "0", "borderRadius": "12px",
                   "marginBottom": "14px", "border": f"1px solid {PURPLE}33",
                   "borderTop": f"4px solid {PURPLE}"}),
-
-        # ══════════════════════════════════════════════════════════════════════
-        # SECTION 5: ALL ORDERS (collapsible)
-        # ══════════════════════════════════════════════════════════════════════
-        html.Details([
-            _sec_header("ALL ORDERS", f"Every purchase order with date, store, and totals ({inv_order_count})", color=PURPLE),
-            html.Div([
-                html.Table([
-                    html.Thead(html.Tr([
-                        html.Th("Date", style={"textAlign": "left", "padding": "6px 8px"}),
-                        html.Th("Order #", style={"textAlign": "left", "padding": "6px 8px"}),
-                        html.Th("Store", style={"textAlign": "left", "padding": "6px 8px"}),
-                        html.Th("Shipped To", style={"textAlign": "left", "padding": "6px 8px"}),
-                        html.Th("Items", style={"textAlign": "center", "padding": "6px 8px"}),
-                        html.Th("Subtotal", style={"textAlign": "right", "padding": "6px 8px"}),
-                        html.Th("Tax", style={"textAlign": "right", "padding": "6px 8px"}),
-                        html.Th("Total", style={"textAlign": "right", "padding": "6px 8px"}),
-                    ], style={"borderBottom": f"2px solid {PURPLE}"})),
-                    html.Tbody(order_table_rows + [
-                        html.Tr([
-                            html.Td("TOTAL", style={"color": ORANGE, "fontWeight": "bold", "padding": "6px 8px"}),
-                            html.Td("", style={"padding": "6px 8px"}),
-                            html.Td("", style={"padding": "6px 8px"}),
-                            html.Td("", style={"padding": "6px 8px"}),
-                            html.Td(str(INV_DF["item_count"].sum()), style={"textAlign": "center", "color": ORANGE,
-                                                                             "fontWeight": "bold", "padding": "6px 8px"}),
-                            html.Td(f"${total_inv_subtotal:,.2f}", style={"textAlign": "right", "color": ORANGE,
-                                                                           "fontWeight": "bold", "padding": "6px 8px"}),
-                            html.Td(f"${total_inv_tax:,.2f}", style={"textAlign": "right", "color": ORANGE,
-                                                                       "fontWeight": "bold", "padding": "6px 8px"}),
-                            html.Td(f"${total_inventory_cost:,.2f}", style={"textAlign": "right", "color": ORANGE,
-                                                                             "fontWeight": "bold", "fontSize": "14px",
-                                                                             "padding": "6px 8px"}),
-                        ], style={"borderTop": f"3px solid {ORANGE}"}),
-                    ]),
-                ], style={"width": "100%", "borderCollapse": "collapse", "color": WHITE}),
-            ], style={"padding": "14px", "maxHeight": "500px", "overflowY": "auto"}),
-        ], open=False,
-           style={"backgroundColor": CARD2, "padding": "0", "borderRadius": "10px",
-                  "marginBottom": "14px", "border": f"1px solid {PURPLE}33"}),
-
-        # ══════════════════════════════════════════════════════════════════════
-        # SECTION 6: ALL ITEMS (collapsible)
-        # ══════════════════════════════════════════════════════════════════════
-        html.Details([
-            _sec_header("ALL ITEMS", "Every inventory item sorted by cost", color=TEAL),
-            html.Div([
-                html.P("Business supplies only.", style={"color": GRAY, "fontSize": "12px", "marginBottom": "8px"}),
-                html.Div([
-                    html.Table([
-                        html.Thead(html.Tr([
-                            html.Th("", style={"padding": "6px 4px", "width": "44px"}),
-                            html.Th("Type", style={"textAlign": "center", "padding": "6px 8px", "width": "80px"}),
-                            html.Th("Item Name", style={"textAlign": "left", "padding": "6px 8px"}),
-                            html.Th("Category", style={"textAlign": "left", "padding": "6px 8px"}),
-                            html.Th("Store", style={"textAlign": "left", "padding": "6px 8px"}),
-                            html.Th("Shipped To", style={"textAlign": "left", "padding": "6px 8px"}),
-                            html.Th("Qty", style={"textAlign": "center", "padding": "6px 8px"}),
-                            html.Th("Unit Price", style={"textAlign": "right", "padding": "6px 8px"}),
-                            html.Th("Total", style={"textAlign": "right", "padding": "6px 8px"}),
-                            html.Th("Date", style={"textAlign": "left", "padding": "6px 8px"}),
-                        ], style={"borderBottom": f"2px solid {TEAL}"})),
-                        html.Tbody(item_table_rows),
-                    ], style={"width": "100%", "borderCollapse": "collapse", "color": WHITE}),
-                ], style={"maxHeight": "600px", "overflowY": "auto"}),
-            ], style={"padding": "14px"}),
-        ], open=False,
-           style={"backgroundColor": CARD2, "padding": "0", "borderRadius": "10px",
-                  "marginBottom": "14px", "border": f"1px solid {TEAL}33"}),
 
         # ── Receipt Gallery ─────────────────────────────────────────────────
         _build_receipt_gallery(),
@@ -10379,12 +10366,20 @@ def _compute_health_score():
     sub_scores["Profit Margin"] = round(pm)
     weights["Profit Margin"] = 0.25
 
-    # 2. Revenue Trend (20%) — last month vs prior avg, -30% = 0, +30% = 100
+    # 2. Revenue Trend (20%) — last COMPLETE month vs prior month (MoM)
+    #    Skip current partial month (< 25 days elapsed). Scale: -30% = 0, +30% = 100.
     if len(months_sorted) >= 2:
-        last_rev = monthly_sales.get(months_sorted[-1], 0)
-        prior_avg = np.mean([monthly_sales.get(m, 0) for m in months_sorted[:-1]]) if len(months_sorted) > 1 else last_rev
-        if prior_avg > 0:
-            pct_change = (last_rev - prior_avg) / prior_avg
+        from datetime import datetime as _dt_rt
+        _now = _dt_rt.now()
+        _cur_month_str = _now.strftime("%Y-%m")
+        _use_months = list(months_sorted)
+        # Drop current partial month so we compare two complete months
+        if _use_months[-1] == _cur_month_str and _now.day < 25 and len(_use_months) >= 3:
+            _use_months = _use_months[:-1]
+        last_rev = monthly_sales.get(_use_months[-1], 0)
+        prev_rev = monthly_sales.get(_use_months[-2], 0)
+        if prev_rev > 0:
+            pct_change = (last_rev - prev_rev) / prev_rev
             rt = max(0, min(100, (pct_change + 0.30) / 0.60 * 100))
         else:
             rt = 50
@@ -13579,7 +13574,12 @@ def update_price_display(new_qty, orig_total, orig_qty):
     prevent_initial_call=True,
 )
 def filter_editor(search, cat_filter, status_filter):
-    """Rebuild editor order cards based on search/category/status filters."""
+    """Legacy filter callback — DataTable has native filtering now, so this is a no-op."""
+    raise dash.exceptions.PreventUpdate
+
+
+def _filter_editor_legacy(search, cat_filter, status_filter):
+    """Legacy: Rebuild editor order cards based on search/category/status filters."""
     search = (search or "").lower().strip()
     cat_filter = cat_filter or "All"
     status_filter = status_filter or "All"
@@ -13996,8 +13996,8 @@ def _relay_save_trigger(all_statuses, current):
     prevent_initial_call=True,
 )
 def _refresh_editor_on_save(trigger, search, cat_filter, status_filter):
-    """Rebuild editor after save so saved items auto-compact."""
-    return filter_editor(search or "", cat_filter or "All", status_filter or "All")
+    """Legacy: Rebuild editor after per-item save. Now a no-op (DataTable manages its own state)."""
+    raise dash.exceptions.PreventUpdate
 
 
 # ── Receipt Upload + Item Wizard ──────────────────────────────────────────────
@@ -15254,6 +15254,72 @@ def batch_save_items(n_clicks, table_data, wizard_state):
 
     return html.Span(f"Saved {saved}/{len(table_data)} items!",
                      style={"color": GREEN, "fontWeight": "bold"})
+
+
+# ── Editor DataTable Save All Callback ────────────────────────────────────────
+
+@app.callback(
+    Output("editor-save-all-status", "children"),
+    Output("editor-datatable", "data"),
+    Input("editor-save-all-btn", "n_clicks"),
+    State("editor-datatable", "data"),
+    prevent_initial_call=True,
+)
+def save_all_editor_items(n_clicks, table_data):
+    """Save all items from the editor DataTable in one batch."""
+    if not n_clicks or not table_data:
+        raise dash.exceptions.PreventUpdate
+
+    from supabase_loader import save_item_details as _sid
+
+    saved = 0
+    errors = 0
+    updated_data = []
+    for row in table_data:
+        order_num = row.get("order_num", "")
+        orig_name = row.get("orig_name", "")
+        display_name = (row.get("display_name", "") or "").strip() or orig_name
+        category = row.get("category", "Other")
+        qty = int(row.get("qty", 1))
+        location = row.get("location", "")
+
+        if not order_num or not orig_name:
+            updated_data.append(row)
+            continue
+
+        details = [{
+            "display_name": display_name,
+            "category": category,
+            "true_qty": qty,
+            "location": location,
+        }]
+
+        try:
+            ok = _sid(order_num, orig_name, details)
+            if ok:
+                _ITEM_DETAILS[(order_num, orig_name)] = details
+                saved += 1
+                row = dict(row)
+                row["status"] = "Saved"
+            else:
+                errors += 1
+        except Exception:
+            errors += 1
+
+        updated_data.append(row)
+
+    # Rebuild INV_ITEMS and STOCK_SUMMARY after all saves
+    if saved > 0:
+        _recompute_stock_summary()
+
+    msg = f"Saved {saved}/{len(table_data)} items!"
+    if errors > 0:
+        msg += f" ({errors} errors)"
+
+    return (
+        html.Span(msg, style={"color": GREEN if errors == 0 else ORANGE, "fontWeight": "bold"}),
+        updated_data,
+    )
 
 
 # ── CSV Paste Import Callback ─────────────────────────────────────────────────
