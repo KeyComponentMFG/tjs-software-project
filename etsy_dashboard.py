@@ -2895,6 +2895,7 @@ def chatbot_answer(question, history=None):
     """AI-powered chatbot: tool-based agent → context-dump fallback → keyword fallback."""
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
     if api_key:
+        _last_api_error = None
         # Primary: tool-based agentic chat with accounting pipeline
         if _acct_pipeline is not None and _acct_pipeline.ledger is not None:
             try:
@@ -2908,12 +2909,23 @@ def chatbot_answer(question, history=None):
                     max_rounds=5,
                 )
             except Exception as e:
+                _last_api_error = str(e)
                 print(f"[Jarvis] Agent chat failed, falling back to context-dump: {e}")
         # Fallback 1: context-dump to Haiku
         try:
             return _chatbot_answer_claude(question, history, api_key)
         except Exception as e:
+            _last_api_error = str(e)
             print(f"[Jarvis] Claude context-dump failed, falling back to keywords: {e}")
+        # If API errors mention billing/credits, tell the user directly
+        if _last_api_error and ("credit balance" in _last_api_error or "billing" in _last_api_error.lower()):
+            return (
+                "**JARVIS AI is offline** -- the Anthropic API credit balance is empty.\n\n"
+                "Add credits at [console.anthropic.com/settings/billing](https://console.anthropic.com/settings/billing) "
+                "to restore full AI chat with tool access to your accounting data.\n\n"
+                "In the meantime, I'll try to answer with basic keyword matching:\n\n---\n\n"
+                + _chatbot_answer_inner(question)
+            )
     try:
         return _chatbot_answer_inner(question)
     except Exception as e:
