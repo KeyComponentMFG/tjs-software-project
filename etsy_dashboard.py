@@ -943,6 +943,16 @@ except NameError:
     _ceo_agent = None
     _ceo_health = None
 
+# Load dismissed CEO alerts from Supabase config (persists across restarts)
+_dismissed_alerts = set()
+try:
+    from supabase_loader import get_config_value as _get_cfg
+    _dismissed_raw = _get_cfg("dismissed_ceo_alerts", [])
+    if isinstance(_dismissed_raw, list):
+        _dismissed_alerts = set(_dismissed_raw)
+except Exception:
+    pass
+
 # ── Expense completeness globals (defaults if pipeline didn't set them) ──
 try:
     expense_receipt_verified
@@ -4377,8 +4387,13 @@ def _build_jarvis_auto_briefing():
     return "\n".join(lines)
 
 
+def _alert_key(alert):
+    """Generate a stable key for an alert based on agent name + message."""
+    return f"{alert.agent}:{alert.message}"
+
+
 def _build_ceo_banner():
-    """Build the CEO agent alert banner from latest health report."""
+    """Build the CEO agent alert banner with dismiss buttons."""
     if not _ceo_health:
         return html.Div()
 
@@ -4386,8 +4401,17 @@ def _build_ceo_banner():
     if not alerts:
         return html.Div()
 
+    # Split into active (unread) and dismissed (read)
+    active = [a for a in alerts if _alert_key(a) not in _dismissed_alerts]
+    dismissed = [a for a in alerts if _alert_key(a) in _dismissed_alerts]
+
+    if not active and not dismissed:
+        return html.Div()
+
     children = []
-    for alert in alerts[:5]:  # Cap at 5 visible alerts
+
+    # Active alerts with dismiss buttons
+    for alert in active[:8]:
         if alert.level == "critical":
             color, icon = RED, "X"
         elif alert.level == "warning":
@@ -4395,6 +4419,7 @@ def _build_ceo_banner():
         else:
             color, icon = CYAN, "i"
 
+        akey = _alert_key(alert)
         children.append(html.Div([
             html.Span(f" {icon} ", style={"color": color, "fontWeight": "bold",
                                           "fontSize": "12px", "marginRight": "6px",
@@ -4402,12 +4427,33 @@ def _build_ceo_banner():
                                           "padding": "1px 6px", "borderRadius": "3px"}),
             html.Span(f"{alert.agent}: ", style={"color": color, "fontWeight": "bold",
                                                   "fontSize": "12px"}),
-            html.Span(alert.message, style={"color": GRAY, "fontSize": "12px"}),
-        ], style={"padding": "2px 0"}))
+            html.Span(alert.message, style={"color": GRAY, "fontSize": "12px", "flex": "1"}),
+            html.Button("Mark Read", id={"type": "ceo-dismiss-btn", "index": akey},
+                        n_clicks=0,
+                        style={"fontSize": "10px", "padding": "1px 8px", "marginLeft": "10px",
+                               "backgroundColor": f"{color}22", "color": color,
+                               "border": f"1px solid {color}44", "borderRadius": "4px",
+                               "cursor": "pointer"}),
+        ], style={"padding": "3px 0", "display": "flex", "alignItems": "center"}))
 
-    if len(alerts) > 5:
-        children.append(html.Span(f"... and {len(alerts) - 5} more",
-                                  style={"color": GRAY, "fontSize": "11px"}))
+    # Show dismissed count with expand toggle
+    if dismissed:
+        children.append(html.Div([
+            html.Span(f"{len(dismissed)} read alert{'s' if len(dismissed) != 1 else ''}",
+                      style={"color": GRAY, "fontSize": "11px", "fontStyle": "italic"}),
+            html.Button("Show", id="ceo-show-dismissed", n_clicks=0,
+                        style={"fontSize": "10px", "padding": "1px 6px", "marginLeft": "8px",
+                               "backgroundColor": "#ffffff08", "color": GRAY,
+                               "border": "1px solid #ffffff15", "borderRadius": "3px",
+                               "cursor": "pointer"}),
+        ], style={"padding": "4px 0", "display": "flex", "alignItems": "center"}))
+
+    if not active:
+        # All read — show a minimal green bar
+        return html.Div(children, style={
+            "backgroundColor": "#001a00", "border": f"1px solid {GREEN}22",
+            "borderRadius": "6px", "padding": "6px 14px", "margin": "0 16px 8px 16px",
+        })
 
     return html.Div(children, style={
         "backgroundColor": "#1a1000", "border": f"1px solid {ORANGE}33",
@@ -17793,11 +17839,35 @@ def csv_paste_import(n_clicks, csv_text):
 @app.callback(
     Output("ceo-alert-banner", "children"),
     Input("ceo-interval", "n_intervals"),
+    Input({"type": "ceo-dismiss-btn", "index": ALL}, "n_clicks"),
     prevent_initial_call=True,
 )
-def ceo_periodic_check(n_intervals):
-    """Periodic CEO health re-check (every 15 min)."""
+def ceo_periodic_check(n_intervals, dismiss_clicks):
+    """Periodic CEO health re-check + dismiss alert handler."""
     global _ceo_health
+    ctx = callback_context
+
+    # Handle dismiss button clicks
+    if ctx.triggered:
+        for trig in ctx.triggered:
+            prop_id = trig["prop_id"]
+            if "ceo-dismiss-btn" in prop_id and trig["value"]:
+                try:
+                    import json
+                    parsed = json.loads(prop_id.rsplit(".", 1)[0])
+                    alert_key = parsed["index"]
+                    _dismissed_alerts.add(alert_key)
+                    # Persist to Supabase
+                    try:
+                        from supabase_loader import save_config_value
+                        save_config_value("dismissed_ceo_alerts", list(_dismissed_alerts))
+                    except Exception:
+                        pass
+                    return _build_ceo_banner()
+                except Exception:
+                    pass
+
+    # Periodic re-check
     if _ceo_agent and _acct_pipeline:
         try:
             _ceo_health = _ceo_agent.run_periodic_check(_acct_pipeline)
