@@ -365,15 +365,18 @@ else:
     print(f"Using local bank data ({len(_init_bank_txns)} txns, Supabase empty)")
 
 # Re-run auto_categorize on any Uncategorized transactions with latest rules
-_recat_count = 0
-for _bt in BANK_TXNS:
-    if _bt.get("category") == "Uncategorized":
-        _new_cat = _init_auto_categorize(_bt.get("raw_desc", _bt["desc"]), _bt["type"])
-        if _new_cat != "Uncategorized":
-            _bt["category"] = _new_cat
-            _recat_count += 1
-if _recat_count:
-    print(f"[bank] Auto-categorized {_recat_count} previously uncategorized transaction(s)")
+try:
+    _recat_count = 0
+    for _bt in BANK_TXNS:
+        if _bt.get("category") == "Uncategorized":
+            _new_cat = _init_auto_categorize(_bt.get("raw_desc", _bt["desc"]), _bt["type"])
+            if _new_cat != "Uncategorized":
+                _bt["category"] = _new_cat
+                _recat_count += 1
+    if _recat_count:
+        print(f"[bank] Auto-categorized {_recat_count} previously uncategorized transaction(s)")
+except Exception as _e:
+    print(f"[bank] Re-categorize failed (non-fatal): {_e}")
 
 # ── Extract config values ───────────────────────────────────────────────────
 # Etsy balance = auto-calc from deposit titles (no hardcoded offset)
@@ -762,7 +765,10 @@ except Exception:
     pass
 
 # Lock in any remote image URLs to local files
-_lock_in_remote_images()
+try:
+    _lock_in_remote_images()
+except Exception as _e:
+    print(f"[images] Lock-in failed (non-fatal): {_e}")
 
 # Inventory aggregates
 total_inventory_cost = INV_DF["grand_total"].sum()

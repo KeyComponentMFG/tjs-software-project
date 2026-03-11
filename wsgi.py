@@ -12,6 +12,8 @@ _spec = importlib.util.spec_from_file_location(
     os.path.join(os.path.dirname(__file__), "etsy_dashboard.py"),
 )
 _mod = importlib.util.module_from_spec(_spec)
+import sys
+sys.modules["etsy_dashboard_mono"] = _mod
 _spec.loader.exec_module(_mod)
 
 # Expose the Flask server for gunicorn
