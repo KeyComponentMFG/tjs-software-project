@@ -4411,7 +4411,7 @@ def _build_ceo_banner():
     children = []
 
     # Active alerts with dismiss buttons
-    for alert in active[:8]:
+    for i, alert in enumerate(active[:8]):
         if alert.level == "critical":
             color, icon = RED, "X"
         elif alert.level == "warning":
@@ -4428,24 +4428,19 @@ def _build_ceo_banner():
             html.Span(f"{alert.agent}: ", style={"color": color, "fontWeight": "bold",
                                                   "fontSize": "12px"}),
             html.Span(alert.message, style={"color": GRAY, "fontSize": "12px", "flex": "1"}),
-            html.Button("Mark Read", id={"type": "ceo-dismiss-btn", "index": akey},
-                        n_clicks=0,
+            html.Button("Mark Read", className="ceo-dismiss-btn",
+                        **{"data-key": akey},
                         style={"fontSize": "10px", "padding": "1px 8px", "marginLeft": "10px",
                                "backgroundColor": f"{color}22", "color": color,
                                "border": f"1px solid {color}44", "borderRadius": "4px",
                                "cursor": "pointer"}),
         ], style={"padding": "3px 0", "display": "flex", "alignItems": "center"}))
 
-    # Show dismissed count with expand toggle
+    # Show dismissed count
     if dismissed:
         children.append(html.Div([
             html.Span(f"{len(dismissed)} read alert{'s' if len(dismissed) != 1 else ''}",
                       style={"color": GRAY, "fontSize": "11px", "fontStyle": "italic"}),
-            html.Button("Show", id="ceo-show-dismissed", n_clicks=0,
-                        style={"fontSize": "10px", "padding": "1px 6px", "marginLeft": "8px",
-                               "backgroundColor": "#ffffff08", "color": GRAY,
-                               "border": "1px solid #ffffff15", "borderRadius": "3px",
-                               "cursor": "pointer"}),
         ], style={"padding": "4px 0", "display": "flex", "alignItems": "center"}))
 
     if not active:
@@ -14533,6 +14528,7 @@ def serve_layout():
         ], style={"backgroundColor": BG}),
         # CEO Agent alert banner
         html.Div(id="ceo-alert-banner", children=_build_ceo_banner()),
+        dcc.Store(id="ceo-dismiss-store", data=""),
 
         # Periodic CEO health check (every 15 min)
         dcc.Interval(id="ceo-interval", interval=15 * 60 * 1000, n_intervals=0),
@@ -17839,33 +17835,25 @@ def csv_paste_import(n_clicks, csv_text):
 @app.callback(
     Output("ceo-alert-banner", "children"),
     Input("ceo-interval", "n_intervals"),
-    Input({"type": "ceo-dismiss-btn", "index": ALL}, "n_clicks"),
+    Input("ceo-dismiss-store", "data"),
     prevent_initial_call=True,
 )
-def ceo_periodic_check(n_intervals, dismiss_clicks):
+def ceo_periodic_check(n_intervals, dismiss_key):
     """Periodic CEO health re-check + dismiss alert handler."""
     global _ceo_health
     ctx = callback_context
 
-    # Handle dismiss button clicks
+    # Handle dismiss
     if ctx.triggered:
-        for trig in ctx.triggered:
-            prop_id = trig["prop_id"]
-            if "ceo-dismiss-btn" in prop_id and trig["value"]:
-                try:
-                    import json
-                    parsed = json.loads(prop_id.rsplit(".", 1)[0])
-                    alert_key = parsed["index"]
-                    _dismissed_alerts.add(alert_key)
-                    # Persist to Supabase
-                    try:
-                        from supabase_loader import save_config_value
-                        save_config_value("dismissed_ceo_alerts", list(_dismissed_alerts))
-                    except Exception:
-                        pass
-                    return _build_ceo_banner()
-                except Exception:
-                    pass
+        trig_id = ctx.triggered[0]["prop_id"]
+        if "ceo-dismiss-store" in trig_id and dismiss_key:
+            _dismissed_alerts.add(dismiss_key)
+            try:
+                from supabase_loader import save_config_value
+                save_config_value("dismissed_ceo_alerts", list(_dismissed_alerts))
+            except Exception:
+                pass
+            return _build_ceo_banner()
 
     # Periodic re-check
     if _ceo_agent and _acct_pipeline:
@@ -17874,6 +17862,23 @@ def ceo_periodic_check(n_intervals, dismiss_clicks):
         except Exception:
             pass
     return _build_ceo_banner()
+
+
+# Clientside: clicking any "Mark Read" button writes its data-key to the store
+app.clientside_callback(
+    """function(n) {
+        if (!n) return dash_clientside.no_update;
+        var active = document.activeElement;
+        if (active && active.classList.contains('ceo-dismiss-btn')) {
+            var key = active.getAttribute('data-key');
+            if (key) return key;
+        }
+        return dash_clientside.no_update;
+    }""",
+    Output("ceo-dismiss-store", "data"),
+    Input("ceo-alert-banner", "n_clicks"),
+    prevent_initial_call=True,
+)
 
 
 # ── Mark Receipt Verified Callback ────────────────────────────────────────────
