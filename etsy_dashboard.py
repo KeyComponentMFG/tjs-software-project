@@ -160,6 +160,49 @@ def _fetch_amazon_image(item_name):
         return ""
 
 
+def _lock_in_remote_images():
+    """Download any remote image URLs to local /assets/product_images/ so they can't be lost."""
+    import urllib.request
+    img_dir = os.path.join(BASE_DIR, "assets", "product_images")
+    os.makedirs(img_dir, exist_ok=True)
+    locked = 0
+    for name, url in list(_IMAGE_URLS.items()):
+        if not url or url.startswith("/assets/") or url.startswith("assets/"):
+            continue
+        # Remote URL — download it
+        try:
+            safe_name = re.sub(r'[^\w\s-]', '', name[:50]).strip()
+            safe_name = re.sub(r'[\s]+', '_', safe_name).lower()
+            if not safe_name:
+                safe_name = f"item_{locked}"
+            img_path = os.path.join(img_dir, f"{safe_name}.jpg")
+            if os.path.exists(img_path):
+                # Already downloaded, just update reference
+                local_url = f"/assets/product_images/{safe_name}.jpg"
+                _IMAGE_URLS[name] = local_url
+                from supabase_loader import save_image_override as _sio
+                _sio(name, local_url)
+                locked += 1
+                continue
+            req = urllib.request.Request(url, headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            })
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                img_bytes = resp.read()
+            with open(img_path, "wb") as f:
+                f.write(img_bytes)
+            local_url = f"/assets/product_images/{safe_name}.jpg"
+            _IMAGE_URLS[name] = local_url
+            from supabase_loader import save_image_override as _sio2
+            _sio2(name, local_url)
+            locked += 1
+            print(f"[images] Locked in: {name} -> {local_url}")
+        except Exception as e:
+            print(f"[images] Failed to lock {name}: {e}")
+    if locked:
+        print(f"[images] Locked in {locked} remote image(s) to local files")
+
+
 _sb = _load_data()
 CONFIG = _sb["CONFIG"]
 INVOICES = _sb["INVOICES"]
@@ -263,6 +306,7 @@ _etsy_balance_auto = round(_etsy_all_net - _etsy_deposit_total, 2)
 from _parse_bank_statements import parse_bank_pdf as _init_parse_bank
 from _parse_bank_statements import parse_bank_csv as _init_parse_csv
 from _parse_bank_statements import apply_overrides as _init_apply_overrides
+from _parse_bank_statements import auto_categorize as _init_auto_categorize
 
 _init_bank_dir = os.path.join(BASE_DIR, "data", "bank_statements")
 _init_bank_txns = []
@@ -319,6 +363,17 @@ elif _sb_bank:
 else:
     BANK_TXNS = _init_bank_txns
     print(f"Using local bank data ({len(_init_bank_txns)} txns, Supabase empty)")
+
+# Re-run auto_categorize on any Uncategorized transactions with latest rules
+_recat_count = 0
+for _bt in BANK_TXNS:
+    if _bt.get("category") == "Uncategorized":
+        _new_cat = _init_auto_categorize(_bt.get("raw_desc", _bt["desc"]), _bt["type"])
+        if _new_cat != "Uncategorized":
+            _bt["category"] = _new_cat
+            _recat_count += 1
+if _recat_count:
+    print(f"[bank] Auto-categorized {_recat_count} previously uncategorized transaction(s)")
 
 # ── Extract config values ───────────────────────────────────────────────────
 # Etsy balance = auto-calc from deposit titles (no hardcoded offset)
@@ -705,6 +760,9 @@ try:
         _IMAGE_URLS.update(_img_overrides)  # overrides take priority
 except Exception:
     pass
+
+# Lock in any remote image URLs to local files
+_lock_in_remote_images()
 
 # Inventory aggregates
 total_inventory_cost = INV_DF["grand_total"].sum()
@@ -1329,6 +1387,14 @@ def _rebuild_bank_derived():
     global bb_cc_payments, bb_cc_total_paid, bb_cc_balance, bb_cc_available
     global _bank_cat_color_map, _bank_acct_gap, _bank_no_receipt, _bank_amazon_txns
 
+    # Re-categorize any Uncategorized transactions with latest rules
+    from _parse_bank_statements import auto_categorize as _ac
+    for _bt in BANK_TXNS:
+        if _bt.get("category") == "Uncategorized":
+            _nc = _ac(_bt.get("raw_desc", _bt["desc"]), _bt["type"])
+            if _nc != "Uncategorized":
+                _bt["category"] = _nc
+
     # Build deposit/debit lists
     bank_deposits = [t for t in BANK_TXNS if t["type"] == "deposit"]
     bank_debits = [t for t in BANK_TXNS if t["type"] == "debit"]
@@ -1355,6 +1421,22 @@ def _rebuild_bank_derived():
     bb_cc_total_paid = sum(p["amount"] for p in bb_cc_payments)
     bb_cc_balance = bb_cc_total_charged - bb_cc_total_paid
     bb_cc_available = bb_cc_limit - bb_cc_balance
+
+
+def _recategorize_bank_txns():
+    """Re-run auto_categorize on any Uncategorized transactions using latest rules."""
+    from _parse_bank_statements import auto_categorize as _auto_cat
+    changed = 0
+    for t in BANK_TXNS:
+        if t.get("category") == "Uncategorized":
+            new_cat = _auto_cat(t.get("raw_desc", t["desc"]), t["type"])
+            if new_cat != "Uncategorized":
+                t["category"] = new_cat
+                changed += 1
+    if changed:
+        print(f"[bank] Re-categorized {changed} transaction(s)")
+        _rebuild_bank_derived()
+    return changed
 
 
 def _recompute_location_spend():
@@ -6097,7 +6179,7 @@ def _build_inventory_editor(show_saved=False):
     saved_items.sort(key=lambda x: x.get("_saved_at", ""), reverse=True)
     # Show saved items first (for review), then unsaved
     all_items = (saved_items + unsaved_items) if show_saved else unsaved_items
-    capped = all_items[:50]  # limit for performance — 50 cards at a time
+    capped = all_items if show_saved else all_items[:50]  # show all when reviewing saved
     for i, item in enumerate(capped):
         is_filament = item["category"] == "Filament"
         is_saved = item.get("_saved", False)
@@ -6111,6 +6193,32 @@ def _build_inventory_editor(show_saved=False):
                 _prefill_name = list(names)[0]
             elif len(names) > 1:
                 _prefill_pack_type = "different"
+
+        # Detect if saved item was split between locations
+        _is_split = False
+        _split_tulsa_qty = item["qty"]
+        _split_texas_qty = 0
+        if is_saved and saved_details:
+            _det_locs = set(d.get("location", "") for d in saved_details)
+            if len(_det_locs) > 1:
+                _is_split = True
+                _split_tulsa_qty = sum(d.get("true_qty", 1) for d in saved_details
+                                       if "Tulsa" in d.get("location", "") or "OK" in d.get("location", ""))
+                _split_texas_qty = sum(d.get("true_qty", 1) for d in saved_details
+                                       if "Texas" in d.get("location", "") or "TX" in d.get("location", ""))
+
+        # Check which inventory products this item matches
+        _in_stock = False
+        _stock_names = set()
+        if is_saved and saved_details:
+            for _sd in saved_details:
+                _sd_loc = _sd.get("location", "")
+                _sd_dn = _sd.get("display_name", "")
+                _sd_cat = _sd.get("category", "Other")
+                _sd_key = (_sd_loc, _sd_dn, _sd_cat)
+                if _UPLOADED_INVENTORY.get(_sd_key, 0) > 0:
+                    _in_stock = True
+                    _stock_names.add(_sd_dn)
 
         card = html.Div([
             # ── Date + Order header ──
@@ -6215,7 +6323,7 @@ def _build_inventory_editor(show_saved=False):
                                options=[
                                    {"label": "No", "value": "no"},
                                    {"label": "Yes", "value": "yes"},
-                               ], value="no",
+                               ], value="yes" if _is_split else "no",
                                style={**_sel_style, "maxWidth": "100px"}),
                 ], style={"minWidth": "80px"}),
             ], id={"type": "inv-card-single-row", "index": i},
@@ -6229,19 +6337,19 @@ def _build_inventory_editor(show_saved=False):
                     html.Span("Tulsa qty:", style={"color": TEAL, "fontSize": "12px",
                               "fontWeight": "bold", "marginRight": "6px"}),
                     dcc.Input(id={"type": "inv-card-split-qty1", "index": i},
-                              type="number", min=0, value=item["qty"],
+                              type="number", min=0, value=_split_tulsa_qty,
                               style={**_inp_style, "width": "60px", "fontSize": "12px",
                                      "padding": "6px 8px"}),
                     html.Span("Texas qty:", style={"color": ORANGE, "fontSize": "12px",
                               "fontWeight": "bold", "margin": "0 6px 0 16px"}),
                     dcc.Input(id={"type": "inv-card-split-qty2", "index": i},
-                              type="number", min=0, value=0,
+                              type="number", min=0, value=_split_texas_qty,
                               style={**_inp_style, "width": "60px", "fontSize": "12px",
                                      "padding": "6px 8px"}),
                 ], style={"display": "flex", "alignItems": "center", "flexWrap": "wrap",
                           "gap": "4px"}),
             ], id={"type": "inv-card-split-row", "index": i},
-               style={"display": "none", "padding": "10px 14px",
+               style={"display": "block" if _is_split else "none", "padding": "10px 14px",
                       "backgroundColor": f"{PURPLE}08", "borderRadius": "8px",
                       "border": f"1px solid {PURPLE}33", "marginBottom": "10px"}),
 
@@ -6352,7 +6460,12 @@ def _build_inventory_editor(show_saved=False):
         ], style={"backgroundColor": "#0f0f1a", "padding": "16px 20px", "borderRadius": "10px",
                   "marginBottom": "10px",
                   "borderLeft": f"4px solid {GREEN}" if is_saved else f"4px solid {CYAN}",
-                  "transition": "border-color 0.2s"})
+                  "transition": "border-color 0.2s"},
+           className="inv-card",
+           **{"data-cat": item["category"],
+              "data-loc": "|".join(set(d.get("location", "") for d in saved_details)) if saved_details else item.get("location", ""),
+              "data-search": f"{item['name']} {' '.join(d.get('display_name', '') for d in saved_details)} {item['order_num']}".lower(),
+              "data-stock": "|".join(set(d.get("display_name", "") for d in saved_details if d.get("display_name"))) if saved_details else ""})
 
         item_cards.append(card)
 
@@ -6413,6 +6526,76 @@ def _build_inventory_editor(show_saved=False):
     ], style={"display": "none"})
 
     _review_label = "Showing saved items for review" if show_saved else f"{unsaved_count} items need organizing{f' (showing first {len(capped)})' if len(capped) < unsaved_count else ''}"
+
+    # Build category and location options from saved items for filters
+    _saved_cats = sorted(set(it.get("category", "Other") for it in saved_items)) if saved_items else []
+    _saved_locs = sorted(set(it.get("location", "") for it in saved_items if it.get("location"))) if saved_items else []
+    # Build product name options from all saved item details
+    _all_product_names = set()
+    for it in saved_items:
+        _sd_list = _ITEM_DETAILS.get((it.get("order_num", ""), it.get("name", "")), [])
+        for _sd in _sd_list:
+            _pn = _sd.get("display_name", "")
+            if _pn:
+                _all_product_names.add(_pn)
+    _inv_product_names = sorted(_all_product_names)
+
+    _filter_bar = html.Div([
+        # Search
+        html.Div([
+            dcc.Input(
+                id="editor-review-search",
+                type="text", placeholder="Search items...",
+                debounce=True, value="",
+                style={"fontSize": "13px", "backgroundColor": "#1a1a2e", "color": WHITE,
+                       "border": f"1px solid {DARKGRAY}55", "borderRadius": "6px",
+                       "padding": "8px 12px", "width": "220px"}),
+        ]),
+        # Category filter
+        html.Div([
+            dbc.Select(
+                id="editor-review-cat",
+                options=[{"label": "All Categories", "value": "All"}] +
+                        [{"label": c, "value": c} for c in _saved_cats],
+                value="All",
+                style={"fontSize": "13px", "backgroundColor": "#1a1a2e", "color": WHITE,
+                       "maxWidth": "180px"}),
+        ]),
+        # Location filter
+        html.Div([
+            dbc.Select(
+                id="editor-review-loc",
+                options=[{"label": "All Locations", "value": "All"},
+                         {"label": "Tulsa, OK", "value": "Tulsa, OK"},
+                         {"label": "Texas", "value": "Texas"}],
+                value="All",
+                style={"fontSize": "13px", "backgroundColor": "#1a1a2e", "color": WHITE,
+                       "maxWidth": "160px"}),
+        ]),
+        # Inventory product filter
+        html.Div([
+            dbc.Select(
+                id="editor-review-stock",
+                options=[{"label": "All Products", "value": "All"}] +
+                        [{"label": n, "value": n} for n in _inv_product_names],
+                value="All",
+                style={"fontSize": "13px", "backgroundColor": "#1a1a2e", "color": WHITE,
+                       "maxWidth": "220px"}),
+        ]),
+        # Result count
+        html.Span(id="editor-review-count",
+                  children=f"{len(capped)} items",
+                  style={"color": GRAY, "fontSize": "12px", "marginLeft": "8px"}),
+    ], style={"display": "flex", "gap": "10px", "alignItems": "center", "flexWrap": "wrap",
+              "marginBottom": "12px"}) if show_saved else html.Div([
+        # Hidden compat elements when not in review mode
+        dcc.Input(id="editor-review-search", type="text", value="", style={"display": "none"}),
+        dbc.Select(id="editor-review-cat", value="All", style={"display": "none"}),
+        dbc.Select(id="editor-review-loc", value="All", style={"display": "none"}),
+        dbc.Select(id="editor-review-stock", value="All", style={"display": "none"}),
+        html.Span(id="editor-review-count", style={"display": "none"}),
+    ])
+
     editor_content = html.Div([
         html.Div([
             html.Div([
@@ -6433,7 +6616,7 @@ def _build_inventory_editor(show_saved=False):
         progress_bar,
         dcc.Store(id="inv-name-options-store", data=_names_by_cat_sorted),
         dcc.Store(id="editor-review-mode", data=show_saved),
-        html.Div(id="editor-items-container", children=[scroll_container]),
+        html.Div(id="editor-items-container", children=[_filter_bar, scroll_container]),
         _hidden_compat,
     ], style={"backgroundColor": CARD, "padding": "24px", "borderRadius": "12px",
               "border": f"1px solid {ORANGE}22",
@@ -6985,6 +7168,143 @@ def _build_inventory_health_panel():
         html.Div([gauge1, gauge2, gauge3, balance_card],
                  style={"display": "flex", "gap": "10px", "flexWrap": "wrap"}),
     ], style={"marginBottom": "18px"})
+
+
+def _build_location_stats_row():
+    """Build a side-by-side comparison row of Tulsa vs Texas purchasing/inventory stats."""
+    def _loc_stats(loc_key):
+        """Compute detailed stats for a location."""
+        items = {}
+        total_qty = 0
+        total_value = 0
+        cats = {}
+        for (loc, name, cat), qty in _UPLOADED_INVENTORY.items():
+            if loc == loc_key:
+                uc = _INVENTORY_UNIT_COST.get((loc, name, cat), 0)
+                val = uc * qty
+                items[name] = {"qty": qty, "cost": uc, "value": val, "cat": cat}
+                total_qty += qty
+                total_value += val
+                cats[cat] = cats.get(cat, 0) + val
+        avg_cost = total_value / total_qty if total_qty > 0 else 0
+        top_items = sorted(items.items(), key=lambda x: -x[1]["value"])[:5]
+        top_cats = sorted(cats.items(), key=lambda x: -x[1])
+        return {
+            "unique": len(items), "total_qty": total_qty, "total_value": total_value,
+            "avg_cost": avg_cost, "top_items": top_items, "top_cats": top_cats,
+        }
+
+    t_stats = _loc_stats("Tulsa")
+    x_stats = _loc_stats("Texas")
+
+    cat_colors = {"Filament": TEAL, "Lighting": ORANGE, "Crafts": PINK, "Packaging": BLUE,
+                  "Hardware": GRAY, "Tools": CYAN, "Printer Parts": PURPLE, "Jewelry": "#f1c40f",
+                  "Other": DARKGRAY}
+
+    def _stat_card(label, value, color, sub=""):
+        return html.Div([
+            html.Div(label, style={"color": GRAY, "fontSize": "10px", "fontWeight": "600",
+                                    "letterSpacing": "0.5px", "textTransform": "uppercase"}),
+            html.Div(value, style={"color": color, "fontSize": "20px", "fontWeight": "bold",
+                                    "fontFamily": "monospace", "margin": "2px 0"}),
+            html.Div(sub, style={"color": DARKGRAY, "fontSize": "10px"}) if sub else None,
+        ], style={"textAlign": "center", "flex": "1", "minWidth": "80px"})
+
+    def _top_items_list(top_items, color):
+        rows = []
+        for name, info in top_items:
+            thumb = item_thumbnail(_IMAGE_URLS.get(name, ""), 28)
+            rows.append(html.Div([
+                thumb,
+                html.Span(name[:30], title=name, style={"color": WHITE, "fontSize": "11px",
+                          "marginLeft": "8px", "flex": "1", "overflow": "hidden",
+                          "textOverflow": "ellipsis", "whiteSpace": "nowrap"}),
+                html.Span(f"x{info['qty']}", style={"color": GRAY, "fontSize": "11px",
+                          "fontFamily": "monospace", "marginLeft": "6px"}),
+                html.Span(f"${info['value']:.2f}", style={"color": color, "fontSize": "11px",
+                          "fontFamily": "monospace", "marginLeft": "6px", "fontWeight": "600"}),
+            ], style={"display": "flex", "alignItems": "center", "padding": "3px 0",
+                      "borderBottom": "1px solid #ffffff06"}))
+        return rows
+
+    def _cat_bars(top_cats, total_val, color):
+        bars = []
+        for cat, val in top_cats[:6]:
+            pct = (val / total_val * 100) if total_val > 0 else 0
+            c = cat_colors.get(cat, GRAY)
+            bars.append(html.Div([
+                html.Div([
+                    html.Span(cat, style={"color": WHITE, "fontSize": "11px", "flex": "1"}),
+                    html.Span(f"${val:,.0f}", style={"color": c, "fontSize": "11px",
+                              "fontFamily": "monospace", "fontWeight": "600"}),
+                ], style={"display": "flex", "alignItems": "center", "marginBottom": "3px"}),
+                html.Div([
+                    html.Div(style={"width": f"{max(pct, 2)}%", "height": "6px",
+                                    "backgroundColor": c, "borderRadius": "3px",
+                                    "transition": "width 0.3s ease"}),
+                ], style={"width": "100%", "height": "6px", "backgroundColor": "#0d0d1a",
+                          "borderRadius": "3px", "overflow": "hidden"}),
+            ], style={"marginBottom": "6px"}))
+        return bars
+
+    def _loc_panel(title, color, stats, spend, orders, tax):
+        return html.Div([
+            # Title bar
+            html.Div(style={"height": "4px",
+                             "background": f"linear-gradient(90deg, {color}, {color}44)",
+                             "borderRadius": "10px 10px 0 0",
+                             "margin": "-16px -16px 12px -16px"}),
+            html.Div(title, style={"color": color, "fontSize": "15px", "fontWeight": "bold",
+                                    "letterSpacing": "0.5px", "marginBottom": "10px"}),
+            # Stat pills row
+            html.Div([
+                _stat_card("Total Spend", f"${spend:,.2f}", WHITE),
+                _stat_card("In Stock", str(stats["total_qty"]), GREEN, f"{stats['unique']} products"),
+                _stat_card("Inv Value", f"${stats['total_value']:,.2f}", color),
+                _stat_card("Avg Cost", f"${stats['avg_cost']:.2f}", TEAL, "per unit"),
+            ], style={"display": "flex", "gap": "6px", "marginBottom": "14px",
+                      "padding": "10px", "backgroundColor": "#0d0d1a", "borderRadius": "8px"}),
+            # Category spend bars
+            html.Div("SPEND BY CATEGORY", style={"color": GRAY, "fontSize": "10px", "fontWeight": "700",
+                                                   "letterSpacing": "1px", "marginBottom": "8px"}),
+            html.Div(_cat_bars(stats["top_cats"], stats["total_value"], color),
+                     style={"marginBottom": "14px"}),
+            # Top items by value
+            html.Div("TOP ITEMS BY VALUE", style={"color": GRAY, "fontSize": "10px", "fontWeight": "700",
+                                                    "letterSpacing": "1px", "marginBottom": "8px"}),
+            html.Div(_top_items_list(stats["top_items"], color),
+                     style={"maxHeight": "180px", "overflowY": "auto"}),
+        ], style={"backgroundColor": CARD, "padding": "16px", "borderRadius": "10px",
+                  "flex": "1", "border": f"1px solid {color}22",
+                  "boxShadow": "0 4px 16px rgba(0,0,0,0.3)", "minWidth": "300px"})
+
+    # VS divider
+    total_both = tulsa_spend + texas_spend
+    t_pct = (tulsa_spend / total_both * 100) if total_both > 0 else 50
+    x_pct = 100 - t_pct
+
+    vs_divider = html.Div([
+        html.Div([
+            html.Div(style={"width": f"{t_pct}%", "height": "8px", "backgroundColor": TEAL,
+                            "borderRadius": "4px 0 0 4px", "transition": "width 0.4s"}),
+            html.Div(style={"width": f"{x_pct}%", "height": "8px", "backgroundColor": ORANGE,
+                            "borderRadius": "0 4px 4px 0", "transition": "width 0.4s"}),
+        ], style={"display": "flex", "width": "100%", "marginBottom": "6px"}),
+        html.Div([
+            html.Span(f"Tulsa {t_pct:.0f}%", style={"color": TEAL, "fontSize": "11px", "fontWeight": "bold"}),
+            html.Span("SPEND SPLIT", style={"color": GRAY, "fontSize": "10px", "fontWeight": "700",
+                                             "letterSpacing": "1px"}),
+            html.Span(f"Texas {x_pct:.0f}%", style={"color": ORANGE, "fontSize": "11px", "fontWeight": "bold"}),
+        ], style={"display": "flex", "justifyContent": "space-between", "alignItems": "center"}),
+    ], style={"padding": "8px 0", "marginBottom": "16px"})
+
+    return html.Div([
+        vs_divider,
+        html.Div([
+            _loc_panel("TJ (Tulsa, OK)", TEAL, t_stats, tulsa_spend, tulsa_orders, tulsa_tax),
+            _loc_panel("BRADEN (Texas)", ORANGE, x_stats, texas_spend, texas_orders, texas_tax),
+        ], style={"display": "flex", "gap": "14px", "flexWrap": "wrap"}),
+    ])
 
 
 def _build_warehouse_card(title, location_key, color, spend, orders, subtotal, tax, pct_of_total):
@@ -7869,15 +8189,31 @@ def build_tab4_inventory():
         ], style={"marginBottom": "20px"}),
 
         # ══════════════════════════════════════════════════════════════════════
-        # TULSA INVENTORY + TEXAS INVENTORY (side by side)
+        # TULSA vs TEXAS — STATS COMPARISON
         # ══════════════════════════════════════════════════════════════════════
         html.Div([
-            _build_warehouse_card("TJ (Tulsa, OK)", "Tulsa", TEAL,
-                                   tulsa_spend, tulsa_orders, tulsa_subtotal, tulsa_tax, tulsa_pct),
-            _build_warehouse_card("BRADEN (Texas)", "Texas", ORANGE,
-                                   texas_spend, texas_orders, texas_subtotal, texas_tax, texas_pct),
-        ], id="location-inventory-display",
-           style={"display": "flex", "flexDirection": "column", "gap": "12px", "marginBottom": "20px"}),
+            html.H3("TULSA vs TEXAS", style={
+                "color": WHITE, "margin": "0 0 14px 0", "fontSize": "20px",
+                "fontWeight": "700", "letterSpacing": "1px",
+                "textShadow": "0 0 20px rgba(255,255,255,0.05)"}),
+            _build_location_stats_row(),
+        ], style={"marginBottom": "20px"}),
+
+        # ══════════════════════════════════════════════════════════════════════
+        # WAREHOUSE INVENTORY (side by side)
+        # ══════════════════════════════════════════════════════════════════════
+        html.Div([
+            html.H3("WAREHOUSE INVENTORY", style={
+                "color": CYAN, "margin": "0 0 14px 0", "fontSize": "20px",
+                "fontWeight": "700", "letterSpacing": "1px"}),
+            html.Div([
+                _build_warehouse_card("TJ (Tulsa, OK)", "Tulsa", TEAL,
+                                       tulsa_spend, tulsa_orders, tulsa_subtotal, tulsa_tax, tulsa_pct),
+                _build_warehouse_card("BRADEN (Texas)", "Texas", ORANGE,
+                                       texas_spend, texas_orders, texas_subtotal, texas_tax, texas_pct),
+            ], id="location-inventory-display",
+               style={"display": "flex", "gap": "14px", "flexWrap": "wrap"}),
+        ], style={"marginBottom": "20px"}),
 
         # ══════════════════════════════════════════════════════════════════════
         # RECEIPT TO INVENTORY OPTIMIZER
@@ -14855,10 +15191,11 @@ def handle_detail_save_reset(save_clicks, reset_clicks, display_name, category,
                 _save_img_override(display_name, img_url_val.strip())
                 _IMAGE_URLS[display_name] = img_url_val.strip()
 
-        # Rebuild INV_ITEMS, STOCK_SUMMARY, and _UPLOADED_INVENTORY
+        # Rebuild INV_ITEMS, STOCK_SUMMARY, _UPLOADED_INVENTORY, and location spend
         _apply_details_to_inv_items()
         _recompute_stock_summary()
         _rebuild_uploaded_inventory()
+        _recompute_location_spend()
 
         return f"Saved! ({count} entry{'s' if count > 1 else ''})"
     return "Error saving"
@@ -15431,6 +15768,11 @@ def handle_receipt_wizard(contents, save_clicks, skip_clicks, done_clicks, back_
         state["current_index"] = idx + 1
 
         if state["current_index"] >= state["total"]:
+            # Rebuild location spend totals after all items saved
+            _apply_details_to_inv_items()
+            _recompute_stock_summary()
+            _rebuild_uploaded_inventory()
+            _recompute_location_spend()
             # All items done — show summary
             saved = state["saved_count"]
             total = state["total"]
@@ -15766,6 +16108,10 @@ def save_inv_qty_edits(n_clicks, table_data):
     for _ik, _tc in _inv_tc.items():
         _tq = _UPLOADED_INVENTORY.get(_ik, 1)
         _INVENTORY_UNIT_COST[_ik] = round(_tc / _tq, 2) if _tq > 0 else 0
+
+    if changes:
+        _apply_details_to_inv_items()
+        _recompute_location_spend()
 
     msg = f"Saved {changes} qty change{'s' if changes != 1 else ''}!" if changes else "No changes detected."
     return (msg, {"color": GREEN if changes else GRAY, "fontWeight": "bold", "fontSize": "12px"})
@@ -16922,7 +17268,7 @@ def toggle_review_saved(n_clicks, current_mode):
     # Extract the scroll container from the rebuilt editor
     # editor_content is a Div with children: [header, progress_bar, store, store, editor-items-container, hidden_compat]
     # We need the children of editor-items-container (index 4)
-    items_children = editor_content.children[4].children  # scroll container
+    items_children = editor_content.children[4].children  # [filter_bar, scroll_container]
     btn_label = "Hide Saved" if new_mode else "Review Saved"
     btn_style = {
         "fontSize": "12px", "padding": "5px 14px",
@@ -16931,6 +17277,49 @@ def toggle_review_saved(n_clicks, current_mode):
         "cursor": "pointer", "fontWeight": "bold", "marginLeft": "14px",
     }
     return items_children, btn_label, btn_style, new_mode
+
+
+# ── Review Saved: search + filter (clientside for speed, no ID conflicts) ─────
+app.clientside_callback(
+    """
+    function(search, catFilter, locFilter, stockFilter, isReview) {
+        if (!isReview) { return window.dash_clientside.no_update; }
+        var s = (search || '').toLowerCase().trim();
+        var cat = catFilter || 'All';
+        var loc = locFilter || 'All';
+        var stock = stockFilter || 'All';
+        var container = document.getElementById('editor-items-container');
+        if (!container) return '';
+        var cards = container.querySelectorAll('.inv-card');
+        var shown = 0;
+        cards.forEach(function(card) {
+            var cardSearch = (card.getAttribute('data-search') || '').toLowerCase();
+            var cardCat = card.getAttribute('data-cat') || '';
+            var cardLoc = card.getAttribute('data-loc') || '';
+            var cardStock = card.getAttribute('data-stock') || '';
+            var matchSearch = !s || cardSearch.indexOf(s) >= 0;
+            var matchCat = cat === 'All' || cardCat === cat;
+            var matchLoc = loc === 'All' || cardLoc.indexOf(loc) >= 0;
+            var matchStock = stock === 'All' || cardStock.indexOf(stock) >= 0;
+            if (matchSearch && matchCat && matchLoc && matchStock) {
+                card.style.display = '';
+                shown++;
+            } else {
+                card.style.display = 'none';
+            }
+        });
+        var filtered = s || cat !== 'All' || loc !== 'All' || stock !== 'All';
+        return shown + ' items' + (filtered ? ' (filtered)' : '');
+    }
+    """,
+    Output("editor-review-count", "children"),
+    Input("editor-review-search", "value"),
+    Input("editor-review-cat", "value"),
+    Input("editor-review-loc", "value"),
+    Input("editor-review-stock", "value"),
+    State("editor-review-mode", "data"),
+    prevent_initial_call=True,
+)
 
 
 # ── Scrollable Item Card Callbacks (pattern-matching) ─────────────────────────
@@ -17144,6 +17533,8 @@ def save_item_card(n_clicks, item_data, cat, name, name_pick, loc, qty, pack_typ
                         _INVENTORY_UNIT_COST[inv_key] = round(
                             (old_cost * old_qty + per_unit_cost * new_qty) / total_qty, 2
                         ) if total_qty > 0 else per_unit_cost
+            _apply_details_to_inv_items()
+            _recompute_location_spend()
             return (html.Span("\u2713 Saved!", style={"color": GREEN, "fontSize": "12px",
                               "fontWeight": "bold"}),
                     _saved_style)

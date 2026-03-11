@@ -33,31 +33,59 @@ def auto_categorize(desc, txn_type, category_overrides=None):
             return "Etsy Payout"
         return "Other Deposit"
 
-    # Debit categorization
+    # ── Business expenses ──
     if "AMAZON MKTPL" in d:
         return "Amazon Inventory"
+    if "AMAZON COM" in d:
+        return "Amazon Inventory"  # amazon.com orders (not marketplace)
     if "UPS STORE" in d or "USPS" in d:
         return "Shipping"
-    if "WAL MART" in d:
+    if "WAL MART" in d or "WM SUPERCENTER" in d:
         return "Shipping"
     if "HOBBYLOBBY" in d or "HOBBY LOBBY" in d:
         return "Craft Supplies"
-    if "WESTLAKE HARDWARE" in d:
+    if "WESTLAKE HARDWARE" in d or "HOMEDEPOT" in d or "HOME DEPOT" in d:
         return "Craft Supplies"
     if "PAYPAL" in d and ("ALIPAY" in d or "AOWEIKE" in d):
         return "AliExpress Supplies"
     if "ETSY COM" in d:
         return "Etsy Fees"
-    if "VENMO" in d:
-        return "Owner Draw - Tulsa"  # default; overrides checked above
     if "BEST BUY" in d and "AUTO PYMT" in d:
         return "Business Credit Card"
+
+    # ── Subscriptions ──
     if "PAYPAL" in d and "THANGS" in d:
         return "Subscriptions"
-    # Restaurants / clothing — personal spending = Owner Draw - Tulsa
-    if any(w in d for w in ["REASORS", "CHIPOTLE", "WILDFLOWERCAFE",
-                             "ANTHROPOLOGIE", "LULULEMON", "QT "]):
+    if "COURSERA" in d:
+        return "Subscriptions"
+    if "MAKE COM" in d or "MAKE.COM" in d:
+        return "Subscriptions"
+
+    # ── Venmo (default Tulsa; Texas-specific names caught by overrides above) ──
+    if "VENMO" in d:
         return "Owner Draw - Tulsa"
+
+    # ── Restaurants / food / retail — personal spending = Owner Draw - Tulsa ──
+    _draw_keywords = [
+        "REASORS", "CHIPOTLE", "WILDFLOWERCAFE", "ANTHROPOLOGIE", "LULULEMON",
+        "QT ", "TACO BELL", "MCDONALDS", "CHICK-FIL-A", "CHICKFILA",
+        "STARBUCKS", "SONIC", "WHATABURGER", "WENDYS", "PANERA",
+        "SUBWAY", "BRAUMS", "CANES", "RAISING CANE", "PANDA EXPRESS",
+        "BUFFALO WILD", "OLIVE GARDEN", "APPLEBEE", "IHOP",
+        "DOMINO", "PIZZA HUT", "PAPA JOHN", "JERSEY MIKE",
+        "TARGET", "DOLLAR GENERAL", "DOLLAR TREE", "WALGREENS", "CVS",
+        "ALDI", "SPROUTS", "TRADER JOE", "WHOLE FOODS", "KROGER",
+        "AUTOZONE", "OREILL", "ADVANCE AUTO", "JIFFY LUBE",
+        "ATT ", "T-MOBILE", "VERIZON", "SPRINT",
+        "NETFLIX", "HULU", "SPOTIFY", "APPLE.COM", "GOOGLE ",
+        "SEPHORA", "ULTA", "BATH BODY", "OLD NAVY", "GAP ",
+        "ROSS ", "TJ MAXX", "TJMAXX", "MARSHALLS", "GOODWILL",
+        "GAS ", "QUIKTRIP", "SHELL ", "EXXON", "CHEVRON", "PHILLIPS 66",
+        "MURPHY", "LOVES TRAVEL",
+    ]
+    if any(w in d for w in _draw_keywords):
+        return "Owner Draw - Tulsa"
+
     return "Uncategorized"
 
 
