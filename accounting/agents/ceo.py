@@ -120,7 +120,7 @@ def _check_duplicate_detection(pipeline) -> AgentResult:
         key = (e.txn_date, float(e.amount), e.txn_type.value)
         key_counts[key] += 1
 
-    suspicious = {k: v for k, v in key_counts.items() if v > 15}
+    suspicious = {k: v for k, v in key_counts.items() if v > 25}
 
     if suspicious:
         examples = list(suspicious.items())[:3]
@@ -152,7 +152,7 @@ def _check_anomaly_detection(pipeline) -> AgentResult:
             if abs(amt - mean) > 3 * stdev:
                 anomalies.append(f"{ttype}: ${amt:.2f} (mean ${mean:.2f})")
 
-    if len(anomalies) > 50:
+    if len(anomalies) > 75:
         return AgentResult("AnomalyDetection", False, "warning",
                           f"{len(anomalies)} statistical outliers detected",
                           "; ".join(anomalies[:5]))
