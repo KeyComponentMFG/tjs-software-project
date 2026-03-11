@@ -1,147 +1,167 @@
-"""Quick audit: compare correct vs Railway reload computations."""
+"""Audit raw Etsy CSV data -- exact totals to the penny.
+No deduplication needed: files cover non-overlapping date ranges."""
 import pandas as pd
-import glob, os, re, sys
+import os, re
+from decimal import Decimal
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-os.chdir(BASE_DIR)
-sys.path.insert(0, BASE_DIR)
-
-# Load CSVs
-frames = []
-for f in sorted(glob.glob('data/etsy_statements/etsy_statement*.csv')):
-    frames.append(pd.read_csv(f))
-DATA = pd.concat(frames, ignore_index=True)
+BASE = os.path.dirname(os.path.abspath(__file__))
+csv_dir = os.path.join(BASE, "data", "etsy_statements")
 
 def pm(val):
-    if pd.isna(val) or val == '--' or val == '':
-        return 0.0
-    val = str(val).replace('$', '').replace(',', '').replace('"', '')
-    try: return float(val)
-    except: return 0.0
+    if pd.isna(val) or str(val).strip() in ("--", ""):
+        return Decimal("0")
+    s = str(val).replace("$", "").replace(",", "").replace('"', "")
+    try:
+        return Decimal(s)
+    except Exception:
+        return Decimal("0")
 
-DATA['Amount_Clean'] = DATA['Amount'].apply(pm)
-DATA['Net_Clean'] = DATA['Net'].apply(pm)
+# ── Load ──
+files = sorted([f for f in os.listdir(csv_dir) if f.startswith("etsy_statement") and f.endswith(".csv")])
+print("=" * 70)
+print("ETSY RAW CSV AUDIT")
+print("=" * 70)
+print("\nCSV Files (non-overlapping date ranges):")
+frames = []
+for f in files:
+    dfi = pd.read_csv(os.path.join(csv_dir, f))
+    dfi["_source"] = f
+    dfi["_date"] = pd.to_datetime(dfi["Date"], format="%B %d, %Y", errors="coerce")
+    print(f"  {f}: {dfi['_date'].min().date()} to {dfi['_date'].max().date()}, {len(dfi)} rows")
+    frames.append(dfi)
 
-sales_df = DATA[DATA['Type'] == 'Sale']
-fee_df = DATA[DATA['Type'] == 'Fee']
+df = pd.concat(frames, ignore_index=True)
+df["_amt"] = df["Amount"].apply(pm)
+df["_fees"] = df["Fees & Taxes"].apply(pm)
+df["_net"] = df["Net"].apply(pm)
+df["_month"] = df["_date"].dt.to_period("M")
 
-print('=== BUG 1: gross_sales column ===')
-net_gs = sales_df['Net_Clean'].sum()
-amt_gs = sales_df['Amount_Clean'].sum()
-print(f'  Net_Clean (correct):    ${net_gs:,.2f}')
-print(f'  Amount_Clean (Railway): ${amt_gs:,.2f}')
-print(f'  DIFFERENCE:             ${amt_gs - net_gs:,.2f}')
+print(f"\nTOTAL ROWS: {len(df)}")
 
-print()
-print('=== BUG 2: order_count ===')
-print(f'  len(sales_df) (correct):  {len(sales_df)}')
-order_nums = sales_df['Title'].str.extract(r'(Order #\d+)', expand=False).nunique()
-print(f'  nunique orders (Railway): {order_nums}')
+# ── Type counts ──
+print(f"\n{'TYPE':<20s} {'ROWS':>6s} {'AMOUNT':>14s} {'FEES&TAXES':>14s} {'NET':>14s}")
+print("-" * 70)
+for t in sorted(df["Type"].unique()):
+    sub = df[df["Type"] == t]
+    print(f"  {t:<18s} {len(sub):>6d} {str(sub['_amt'].sum()):>14s} {str(sub['_fees'].sum()):>14s} {str(sub['_net'].sum()):>14s}")
+print("-" * 70)
+print(f"  {'ALL':<18s} {len(df):>6d} {str(df['_amt'].sum()):>14s} {str(df['_fees'].sum()):>14s} {str(df['_net'].sum()):>14s}")
 
-print()
-print('=== BUG 3: buyer_fee_df ===')
-buyer_fee_correct = DATA[DATA['Type'] == 'Buyer Fee']
-buyer_fee_railway = fee_df[fee_df['Title'].str.contains('Regulatory operating fee|Sales tax paid', case=False, na=False)]
-bfc_sum = abs(buyer_fee_correct['Net_Clean'].sum())
-bfr_sum = abs(buyer_fee_railway['Net_Clean'].sum())
-print(f'  Correct (Type=Buyer Fee): {len(buyer_fee_correct)} rows, ${bfc_sum:,.2f}')
-print(f'  Railway (filtered fees):  {len(buyer_fee_railway)} rows, ${bfr_sum:,.2f}')
+# ── Key metrics ──
+sales = df[df["Type"] == "Sale"]
+refunds = df[df["Type"] == "Refund"]
+fees = df[df["Type"] == "Fee"]
+shipping = df[df["Type"] == "Shipping"]
+tax = df[df["Type"] == "Tax"]
+mktg = df[df["Type"] == "Marketing"]
+deposits = df[df["Type"] == "Deposit"]
+payment = df[df["Type"] == "Payment"]
+buyer_fee = df[df["Type"] == "Buyer Fee"]
 
-print()
-print('=== BUG 4: etsy_net_earned ===')
-total_fees = abs(fee_df['Net_Clean'].sum())
-total_shipping = abs(DATA[DATA['Type']=='Shipping']['Net_Clean'].sum())
-total_marketing = abs(DATA[DATA['Type']=='Marketing']['Net_Clean'].sum())
-total_refunds = abs(DATA[DATA['Type']=='Refund']['Net_Clean'].sum())
-total_taxes = abs(DATA[DATA['Type']=='Tax']['Net_Clean'].sum())
-total_bf_correct = abs(buyer_fee_correct['Net_Clean'].sum())
+pat = r"#(\d+)"
+order_count = sales["Title"].str.extract(pat)[0].dropna().nunique()
 
-earned_correct = net_gs - total_fees - total_shipping - total_marketing - total_refunds - total_taxes - total_bf_correct
-earned_railway = DATA['Net_Clean'].sum()
-print(f'  Correct (itemized):   ${earned_correct:,.2f}')
-print(f'  Railway (Net sum):    ${earned_railway:,.2f}')
-print(f'  DIFFERENCE:           ${earned_railway - earned_correct:,.2f}')
+print(f"\n{'=' * 70}")
+print("KEY METRICS")
+print(f"{'=' * 70}")
+print(f"  Gross Sales (Sale Amount):    ${sales['_amt'].sum()}")
+print(f"  Unique Orders (from Sales):   {order_count}")
+print(f"  Refund Amount:                ${refunds['_amt'].sum()}")
+print(f"  Refund Count:                 {len(refunds)}")
+print(f"  Net Sales (Gross + Refunds):  ${sales['_amt'].sum() + refunds['_amt'].sum()}")
 
-print()
-print('=== ETSY GAP COMPARISON ===')
-dep_total = 0.0
-for _, dr in DATA[DATA['Type']=='Deposit'].iterrows():
-    m = re.search(r'([\d,]+\.\d+)', str(dr.get('Title','')))
-    if m: dep_total += float(m.group(1).replace(',',''))
+# Fee breakdown
+listing = fees[fees["Title"].str.contains("Listing fee", case=False, na=False)]
+txn_fee = fees[fees["Title"].str.contains("Transaction fee", case=False, na=False)]
+proc_fee = fees[fees["Title"].str.contains("Processing fee", case=False, na=False)]
+reg_fee = fees[fees["Title"].str.contains("Regulatory", case=False, na=False)]
+used = set(listing.index) | set(txn_fee.index) | set(proc_fee.index) | set(reg_fee.index)
+other_fee = fees[~fees.index.isin(used)]
 
-etsy_pre_capone = 941.99
+print(f"\n  --- Fee Breakdown ---")
+print(f"  Listing fees:                 ${listing['_net'].sum()}  ({len(listing)} rows)")
+print(f"  Transaction fees:             ${txn_fee['_net'].sum()}  ({len(txn_fee)} rows)")
+print(f"  Processing fees:              ${proc_fee['_net'].sum()}  ({len(proc_fee)} rows)")
+print(f"  Regulatory fees:              ${reg_fee['_net'].sum()}  ({len(reg_fee)} rows)")
+print(f"  Other fees (Share&Save):      ${other_fee['_net'].sum()}  ({len(other_fee)} rows)")
+print(f"  TOTAL FEES (Type=Fee):        ${fees['_net'].sum()}")
 
-from _parse_bank_statements import parse_bank_pdf, parse_bank_csv, apply_overrides
-bank_txns = []
-covered = set()
-for fn in sorted(os.listdir('data/bank_statements')):
-    if fn.lower().endswith('.pdf'):
-        try:
-            txns, cov = parse_bank_pdf(os.path.join('data/bank_statements', fn))
-            bank_txns.extend(txns)
-            covered.update(cov)
-        except: pass
-csv_txns, csv_cov = [], set()
-for fn in sorted(os.listdir('data/bank_statements')):
-    if fn.lower().endswith('.csv'):
-        try:
-            txns, cov = parse_bank_csv(os.path.join('data/bank_statements', fn))
-            csv_txns.extend(txns)
-            csv_cov.update(cov)
-        except: pass
-if csv_txns:
-    seen = {}
-    for t in csv_txns:
-        key = (t['date'], t['amount'], t['type'], t.get('raw_desc', t['desc']))
-        seen[key] = t
-    new_months = csv_cov - covered
-    if new_months:
-        bank_txns.extend([t for t in seen.values()
-                          if "{}-{}".format(t['date'].split('/')[2], t['date'].split('/')[0]) in new_months])
-        covered.update(new_months)
-    bank_txns = apply_overrides(bank_txns)
-bank_total_deposits = sum(t['amount'] for t in bank_txns if t['type'] == 'deposit')
+print(f"\n  Shipping Labels:              ${shipping['_net'].sum()}  ({len(shipping)} labels)")
+print(f"  Tax (collected by Etsy):       ${tax['_net'].sum()}  ({len(tax)} rows)")
+print(f"  Marketing/Etsy Ads:           ${mktg['_net'].sum()}  ({len(mktg)} rows)")
+print(f"  Buyer Fee (CO delivery):      ${buyer_fee['_net'].sum()}  ({len(buyer_fee)} rows)")
 
-etsy_total_dep = etsy_pre_capone + bank_total_deposits
+# Payment (charge for refund)
+if len(payment) > 0:
+    print(f"  Payment (refund charge):      ${payment['_net'].sum()}  ({len(payment)} rows)")
+    for _, r in payment.iterrows():
+        print(f"    -> {r['Date']}: {r['Title']}, Net={r['Net']}")
 
-# Correct path
-etsy_balance_correct = max(0, round(DATA['Net_Clean'].sum() - dep_total, 2))
-etsy_bal_calc = earned_correct - etsy_total_dep
-etsy_gap_correct = round(etsy_bal_calc - etsy_balance_correct, 2)
+# Deposits
+dep_total = Decimal("0")
+for _, r in deposits.iterrows():
+    m = re.search(r"\$([\d,]+\.\d{2})", str(r["Title"]))
+    if m:
+        dep_total += Decimal(m.group(1).replace(",", ""))
+print(f"\n  Deposits to bank:             ${dep_total}  ({len(deposits)} deposits)")
 
-# Railway reload path
-etsy_balance_railway = max(0, round(earned_railway - dep_total, 2))
-etsy_bal_calc_r = earned_railway - etsy_total_dep
-etsy_gap_railway = round(etsy_bal_calc_r - etsy_balance_railway, 2)
+# All deductions combined
+all_deductions = fees['_net'].sum() + shipping['_net'].sum() + tax['_net'].sum() + mktg['_net'].sum() + buyer_fee['_net'].sum()
+print(f"\n  TOTAL DEDUCTIONS:             ${all_deductions}")
+print(f"  (Fees + Shipping + Tax + Ads + Buyer Fee)")
 
-print(f'  csv_deposit_total:       ${dep_total:,.2f}')
-print(f'  bank_total_deposits:     ${bank_total_deposits:,.2f}')
-print(f'  etsy_pre_capone:         ${etsy_pre_capone:,.2f}')
-print(f'  etsy_total_deposited:    ${etsy_total_dep:,.2f}')
-print()
-print(f'  CORRECT PATH:')
-print(f'    etsy_net_earned:       ${earned_correct:,.2f}')
-print(f'    etsy_balance:          ${etsy_balance_correct:,.2f}')
-print(f'    etsy_balance_calc:     ${etsy_bal_calc:,.2f}')
-print(f'    etsy_csv_gap:          ${etsy_gap_correct:,.2f}')
-print()
-print(f'  RAILWAY RELOAD PATH:')
-print(f'    etsy_net_earned:       ${earned_railway:,.2f}')
-print(f'    etsy_balance:          ${etsy_balance_railway:,.2f}')
-print(f'    etsy_balance_calc:     ${etsy_bal_calc_r:,.2f}')
-print(f'    etsy_csv_gap:          ${etsy_gap_railway:,.2f}')
+# Net
+print(f"\n  NET (all rows):               ${df['_net'].sum()}")
 
-# What dashboard ACTUALLY shows
-print()
-print('=== WHAT DASHBOARD SHOWS ===')
-print(f'  REVENUE KPI (gross_sales):')
-print(f'    Correct (Net_Clean):    ${net_gs:,.2f}')
-print(f'    Railway (Amount_Clean): ${amt_gs:,.2f}')
-print(f'  ORDER COUNT:')
-print(f'    Correct (len):          {len(sales_df)}')
-print(f'    Railway (nunique):      {order_nums}')
-print(f'  AVG ORDER:')
-if len(sales_df) > 0:
-    print(f'    Correct:                ${net_gs/len(sales_df):,.2f}')
-if order_nums > 0:
-    print(f'    Railway:                ${amt_gs/order_nums:,.2f}')
+# Cross-check
+total_amt = df["_amt"].sum()
+total_fees_col = df["_fees"].sum()
+total_net = df["_net"].sum()
+computed = total_amt + total_fees_col
+print(f"\n  CROSS-CHECK: Amount({total_amt}) + Fees&Taxes({total_fees_col}) = {computed}")
+print(f"  Actual Net = {total_net}")
+print(f"  Difference = {total_net - computed}")
+
+# ── Monthly ──
+print(f"\n{'=' * 70}")
+print("MONTHLY BREAKDOWN")
+print(f"{'=' * 70}")
+print(f"{'Month':>7s} {'Rows':>5s} {'Sales':>5s} {'Gross':>12s} {'Refunds':>10s} {'Fees':>10s} {'Ship':>10s} {'Ads':>10s} {'Tax':>10s} {'Net':>12s}")
+print("-" * 100)
+for month in sorted(df["_month"].dropna().unique()):
+    mdf = df[df["_month"] == month]
+    ms = mdf[mdf["Type"] == "Sale"]
+    mr = mdf[mdf["Type"] == "Refund"]
+    mf = mdf[mdf["Type"] == "Fee"]
+    msh = mdf[mdf["Type"] == "Shipping"]
+    mm = mdf[mdf["Type"] == "Marketing"]
+    mt = mdf[mdf["Type"] == "Tax"]
+    print(f"{str(month):>7s} {len(mdf):>5d} {len(ms):>5d} {str(ms['_amt'].sum()):>12s} {str(mr['_amt'].sum()):>10s} {str(mf['_net'].sum()):>10s} {str(msh['_net'].sum()):>10s} {str(mm['_net'].sum()):>10s} {str(mt['_net'].sum()):>10s} {str(mdf['_net'].sum()):>12s}")
+
+# ── Supabase notes ──
+print(f"\n{'=' * 70}")
+print("SUPABASE LAYER ANALYSIS")
+print(f"{'=' * 70}")
+print("""
+supabase_loader.py provides two paths to load this data:
+
+1. SUPABASE (primary): Fetches from 'etsy_transactions' table
+   - All values stored as strings (no precision loss)
+   - _parse_money() converts to float (minor rounding possible vs Decimal)
+   - Adds computed columns: Amount_Clean, Net_Clean, Fees_Clean, Date_Parsed, Month, Week
+
+2. LOCAL FALLBACK: Reads these same CSV files via _load_etsy_local()
+   - Concatenates all etsy_statement_*.csv files
+   - Same computed columns added via _add_computed_columns()
+   - NO deduplication logic (but not needed since files don't overlap)
+
+What Supabase does NOT change:
+   - Raw column values are preserved exactly
+   - No rows added or removed vs CSV source
+   - No aggregation or summarization in the loader
+   - Config, invoices, and bank transactions are separate tables/files
+
+Sync functions:
+   - sync_etsy_transactions(): Full replace (delete all + insert all)
+   - append_etsy_transactions(): Dedup by (date, type, title, info, amount, net) before insert
+""")

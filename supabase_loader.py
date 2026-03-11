@@ -414,14 +414,25 @@ def save_item_details_batch(items: list[dict]) -> int:
     return saved
 
 
-def save_new_order(order: dict) -> bool:
+def save_new_order(order: dict) -> dict:
     """Insert a new order into Supabase (inventory_orders + inventory_items).
-    Used by the receipt upload wizard to persist new orders immediately."""
+    Used by the receipt upload wizard to persist new orders immediately.
+
+    Returns dict: {ok: bool, status: "created"|"duplicate"|"error", order_num: str, items: int}
+    """
     client = _get_supabase_client()
     if client is None:
         print("save_new_order: no Supabase client available")
-        return False
+        return {"ok": False, "status": "error", "order_num": order.get("order_num", ""), "items": 0}
     try:
+        # Check for existing order
+        existing = (client.table("inventory_orders")
+                    .select("order_num")
+                    .eq("order_num", order["order_num"])
+                    .execute())
+        if existing.data:
+            return {"ok": True, "status": "duplicate", "order_num": order["order_num"], "items": 0}
+
         client.table("inventory_orders").insert({
             "order_num": order["order_num"],
             "date": order["date"],
@@ -433,6 +444,7 @@ def save_new_order(order: dict) -> bool:
             "ship_address": order.get("ship_address", ""),
             "payment_method": order.get("payment_method", "Unknown"),
         }).execute()
+        item_count = 0
         for item in order.get("items", []):
             client.table("inventory_items").insert({
                 "order_num": order["order_num"],
@@ -443,10 +455,11 @@ def save_new_order(order: dict) -> bool:
                 "ship_to": item.get("ship_to", ""),
                 "image_url": item.get("image_url", ""),
             }).execute()
-        return True
+            item_count += 1
+        return {"ok": True, "status": "created", "order_num": order["order_num"], "items": item_count}
     except Exception as e:
         print(f"save_new_order failed: {e}")
-        return False
+        return {"ok": False, "status": "error", "order_num": order.get("order_num", ""), "items": 0, "error": str(e)}
 
 
 def delete_item_details(order_num: str, item_name: str) -> bool:
@@ -737,7 +750,7 @@ def sync_etsy_transactions(data_df) -> bool:
         return False
 
 
-def append_etsy_transactions(data_df) -> bool:
+def append_etsy_transactions(data_df) -> dict:
     """Add new Etsy rows to Supabase WITHOUT deleting existing data.
     Used by Railway uploads where only the new CSV is on disk.
 
@@ -745,13 +758,16 @@ def append_etsy_transactions(data_df) -> bool:
     key appears in Supabase vs the new CSV. Only inserts rows that exceed the existing
     count for that key. This preserves legitimate duplicate listing fees ($0.20 each)
     while preventing true cross-upload duplicates.
+
+    Returns dict: {ok: bool, added: int, skipped: int, total: int}
     """
     client = _get_supabase_client()
     if client is None:
         print("append_etsy: no Supabase client")
-        return False
+        return {"ok": False, "added": 0, "skipped": 0, "total": 0, "error": "No Supabase client"}
     try:
         from collections import Counter
+        total_new = len(data_df)
         # Fetch ALL existing rows to count duplicates per key (paginated)
         existing_counts = Counter()
         _offset = 0
@@ -798,26 +814,32 @@ def append_etsy_transactions(data_df) -> bool:
                 row_data = new_rows_by_key[key]
                 rows.extend([row_data.copy() for _ in range(excess)])
 
+        added = len(rows)
+        skipped = total_new - added
         if rows:
             for i in range(0, len(rows), 500):
                 client.table("etsy_transactions").insert(rows[i:i+500]).execute()
-            print(f"Appended {len(rows)} new Etsy rows to Supabase")
+            print(f"Appended {added} new Etsy rows to Supabase ({skipped} duplicates skipped)")
         else:
             print("No new Etsy rows to append (all duplicates)")
-        return True
+        return {"ok": True, "added": added, "skipped": skipped, "total": total_new}
     except Exception as e:
         print(f"Etsy append to Supabase failed: {e}")
-        return False
+        return {"ok": False, "added": 0, "skipped": 0, "total": len(data_df), "error": str(e)}
 
 
-def append_bank_transactions(bank_txns: list[dict]) -> bool:
+def append_bank_transactions(bank_txns: list[dict]) -> dict:
     """Add new bank transactions to Supabase WITHOUT deleting existing data.
-    Used by Railway uploads where only the new PDF is on disk."""
+    Used by Railway uploads where only the new PDF is on disk.
+
+    Returns dict: {ok: bool, added: int, skipped: int, total: int}
+    """
     client = _get_supabase_client()
     if client is None:
         print("append_bank: no Supabase client")
-        return False
+        return {"ok": False, "added": 0, "skipped": 0, "total": len(bank_txns), "error": "No Supabase client"}
     try:
+        total_new = len(bank_txns)
         # Fetch existing to avoid duplicates (paginated)
         existing_keys = set()
         _offset = 0
@@ -847,16 +869,206 @@ def append_bank_transactions(bank_txns: list[dict]) -> bool:
                     "source_file": t.get("source_file", ""),
                     "raw_description": t.get("raw_desc", ""),
                 })
+        added = len(rows)
+        skipped = total_new - added
         if rows:
             for i in range(0, len(rows), 500):
                 client.table("bank_transactions").insert(rows[i:i+500]).execute()
-            print(f"Appended {len(rows)} new bank transactions to Supabase")
+            print(f"Appended {added} new bank transactions to Supabase ({skipped} duplicates skipped)")
         else:
             print("No new bank transactions to append (all duplicates)")
-        return True
+        return {"ok": True, "added": added, "skipped": skipped, "total": total_new}
     except Exception as e:
         print(f"Bank append to Supabase failed: {e}")
-        return False
+        return {"ok": False, "added": 0, "skipped": 0, "total": len(bank_txns), "error": str(e)}
+
+
+# ── Delete Functions ────────────────────────────────────────────────────────
+
+def delete_etsy_by_month(year: int, month: int) -> dict:
+    """Delete all etsy_transactions for a specific month.
+
+    Returns dict: {ok: bool, deleted: int}
+    """
+    client = _get_supabase_client()
+    if client is None:
+        return {"ok": False, "deleted": 0, "error": "No Supabase client"}
+    try:
+        month_prefix = f"{year}-{month:02d}"
+        # Etsy dates are stored as "Month DD, YYYY" strings — but some may be YYYY-MM-DD
+        # Fetch all rows, filter by month, collect IDs to delete
+        ids_to_delete = []
+        _offset = 0
+        while True:
+            batch = (client.table("etsy_transactions")
+                     .select("id,date")
+                     .order("id")
+                     .range(_offset, _offset + 999)
+                     .execute())
+            for r in batch.data:
+                d = r.get("date", "")
+                # Try parsing "Month DD, YYYY" format
+                try:
+                    from datetime import datetime as _dt
+                    parsed = _dt.strptime(d, "%B %d, %Y")
+                    if parsed.year == year and parsed.month == month:
+                        ids_to_delete.append(r["id"])
+                        continue
+                except (ValueError, TypeError):
+                    pass
+                # Try YYYY-MM-DD format
+                if d.startswith(month_prefix):
+                    ids_to_delete.append(r["id"])
+            if len(batch.data) < 1000:
+                break
+            _offset += 1000
+
+        if ids_to_delete:
+            for i in range(0, len(ids_to_delete), 100):
+                batch_ids = ids_to_delete[i:i+100]
+                client.table("etsy_transactions").delete().in_("id", batch_ids).execute()
+            print(f"Deleted {len(ids_to_delete)} Etsy transactions for {month_prefix}")
+        return {"ok": True, "deleted": len(ids_to_delete)}
+    except Exception as e:
+        print(f"delete_etsy_by_month failed: {e}")
+        return {"ok": False, "deleted": 0, "error": str(e)}
+
+
+def delete_bank_by_month(year: int, month: int) -> dict:
+    """Delete all bank_transactions for a specific month.
+
+    Returns dict: {ok: bool, deleted: int}
+    """
+    client = _get_supabase_client()
+    if client is None:
+        return {"ok": False, "deleted": 0, "error": "No Supabase client"}
+    try:
+        month_prefix = f"{year}-{month:02d}"
+        ids_to_delete = []
+        _offset = 0
+        while True:
+            batch = (client.table("bank_transactions")
+                     .select("id,date")
+                     .order("id")
+                     .range(_offset, _offset + 999)
+                     .execute())
+            for r in batch.data:
+                d = r.get("date", "")
+                if d.startswith(month_prefix):
+                    ids_to_delete.append(r["id"])
+            if len(batch.data) < 1000:
+                break
+            _offset += 1000
+
+        if ids_to_delete:
+            for i in range(0, len(ids_to_delete), 100):
+                batch_ids = ids_to_delete[i:i+100]
+                client.table("bank_transactions").delete().in_("id", batch_ids).execute()
+            print(f"Deleted {len(ids_to_delete)} bank transactions for {month_prefix}")
+        return {"ok": True, "deleted": len(ids_to_delete)}
+    except Exception as e:
+        print(f"delete_bank_by_month failed: {e}")
+        return {"ok": False, "deleted": 0, "error": str(e)}
+
+
+def delete_receipt_by_order(order_num: str) -> dict:
+    """Delete an inventory order and its items by order number.
+
+    Returns dict: {ok: bool, deleted_items: int}
+    """
+    client = _get_supabase_client()
+    if client is None:
+        return {"ok": False, "deleted_items": 0, "error": "No Supabase client"}
+    try:
+        # Count items first
+        items = (client.table("inventory_items")
+                 .select("id")
+                 .eq("order_num", order_num)
+                 .execute())
+        item_count = len(items.data) if items.data else 0
+
+        # Delete items, then order
+        client.table("inventory_items").delete().eq("order_num", order_num).execute()
+        client.table("inventory_orders").delete().eq("order_num", order_num).execute()
+        # Also delete any item details
+        try:
+            client.table("inventory_item_details").delete().eq("order_num", order_num).execute()
+        except Exception:
+            pass
+        print(f"Deleted order #{order_num} ({item_count} items)")
+        return {"ok": True, "deleted_items": item_count}
+    except Exception as e:
+        print(f"delete_receipt_by_order failed: {e}")
+        return {"ok": False, "deleted_items": 0, "error": str(e)}
+
+
+def get_etsy_month_counts() -> list[dict]:
+    """Get row counts per month for Etsy transactions.
+
+    Returns list of {month: "YYYY-MM", count: N} sorted by month.
+    """
+    client = _get_supabase_client()
+    if client is None:
+        return []
+    try:
+        from collections import Counter
+        month_counts = Counter()
+        _offset = 0
+        while True:
+            batch = (client.table("etsy_transactions")
+                     .select("date")
+                     .order("id")
+                     .range(_offset, _offset + 999)
+                     .execute())
+            for r in batch.data:
+                d = r.get("date", "")
+                try:
+                    from datetime import datetime as _dt
+                    parsed = _dt.strptime(d, "%B %d, %Y")
+                    month_counts[f"{parsed.year}-{parsed.month:02d}"] += 1
+                    continue
+                except (ValueError, TypeError):
+                    pass
+                if len(d) >= 7:
+                    month_counts[d[:7]] += 1
+            if len(batch.data) < 1000:
+                break
+            _offset += 1000
+        return [{"month": m, "count": c} for m, c in sorted(month_counts.items())]
+    except Exception as e:
+        print(f"get_etsy_month_counts failed: {e}")
+        return []
+
+
+def get_bank_month_counts() -> list[dict]:
+    """Get row counts per month for bank transactions.
+
+    Returns list of {month: "YYYY-MM", count: N} sorted by month.
+    """
+    client = _get_supabase_client()
+    if client is None:
+        return []
+    try:
+        from collections import Counter
+        month_counts = Counter()
+        _offset = 0
+        while True:
+            batch = (client.table("bank_transactions")
+                     .select("date")
+                     .order("id")
+                     .range(_offset, _offset + 999)
+                     .execute())
+            for r in batch.data:
+                d = r.get("date", "")
+                if len(d) >= 7:
+                    month_counts[d[:7]] += 1
+            if len(batch.data) < 1000:
+                break
+            _offset += 1000
+        return [{"month": m, "count": c} for m, c in sorted(month_counts.items())]
+    except Exception as e:
+        print(f"get_bank_month_counts failed: {e}")
+        return []
 
 
 # ── Public API ──────────────────────────────────────────────────────────────

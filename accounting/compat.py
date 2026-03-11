@@ -135,3 +135,55 @@ def publish_to_globals(pipeline: AccountingPipeline, target_module_name: str):
         setattr(mod, "expense_missing_receipts", pipeline.get_missing_receipts())
 
     print(f"[compat] Published {len(float_metrics) + len(int_metrics)} metrics to {target_module_name}")
+
+
+def get_metric_provenance(metric_name: str, target_module_name: str = None) -> dict | None:
+    """Get provenance info for a metric from the current Ledger snapshot.
+
+    Returns dict with {name, value, formula, confidence, sources, notes, missing_inputs}
+    or None if metric not found.
+    """
+    import sys as _sys
+
+    # Find the ledger reference from the target module
+    ledger = None
+    if target_module_name:
+        mod = _sys.modules.get(target_module_name)
+        if mod:
+            ledger = getattr(mod, "ledger_ref", None)
+
+    # Fallback: search common module names
+    if ledger is None:
+        for mod_name in ["__main__", "etsy_dashboard"]:
+            mod = _sys.modules.get(mod_name)
+            if mod:
+                ledger = getattr(mod, "ledger_ref", None)
+                if ledger is not None:
+                    break
+
+    if ledger is None:
+        return None
+
+    mv = ledger.get(metric_name)
+    if mv is None:
+        return None
+
+    p = mv.provenance
+    conf_colors = {
+        "verified": "#2ecc71", "derived": "#00d4ff", "partial": "#3498db",
+        "estimated": "#f39c12", "projection": "#f39c12", "heuristic": "#f39c12",
+        "unknown": "#e74c3c", "quarantined": "#e74c3c", "needs_review": "#e74c3c",
+    }
+
+    return {
+        "name": mv.name,
+        "value": float(mv.value),
+        "formula": p.formula if p.formula and p.formula != "NOT_AVAILABLE" else None,
+        "confidence": mv.confidence.value,
+        "confidence_color": conf_colors.get(mv.confidence.value, "#888"),
+        "source_entries": p.source_entries,
+        "source_types": p.source_types,
+        "notes": p.notes or None,
+        "missing_inputs": list(p.missing_inputs) if p.missing_inputs else [],
+        "display_format": mv.display_format,
+    }

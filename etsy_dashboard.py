@@ -1357,6 +1357,49 @@ def _rebuild_bank_derived():
     bb_cc_available = bb_cc_limit - bb_cc_balance
 
 
+def _recompute_location_spend():
+    """Recompute per-location spending from item-level data so editor splits are reflected."""
+    global loc_spend, loc_orders, loc_tax, loc_subtotal
+    global tulsa_spend, texas_spend, tulsa_orders, texas_orders
+    global tulsa_tax, texas_tax, tulsa_subtotal, texas_subtotal
+    global tulsa_items, texas_items, tulsa_by_cat, texas_by_cat
+    global tulsa_monthly, texas_monthly
+
+    if len(BIZ_INV_ITEMS) > 0:
+        loc_spend = BIZ_INV_ITEMS.groupby("location")["total_with_tax"].sum()
+        loc_orders = BIZ_INV_ITEMS.groupby("location")["order_num"].nunique()
+        _item_tax = BIZ_INV_ITEMS["total_with_tax"] - BIZ_INV_ITEMS["total"]
+        loc_tax = _item_tax.groupby(BIZ_INV_ITEMS["location"]).sum()
+        loc_subtotal = BIZ_INV_ITEMS.groupby("location")["total"].sum()
+    else:
+        loc_spend = BIZ_INV_DF.groupby("location")["grand_total"].sum()
+        loc_orders = BIZ_INV_DF.groupby("location")["order_num"].count()
+        loc_tax = BIZ_INV_DF.groupby("location")["tax"].sum()
+        loc_subtotal = BIZ_INV_DF.groupby("location")["subtotal"].sum()
+
+    tulsa_spend = loc_spend.get("Tulsa, OK", 0)
+    texas_spend = loc_spend.get("Texas", 0)
+    tulsa_orders = loc_orders.get("Tulsa, OK", 0)
+    texas_orders = loc_orders.get("Texas", 0)
+    tulsa_tax = loc_tax.get("Tulsa, OK", 0)
+    texas_tax = loc_tax.get("Texas", 0)
+    tulsa_subtotal = loc_subtotal.get("Tulsa, OK", 0)
+    texas_subtotal = loc_subtotal.get("Texas", 0)
+
+    if len(BIZ_INV_ITEMS) > 0:
+        tulsa_items = BIZ_INV_ITEMS[BIZ_INV_ITEMS["location"] == "Tulsa, OK"]
+        texas_items = BIZ_INV_ITEMS[BIZ_INV_ITEMS["location"] == "Texas"]
+        tulsa_by_cat = tulsa_items.groupby("category")["total"].sum().sort_values(ascending=False)
+        texas_by_cat = texas_items.groupby("category")["total"].sum().sort_values(ascending=False)
+        tulsa_monthly = tulsa_items.groupby("month")["total_with_tax"].sum()
+        texas_monthly = texas_items.groupby("month")["total_with_tax"].sum()
+    else:
+        tulsa_by_cat = pd.Series(dtype=float)
+        texas_by_cat = pd.Series(dtype=float)
+        tulsa_monthly = pd.Series(dtype=float)
+        texas_monthly = pd.Series(dtype=float)
+
+
 def _reload_inventory_data(new_order):
     """Append a newly-parsed invoice to INVOICES and rebuild inventory DataFrames.
 
@@ -1371,6 +1414,11 @@ def _reload_inventory_data(new_order):
     global total_inventory_cost, total_inv_subtotal, total_inv_tax
     global biz_inv_cost, personal_acct_cost, inv_order_count, true_inventory_cost
     global monthly_inv_spend, biz_inv_by_category, gigi_cost, personal_inv_items
+    global loc_spend, loc_orders, loc_tax, loc_subtotal
+    global tulsa_spend, texas_spend, tulsa_orders, texas_orders
+    global tulsa_tax, texas_tax, tulsa_subtotal, texas_subtotal
+    global tulsa_items, texas_items, tulsa_by_cat, texas_by_cat
+    global tulsa_monthly, texas_monthly
 
     # Append to INVOICES and persist (mirrors lines 8796-8807)
     INVOICES.append(new_order)
@@ -1492,6 +1540,9 @@ def _reload_inventory_data(new_order):
     # Recalculate monthly inventory spend (business-only)
     monthly_inv_spend = BIZ_INV_DF.groupby("month")["grand_total"].sum()
 
+    # Recompute per-location aggregates from item-level data (respects splits)
+    _recompute_location_spend()
+
     _recompute_stock_summary()
 
     return {
@@ -1510,6 +1561,11 @@ def _rebuild_inventory_from_invoices():
     global total_inventory_cost, total_inv_subtotal, total_inv_tax
     global biz_inv_cost, personal_acct_cost, inv_order_count, true_inventory_cost
     global monthly_inv_spend, biz_inv_by_category, gigi_cost, personal_inv_items
+    global loc_spend, loc_orders, loc_tax, loc_subtotal
+    global tulsa_spend, texas_spend, tulsa_orders, texas_orders
+    global tulsa_tax, texas_tax, tulsa_subtotal, texas_subtotal
+    global tulsa_items, texas_items, tulsa_by_cat, texas_by_cat
+    global tulsa_monthly, texas_monthly
 
     inv_rows = []
     inv_item_rows = []
@@ -1599,6 +1655,9 @@ def _rebuild_inventory_from_invoices():
         monthly_inv_spend = BIZ_INV_DF.groupby("month")["grand_total"].sum()
     else:
         monthly_inv_spend = pd.Series(dtype=float)
+
+    # Recompute per-location aggregates from item-level data (respects splits)
+    _recompute_location_spend()
 
     try:
         _recompute_stock_summary()
@@ -2095,11 +2154,19 @@ if len(INV_DF) > 0:
             if pm in payment_summary:
                 payment_summary[pm]["items"] = grp.to_dict("records")
 
-# Per-location aggregates (business orders only)
-loc_spend = BIZ_INV_DF.groupby("location")["grand_total"].sum()
-loc_orders = BIZ_INV_DF.groupby("location")["order_num"].count()
-loc_tax = BIZ_INV_DF.groupby("location")["tax"].sum()
-loc_subtotal = BIZ_INV_DF.groupby("location")["subtotal"].sum()
+# Per-location aggregates — use ITEM-level data so editor splits are reflected
+# (order-level BIZ_INV_DF attributes full cost to ship address, ignoring splits)
+if len(BIZ_INV_ITEMS) > 0:
+    loc_spend = BIZ_INV_ITEMS.groupby("location")["total_with_tax"].sum()
+    loc_orders = BIZ_INV_ITEMS.groupby("location")["order_num"].nunique()
+    _item_tax = BIZ_INV_ITEMS["total_with_tax"] - BIZ_INV_ITEMS["total"]
+    loc_tax = _item_tax.groupby(BIZ_INV_ITEMS["location"]).sum()
+    loc_subtotal = BIZ_INV_ITEMS.groupby("location")["total"].sum()
+else:
+    loc_spend = BIZ_INV_DF.groupby("location")["grand_total"].sum()
+    loc_orders = BIZ_INV_DF.groupby("location")["order_num"].count()
+    loc_tax = BIZ_INV_DF.groupby("location")["tax"].sum()
+    loc_subtotal = BIZ_INV_DF.groupby("location")["subtotal"].sum()
 
 tulsa_spend = loc_spend.get("Tulsa, OK", 0)
 texas_spend = loc_spend.get("Texas", 0)
@@ -2116,8 +2183,9 @@ if len(BIZ_INV_ITEMS) > 0:
     texas_items = BIZ_INV_ITEMS[BIZ_INV_ITEMS["location"] == "Texas"]
     tulsa_by_cat = tulsa_items.groupby("category")["total"].sum().sort_values(ascending=False)
     texas_by_cat = texas_items.groupby("category")["total"].sum().sort_values(ascending=False)
-    tulsa_monthly = BIZ_INV_DF[BIZ_INV_DF["location"] == "Tulsa, OK"].groupby("month")["grand_total"].sum()
-    texas_monthly = BIZ_INV_DF[BIZ_INV_DF["location"] == "Texas"].groupby("month")["grand_total"].sum()
+    # Monthly spend from items (respects splits) instead of order-level
+    tulsa_monthly = tulsa_items.groupby("month")["total_with_tax"].sum()
+    texas_monthly = texas_items.groupby("month")["total_with_tax"].sum()
 else:
     tulsa_by_cat = pd.Series(dtype=float)
     texas_by_cat = pd.Series(dtype=float)
