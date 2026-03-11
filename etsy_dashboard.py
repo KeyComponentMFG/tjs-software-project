@@ -4436,12 +4436,11 @@ def _build_ceo_banner():
             html.Span(f"{alert.agent}: ", style={"color": color, "fontWeight": "bold",
                                                   "fontSize": "12px"}),
             html.Span(alert.message, style={"color": GRAY, "fontSize": "12px", "flex": "1"}),
-            html.Button("Mark Read", className="ceo-dismiss-btn",
-                        **{"data-key": akey},
-                        style={"fontSize": "10px", "padding": "1px 8px", "marginLeft": "10px",
-                               "backgroundColor": f"{color}22", "color": color,
-                               "border": f"1px solid {color}44", "borderRadius": "4px",
-                               "cursor": "pointer"}),
+            html.A("Mark Read", href=f"/api/ceo/dismiss?key={akey}", target="_self",
+                   style={"fontSize": "10px", "padding": "1px 8px", "marginLeft": "10px",
+                          "backgroundColor": f"{color}22", "color": color,
+                          "border": f"1px solid {color}44", "borderRadius": "4px",
+                          "cursor": "pointer", "textDecoration": "none"}),
         ], style={"padding": "3px 0", "display": "flex", "alignItems": "center"}))
 
     # Show dismissed count
@@ -10069,6 +10068,20 @@ def api_charts_projections():
     return _add_cors_headers(flask.jsonify({"historical": historical, "projections": []}))
 
 
+@server.route("/api/ceo/dismiss")
+def api_ceo_dismiss():
+    """Dismiss a CEO alert by key — redirects back to dashboard."""
+    key = flask.request.args.get("key", "")
+    if key:
+        _dismissed_alerts.add(key)
+        try:
+            from supabase_loader import save_config_value
+            save_config_value("dismissed_ceo_alerts", list(_dismissed_alerts))
+        except Exception:
+            pass
+    return flask.redirect("/")
+
+
 # Shared tab styling
 tab_style = {
     "backgroundColor": CARD2, "color": GRAY, "border": "none",
@@ -14669,7 +14682,6 @@ def serve_layout():
         ], style={"backgroundColor": BG}),
         # CEO Agent alert banner
         html.Div(id="ceo-alert-banner", children=_build_ceo_banner()),
-        dcc.Store(id="ceo-dismiss-store", data=""),
 
         # Periodic CEO health check (every 15 min)
         dcc.Interval(id="ceo-interval", interval=15 * 60 * 1000, n_intervals=0),
@@ -17976,50 +17988,17 @@ def csv_paste_import(n_clicks, csv_text):
 @app.callback(
     Output("ceo-alert-banner", "children"),
     Input("ceo-interval", "n_intervals"),
-    Input("ceo-dismiss-store", "data"),
     prevent_initial_call=True,
 )
-def ceo_periodic_check(n_intervals, dismiss_key):
-    """Periodic CEO health re-check + dismiss alert handler."""
+def ceo_periodic_check(n_intervals):
+    """Periodic CEO health re-check (every 15 min)."""
     global _ceo_health
-    ctx = callback_context
-
-    # Handle dismiss
-    if ctx.triggered:
-        trig_id = ctx.triggered[0]["prop_id"]
-        if "ceo-dismiss-store" in trig_id and dismiss_key:
-            _dismissed_alerts.add(dismiss_key)
-            try:
-                from supabase_loader import save_config_value
-                save_config_value("dismissed_ceo_alerts", list(_dismissed_alerts))
-            except Exception:
-                pass
-            return _build_ceo_banner()
-
-    # Periodic re-check
     if _ceo_agent and _acct_pipeline:
         try:
             _ceo_health = _ceo_agent.run_periodic_check(_acct_pipeline)
         except Exception:
             pass
     return _build_ceo_banner()
-
-
-# Clientside: clicking any "Mark Read" button writes its data-key to the store
-app.clientside_callback(
-    """function(n) {
-        if (!n) return dash_clientside.no_update;
-        var active = document.activeElement;
-        if (active && active.classList.contains('ceo-dismiss-btn')) {
-            var key = active.getAttribute('data-key');
-            if (key) return key;
-        }
-        return dash_clientside.no_update;
-    }""",
-    Output("ceo-dismiss-store", "data"),
-    Input("ceo-alert-banner", "n_clicks"),
-    prevent_initial_call=True,
-)
 
 
 # ── Mark Receipt Verified Callback ────────────────────────────────────────────
