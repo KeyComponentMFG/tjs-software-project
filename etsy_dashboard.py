@@ -1452,6 +1452,14 @@ def _recompute_location_spend():
     global tulsa_tax, texas_tax, tulsa_subtotal, texas_subtotal
     global tulsa_items, texas_items, tulsa_by_cat, texas_by_cat
     global tulsa_monthly, texas_monthly
+    global BIZ_INV_ITEMS, biz_inv_by_category
+
+    # Rebuild BIZ_INV_ITEMS from current INV_ITEMS so location spend is fresh
+    if len(INV_ITEMS) > 0 and "category" in INV_ITEMS.columns:
+        BIZ_INV_ITEMS = INV_ITEMS[~INV_ITEMS["category"].isin(["Personal/Gift", "Business Fees"])].copy()
+        biz_inv_by_category = BIZ_INV_ITEMS.groupby("category")["total"].sum().sort_values(ascending=False)
+    else:
+        BIZ_INV_ITEMS = INV_ITEMS.copy()
 
     if len(BIZ_INV_ITEMS) > 0:
         loc_spend = BIZ_INV_ITEMS.groupby("location")["total_with_tax"].sum()

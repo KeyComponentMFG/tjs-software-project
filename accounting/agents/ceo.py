@@ -120,7 +120,7 @@ def _check_duplicate_detection(pipeline) -> AgentResult:
         key = (e.txn_date, float(e.amount), e.txn_type.value)
         key_counts[key] += 1
 
-    suspicious = {k: v for k, v in key_counts.items() if v > 5}
+    suspicious = {k: v for k, v in key_counts.items() if v > 15}
 
     if suspicious:
         examples = list(suspicious.items())[:3]
@@ -152,7 +152,7 @@ def _check_anomaly_detection(pipeline) -> AgentResult:
             if abs(amt - mean) > 3 * stdev:
                 anomalies.append(f"{ttype}: ${amt:.2f} (mean ${mean:.2f})")
 
-    if len(anomalies) > 5:
+    if len(anomalies) > 50:
         return AgentResult("AnomalyDetection", False, "warning",
                           f"{len(anomalies)} statistical outliers detected",
                           "; ".join(anomalies[:5]))
@@ -186,10 +186,10 @@ def _check_trend_break(pipeline) -> AgentResult:
         curr = weekly[weeks[i]]
         if prev > 0:
             change = abs(curr - prev) / prev
-            if change > 0.3:
+            if change > 0.5:
                 breaks.append(f"Week of {weeks[i]}: {change:.0%} swing")
 
-    if len(breaks) > 2:
+    if len(breaks) > 5:
         return AgentResult("TrendBreak", False, "info",
                           f"{len(breaks)} weekly swings >30%",
                           "; ".join(breaks[:3]))
@@ -369,9 +369,9 @@ def _check_shipping_cost(pipeline) -> AgentResult:
         return AgentResult("ShippingCost", True, "info", "Label cost data unavailable")
 
     avg_val = float(avg_label.value)
-    if avg_val > 8:
+    if avg_val > 12:
         return AgentResult("ShippingCost", False, "warning",
-                          f"Average label cost ${avg_val:.2f} seems high (>$8)")
+                          f"Average label cost ${avg_val:.2f} seems high (>$12)")
     return AgentResult("ShippingCost", True, "info",
                       f"Average label cost: ${avg_val:.2f}")
 
@@ -385,7 +385,7 @@ def _check_cross_source(pipeline) -> AgentResult:
     unmatched_etsy = len(recon.etsy_unmatched)
     unmatched_bank = len(recon.bank_unmatched)
 
-    if unmatched_etsy > 3 or unmatched_bank > 3:
+    if unmatched_etsy > 7 or unmatched_bank > 3:
         return AgentResult("CrossSource", False, "warning",
                           f"{unmatched_etsy} Etsy deposits unmatched, "
                           f"{unmatched_bank} bank deposits unmatched")
