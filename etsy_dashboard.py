@@ -1488,6 +1488,88 @@ def _recompute_location_spend():
         texas_monthly = pd.Series(dtype=float)
 
 
+def _apply_details_to_inv_items():
+    """Re-apply _ITEM_DETAILS to INV_ITEMS so STOCK_SUMMARY stays fresh."""
+    global INV_ITEMS
+    if len(INV_ITEMS) == 0:
+        return
+    _orig_pricing = {}
+    for inv in INVOICES:
+        onum = inv["order_num"]
+        ot = {"subtotal": inv["subtotal"], "grand_total": inv["grand_total"]}
+        for item in inv["items"]:
+            iname = item["name"]
+            if iname.startswith("Your package was left near the front door or porch."):
+                iname = iname.replace("Your package was left near the front door or porch.", "").strip()
+            orig_total = item["price"] * item["qty"]
+            tax_ratio = (ot["grand_total"] / ot["subtotal"]) if ot["subtotal"] > 0 else 1.0
+            _orig_pricing[(onum, iname)] = {
+                "price": item["price"], "qty": item["qty"],
+                "total": orig_total,
+                "total_with_tax": round(orig_total * tax_ratio, 2),
+            }
+    detail_rows = []
+    _processed = set()
+    for _, row in INV_ITEMS.iterrows():
+        rkey = (row["order_num"], row.get("_orig_name", row["name"]))
+        if rkey in _processed:
+            continue
+        _processed.add(rkey)
+        if rkey in _ITEM_DETAILS:
+            dets = _ITEM_DETAILS[rkey]
+            orig = _orig_pricing.get(rkey, {})
+            orig_total = orig.get("total", row["price"] * row["qty"])
+            orig_with_tax = orig.get("total_with_tax", orig_total)
+            total_dq = sum(d["true_qty"] for d in dets)
+            pu = orig_total / total_dq if total_dq > 0 else 0
+            put = orig_with_tax / total_dq if total_dq > 0 else 0
+            for det in dets:
+                nr = row.copy()
+                nr["_orig_name"] = row.get("_orig_name", row["name"])
+                nr["name"] = det["display_name"]
+                nr["category"] = det["category"]
+                nr["qty"] = det["true_qty"]
+                nr["price"] = round(pu, 2)
+                nr["total"] = round(pu * det["true_qty"], 2)
+                nr["total_with_tax"] = round(put * det["true_qty"], 2)
+                nr["image_url"] = ""
+                if det.get("location"):
+                    nr["_override_location"] = det["location"]
+                    nr["location"] = det["location"]
+                detail_rows.append(nr)
+                orig_img = _IMAGE_URLS.get(rkey[1], "")
+                if orig_img and det["display_name"] not in _IMAGE_URLS:
+                    _IMAGE_URLS[det["display_name"]] = orig_img
+        else:
+            rc = row.copy()
+            if "_orig_name" not in rc.index:
+                rc["_orig_name"] = row["name"]
+            detail_rows.append(rc)
+    INV_ITEMS = pd.DataFrame(detail_rows)
+    if len(INV_ITEMS) == 0:
+        return
+    if "_orig_name" not in INV_ITEMS.columns:
+        INV_ITEMS["_orig_name"] = INV_ITEMS["name"]
+    if "category" in INV_ITEMS.columns:
+        _cm = INV_ITEMS["category"].isna() | (INV_ITEMS["category"] == "")
+        INV_ITEMS.loc[_cm, "category"] = INV_ITEMS.loc[_cm, "name"].apply(categorize_item)
+    if "_override_location" in INV_ITEMS.columns:
+        INV_ITEMS["location"] = INV_ITEMS.apply(
+            lambda r: r["_override_location"] if r.get("_override_location") else classify_location(r.get("ship_to", "")),
+            axis=1)
+
+
+def _rebuild_uploaded_inventory():
+    """Rebuild _UPLOADED_INVENTORY from current INV_ITEMS after any change."""
+    _UPLOADED_INVENTORY.clear()
+    if len(INV_ITEMS) > 0:
+        for _, _r in INV_ITEMS.iterrows():
+            _loc = _norm_loc(_r.get("_override_location", ""))
+            if _loc:
+                _ik = (_loc, _r["name"], _r.get("category", "Other"))
+                _UPLOADED_INVENTORY[_ik] = _UPLOADED_INVENTORY.get(_ik, 0) + int(_r["qty"])
+
+
 def _reload_inventory_data(new_order):
     """Append a newly-parsed invoice to INVOICES and rebuild inventory DataFrames.
 
@@ -15064,97 +15146,6 @@ def handle_detail_save_reset(save_clicks, reset_clicks, display_name, category,
     trigger_id = ctx.triggered[0]["prop_id"]
     is_reset = "det-reset-btn" in trigger_id
     key = (order_num, item_name)
-
-    def _apply_details_to_inv_items():
-        """Re-apply _ITEM_DETAILS to INV_ITEMS so STOCK_SUMMARY stays fresh.
-
-        Uses _processed set to avoid duplicating split items, and looks up
-        original pricing from INVOICES so cost calculations stay correct.
-        """
-        global INV_ITEMS
-        if len(INV_ITEMS) == 0:
-            return
-        # Build lookup for original item pricing from INVOICES
-        _orig_pricing = {}
-        for inv in INVOICES:
-            onum = inv["order_num"]
-            ot = {"subtotal": inv["subtotal"], "grand_total": inv["grand_total"]}
-            for item in inv["items"]:
-                iname = item["name"]
-                if iname.startswith("Your package was left near the front door or porch."):
-                    iname = iname.replace("Your package was left near the front door or porch.", "").strip()
-                orig_total = item["price"] * item["qty"]
-                tax_ratio = (ot["grand_total"] / ot["subtotal"]) if ot["subtotal"] > 0 else 1.0
-                _orig_pricing[(onum, iname)] = {
-                    "price": item["price"], "qty": item["qty"],
-                    "total": orig_total,
-                    "total_with_tax": round(orig_total * tax_ratio, 2),
-                }
-
-        detail_rows = []
-        _processed = set()
-        for _, row in INV_ITEMS.iterrows():
-            rkey = (row["order_num"], row.get("_orig_name", row["name"]))
-            if rkey in _processed:
-                continue  # Already expanded this item (prevents split duplication)
-            _processed.add(rkey)
-            if rkey in _ITEM_DETAILS:
-                dets = _ITEM_DETAILS[rkey]
-                # Use original pricing from INVOICES for correct totals
-                orig = _orig_pricing.get(rkey, {})
-                orig_total = orig.get("total", row["price"] * row["qty"])
-                orig_with_tax = orig.get("total_with_tax", orig_total)
-                total_dq = sum(d["true_qty"] for d in dets)
-                pu = orig_total / total_dq if total_dq > 0 else 0
-                put = orig_with_tax / total_dq if total_dq > 0 else 0
-                for det in dets:
-                    nr = row.copy()
-                    nr["_orig_name"] = row.get("_orig_name", row["name"])
-                    nr["name"] = det["display_name"]
-                    nr["category"] = det["category"]
-                    nr["qty"] = det["true_qty"]
-                    nr["price"] = round(pu, 2)
-                    nr["total"] = round(pu * det["true_qty"], 2)
-                    nr["total_with_tax"] = round(put * det["true_qty"], 2)
-                    nr["image_url"] = ""
-                    if det.get("location"):
-                        nr["_override_location"] = det["location"]
-                        nr["location"] = det["location"]
-                    detail_rows.append(nr)
-                    # Map renamed items to original image (fallback)
-                    orig_img = _IMAGE_URLS.get(rkey[1], "")
-                    if orig_img and det["display_name"] not in _IMAGE_URLS:
-                        _IMAGE_URLS[det["display_name"]] = orig_img
-            else:
-                rc = row.copy()
-                if "_orig_name" not in rc.index:
-                    rc["_orig_name"] = row["name"]
-                detail_rows.append(rc)
-        INV_ITEMS = pd.DataFrame(detail_rows)
-        if len(INV_ITEMS) == 0:
-            return
-        # Ensure _orig_name exists
-        if "_orig_name" not in INV_ITEMS.columns:
-            INV_ITEMS["_orig_name"] = INV_ITEMS["name"]
-        # Re-apply categories for items without details
-        if "category" in INV_ITEMS.columns:
-            _cm = INV_ITEMS["category"].isna() | (INV_ITEMS["category"] == "")
-            INV_ITEMS.loc[_cm, "category"] = INV_ITEMS.loc[_cm, "name"].apply(categorize_item)
-        # Re-apply locations
-        if "_override_location" in INV_ITEMS.columns:
-            INV_ITEMS["location"] = INV_ITEMS.apply(
-                lambda r: r["_override_location"] if r.get("_override_location") else classify_location(r.get("ship_to", "")),
-                axis=1)
-
-    def _rebuild_uploaded_inventory():
-        """Rebuild _UPLOADED_INVENTORY from current INV_ITEMS after any change."""
-        _UPLOADED_INVENTORY.clear()
-        if len(INV_ITEMS) > 0:
-            for _, _r in INV_ITEMS.iterrows():
-                _loc = _norm_loc(_r.get("_override_location", ""))
-                if _loc:
-                    _ik = (_loc, _r["name"], _r.get("category", "Other"))
-                    _UPLOADED_INVENTORY[_ik] = _UPLOADED_INVENTORY.get(_ik, 0) + int(_r["qty"])
 
     if is_reset:
         ok = _delete_item_details(order_num, item_name)
