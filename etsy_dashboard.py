@@ -2649,8 +2649,16 @@ def run_analytics():
     last_m = months_sorted[-1] if months_sorted else None
 
     # 1. REVENUE PROJECTION
-    monthly_rev_series = pd.Series({m: monthly_sales.get(m, 0) for m in months_sorted})
-    monthly_net_series = pd.Series({m: monthly_net_revenue.get(m, 0) for m in months_sorted})
+    # Exclude current partial month — it skews the regression (e.g. 11 days vs full months)
+    from datetime import datetime as _dt_proj
+    _cur_m = _dt_proj.now().strftime("%Y-%m")
+    _proj_months = [m for m in months_sorted if m != _cur_m]
+    # If current month has >25 days, include it (nearly complete)
+    if _cur_m in months_sorted and _dt_proj.now().day >= 25:
+        _proj_months = months_sorted
+
+    monthly_rev_series = pd.Series({m: monthly_sales.get(m, 0) for m in _proj_months})
+    monthly_net_series = pd.Series({m: monthly_net_revenue.get(m, 0) for m in _proj_months})
 
     if len(monthly_rev_series) >= 3:
         X = np.arange(len(monthly_rev_series)).reshape(-1, 1)
@@ -4950,31 +4958,52 @@ def _rebuild_all_charts():
         product_heat = _no_data_fig("Product Revenue Heatmap", "Need 3+ months of sales data for heatmap.")
 
     # 13) Correlation: Ads Spend vs Sales (monthly)
-    corr_fig = go.Figure()
+    corr_fig = make_subplots(specs=[[{"secondary_y": True}]])
     _corr_ad_vals = [monthly_marketing.get(m, 0) for m in months_sorted]
     _corr_rev_vals = [monthly_sales.get(m, 0) for m in months_sorted]
-    corr_fig.add_trace(go.Scatter(
-        x=_corr_ad_vals, y=_corr_rev_vals, mode="markers+text",
-        text=months_sorted, textposition="top center", textfont=dict(size=9, color=GRAY),
-        marker=dict(color=CYAN, size=14, line=dict(color=WHITE, width=1)),
+
+    # Grouped bars: ad spend vs revenue by month (easier to read than scatter)
+    corr_fig.add_trace(go.Bar(
+        name="Revenue", x=list(months_sorted), y=_corr_rev_vals,
+        marker_color=GREEN, opacity=0.7,
+        text=[f"${v:,.0f}" for v in _corr_rev_vals], textposition="outside",
+        textfont=dict(color=GREEN, size=10),
     ))
-    # Fit line
+    corr_fig.add_trace(go.Bar(
+        name="Ad Spend", x=list(months_sorted), y=_corr_ad_vals,
+        marker_color=PURPLE, opacity=0.8,
+        text=[f"${v:,.0f}" for v in _corr_ad_vals], textposition="outside",
+        textfont=dict(color=PURPLE, size=10),
+    ))
+
+    # ROAS line (return on ad spend) on secondary axis
+    _roas_vals = [(_corr_rev_vals[i] / _corr_ad_vals[i]) if _corr_ad_vals[i] > 0 else 0
+                  for i in range(len(months_sorted))]
+    if any(v > 0 for v in _roas_vals):
+        corr_fig.add_trace(go.Scatter(
+            name="ROAS (Revenue / Ad Spend)", x=list(months_sorted), y=_roas_vals,
+            mode="lines+markers+text", line=dict(color=ORANGE, width=3),
+            marker=dict(size=8, color=ORANGE),
+            text=[f"{v:.1f}x" if v > 0 else "" for v in _roas_vals],
+            textposition="top center", textfont=dict(color=ORANGE, size=11),
+        ), secondary_y=True)
+
+    # Fit R²
     if len(months_sorted) >= 3 and sum(_corr_ad_vals) > 0:
         _corr_X = np.array(_corr_ad_vals).reshape(-1, 1)
         _corr_y = np.array(_corr_rev_vals)
         _corr_lr = LinearRegression().fit(_corr_X, _corr_y)
         _corr_r2 = _corr_lr.score(_corr_X, _corr_y)
-        _corr_line_x = [min(_corr_ad_vals), max(_corr_ad_vals)]
-        _corr_line_y = [_corr_lr.predict([[v]])[0] for v in _corr_line_x]
-        corr_fig.add_trace(go.Scatter(
-            x=_corr_line_x, y=_corr_line_y, mode="lines",
-            line=dict(color=ORANGE, width=2, dash="dash"), name=f"R²={_corr_r2:.2f}",
-        ))
     else:
         _corr_r2 = 0
-    make_chart(corr_fig, 300, False)
-    corr_fig.update_layout(title="Ad Spend vs Revenue Correlation",
-                           xaxis_title="Monthly Ad Spend ($)", yaxis_title="Monthly Revenue ($)")
+
+    make_chart(corr_fig, 340, False)
+    corr_fig.update_layout(
+        title=f"Ad Spend vs Revenue (R²={_corr_r2:.2f})",
+        barmode="group",
+    )
+    corr_fig.update_yaxes(title_text="Amount ($)", secondary_y=False)
+    corr_fig.update_yaxes(title_text="ROAS (x)", secondary_y=True, showgrid=False)
 
     # 14) Unit economics waterfall (per-order breakdown)
     _unit_rev = avg_order
@@ -5076,58 +5105,142 @@ def _rebuild_all_charts():
     # Revenue projection chart
     proj_chart = _no_data_fig("Revenue Projection", "Need 3+ months of data for projections.")
     if "proj_sales" in analytics_projections:
+        from datetime import datetime as _dt_chart
+        import calendar as _cal_chart
+        _cur_m_chart = _dt_chart.now().strftime("%Y-%m")
+        _day_of_month = _dt_chart.now().day
+        _is_partial = _cur_m_chart in months_sorted and _day_of_month < 25
+
+        # Complete months only (for regression line)
+        _complete_months = [m for m in months_sorted if m != _cur_m_chart] if _is_partial else list(months_sorted)
+
+        # Future projection months
+        _last_complete = _complete_months[-1] if _complete_months else months_sorted[-1]
+        _last_period = pd.Period(_last_complete, freq="M")
+        _proj_months = [(_last_period + i).strftime("%Y-%m") for i in range(1, 4)]
+        _proj_sales_vals = list(np.maximum(analytics_projections["proj_sales"], 0))
+        _proj_net_vals = list(np.maximum(analytics_projections["proj_net"], 0))
+
+        # Build all x-axis points and y values
+        _all_months = list(months_sorted)
+        # Add projection months that aren't already in the list
+        for pm in _proj_months:
+            if pm not in _all_months:
+                _all_months.append(pm)
+
+        proj_chart = go.Figure()
+
+        # ── Gross Sales: solid green for actual, outlined for projected ──
+        _actual_gross = [monthly_sales.get(m, 0) for m in months_sorted]
         proj_chart.add_trace(go.Scatter(
-            name="Actual Sales", x=months_sorted,
-            y=[monthly_sales.get(m, 0) for m in months_sorted],
-            mode="lines+markers", line=dict(color=GREEN, width=3), marker=dict(size=8),
+            name="Gross Sales (Actual)", x=list(months_sorted), y=_actual_gross,
+            mode="lines+markers", line=dict(color=GREEN, width=3),
+            marker=dict(size=10, color=GREEN),
         ))
+        # Dollar labels on actual gross
+        for i, m in enumerate(months_sorted):
+            _is_cur = m == _cur_m_chart and _is_partial
+            _lbl = f"${_actual_gross[i]:,.0f}" + (f" ({_day_of_month}d)" if _is_cur else "")
+            _clr = GRAY if _is_cur else GREEN
+            proj_chart.add_annotation(
+                x=m, y=_actual_gross[i], text=_lbl, showarrow=False,
+                font=dict(size=11, color=_clr, family="Arial Bold"),
+                yshift=18,
+            )
+
+        # ── Net Revenue: solid orange for actual ──
+        _actual_net = [monthly_net_revenue.get(m, 0) for m in months_sorted]
         proj_chart.add_trace(go.Scatter(
-            name="Actual Net Revenue", x=months_sorted,
-            y=[monthly_net_revenue.get(m, 0) for m in months_sorted],
-            mode="lines+markers", line=dict(color=ORANGE, width=3), marker=dict(size=8),
+            name="Net Revenue (Actual)", x=list(months_sorted), y=_actual_net,
+            mode="lines+markers", line=dict(color=ORANGE, width=2),
+            marker=dict(size=8, color=ORANGE),
         ))
 
-        last_month_dt = pd.Period(months_sorted[-1], freq="M")
-        proj_months = [(last_month_dt + i).strftime("%Y-%m") for i in range(1, 4)]
-
+        # ── Projected gross: dashed green with diamond markers ──
+        _proj_x = [_last_complete] + _proj_months
+        _proj_y_gross = [monthly_sales.get(_last_complete, 0)] + _proj_sales_vals
         proj_chart.add_trace(go.Scatter(
-            name="Projected Sales",
-            x=[months_sorted[-1]] + proj_months,
-            y=[monthly_sales.get(months_sorted[-1], 0)] + list(np.maximum(analytics_projections["proj_sales"], 0)),
+            name="Gross Sales (Projected)", x=_proj_x, y=_proj_y_gross,
             mode="lines+markers", line=dict(color=GREEN, width=3, dash="dash"),
-            marker=dict(size=8, symbol="diamond"),
+            marker=dict(size=10, symbol="diamond", color=GREEN,
+                        line=dict(color=GREEN, width=2)),
         ))
+        # Dollar labels on projected gross
+        for i, pm in enumerate(_proj_months):
+            proj_chart.add_annotation(
+                x=pm, y=_proj_sales_vals[i], text=f"${_proj_sales_vals[i]:,.0f}",
+                showarrow=False, font=dict(size=11, color=GREEN, family="Arial Bold"),
+                yshift=18,
+            )
+
+        # ── Projected net: dashed orange ──
+        _proj_y_net = [monthly_net_revenue.get(_last_complete, 0)] + _proj_net_vals
         proj_chart.add_trace(go.Scatter(
-            name="Projected Net Revenue",
-            x=[months_sorted[-1]] + proj_months,
-            y=[monthly_net_revenue.get(months_sorted[-1], 0)] + list(np.maximum(analytics_projections["proj_net"], 0)),
-            mode="lines+markers", line=dict(color=ORANGE, width=3, dash="dash"),
-            marker=dict(size=8, symbol="diamond"),
+            name="Net Revenue (Projected)", x=_proj_x, y=_proj_y_net,
+            mode="lines+markers", line=dict(color=ORANGE, width=2, dash="dash"),
+            marker=dict(size=8, symbol="diamond", color=ORANGE),
         ))
 
-        # Confidence band
-        proj_sales_arr = analytics_projections["proj_sales"]
-        std_dev = analytics_projections.get("residual_std", np.std([monthly_sales.get(m, 0) for m in months_sorted]))
-        upper = np.maximum(proj_sales_arr + std_dev, 0)
-        lower = np.maximum(proj_sales_arr - std_dev, 0)
+        # ── Confidence band on projected months ──
+        _std = analytics_projections.get("residual_std", 0)
+        _upper = list(np.maximum(np.array(_proj_sales_vals) + _std, 0))
+        _lower = list(np.maximum(np.array(_proj_sales_vals) - _std, 0))
         proj_chart.add_trace(go.Scatter(
-            name="Upper Bound", x=proj_months, y=list(upper),
-            mode="lines", line=dict(width=0), showlegend=False,
+            x=_proj_months, y=_upper, mode="lines", line=dict(width=0),
+            showlegend=False, hoverinfo="skip",
         ))
         proj_chart.add_trace(go.Scatter(
-            name="Confidence Range", x=proj_months, y=list(lower),
-            mode="lines", line=dict(width=0), fill="tonexty", fillcolor="rgba(46,204,113,0.15)",
+            name="Confidence Range", x=_proj_months, y=_lower,
+            mode="lines", line=dict(width=0), fill="tonexty",
+            fillcolor="rgba(46,204,113,0.12)", hoverinfo="skip",
         ))
-        # Add PROJECTED annotation on forecast area
+
+        # ── Partial month pace estimate (faint dashed line to full-month est) ──
+        if _is_partial:
+            _partial_sales = monthly_sales.get(_cur_m_chart, 0)
+            _dims = _cal_chart.monthrange(_dt_chart.now().year, _dt_chart.now().month)[1]
+            _est_full = _partial_sales / _day_of_month * _dims if _day_of_month > 0 else 0
+            proj_chart.add_trace(go.Scatter(
+                name=f"March pace (~${_est_full:,.0f})",
+                x=[_cur_m_chart, _cur_m_chart], y=[_partial_sales, _est_full],
+                mode="lines+markers",
+                line=dict(color=CYAN, width=2, dash="dot"),
+                marker=dict(size=[0, 8], symbol=["circle", "star"], color=CYAN),
+            ))
+            proj_chart.add_annotation(
+                x=_cur_m_chart, y=_est_full,
+                text=f"Pace: ~${_est_full:,.0f}", showarrow=False,
+                font=dict(size=10, color=CYAN), yshift=15,
+            )
+
+        # ── Vertical divider ──
+        proj_chart.add_vline(x=_last_complete, line=dict(color=GRAY, width=1, dash="dot"))
         proj_chart.add_annotation(
-            x=proj_months[1], y=max(np.maximum(analytics_projections["proj_sales"], 0)) * 1.08,
-            text="PROJECTED", showarrow=False,
-            font=dict(size=14, color=ORANGE, family="Arial Black"),
-            bgcolor="rgba(0,0,0,0.5)", borderpad=4,
+            x=_complete_months[len(_complete_months) // 2], y=1.05, yref="paper",
+            text="ACTUAL", showarrow=False,
+            font=dict(size=13, color=GREEN, family="Arial Black"),
         )
-    make_chart(proj_chart, 380)
-    proj_chart.update_layout(title="Revenue Projection (Linear Regression, 3-Month Forecast)",
-        xaxis_title="Month", yaxis_title="Amount ($)")
+        proj_chart.add_annotation(
+            x=_proj_months[1], y=1.05, yref="paper",
+            text="PROJECTED", showarrow=False,
+            font=dict(size=13, color=CYAN, family="Arial Black"),
+        )
+
+        # ── R² confidence ──
+        _r2 = analytics_projections.get("r2_sales", 0)
+        _conf = "High" if _r2 > 0.7 else "Moderate" if _r2 > 0.4 else "Low"
+        proj_chart.add_annotation(
+            x=0.01, y=0.98, xref="paper", yref="paper",
+            text=f"Model confidence: R²={_r2:.2f} ({_conf})",
+            showarrow=False, font=dict(size=10, color=GRAY),
+            bgcolor="rgba(0,0,0,0.5)", borderpad=4, xanchor="left",
+        )
+
+    make_chart(proj_chart, 420)
+    proj_chart.update_layout(
+        title="Revenue Projection (3-Month Forecast)",
+        xaxis_title="Month", yaxis_title="Amount ($)",
+    )
 
 
     # --- TAB 4: SHIPPING CHARTS ---
@@ -11033,27 +11146,34 @@ def build_tab6_valuation():
     ))
     # Projected revenue with confidence bands
     if "proj_sales" in analytics_projections and len(months_sorted) >= 3:
-        # Generate future month labels
+        # Start projections from last COMPLETE month
         from datetime import datetime
-        _last_period = pd.Period(months_sorted[-1], freq="M")
+        _cur_m_val = datetime.now().strftime("%Y-%m")
+        _last_complete_val = months_sorted[-1]
+        if _last_complete_val == _cur_m_val and datetime.now().day < 25 and len(months_sorted) >= 2:
+            _last_complete_val = months_sorted[-2]
+        _last_complete_rev = monthly_sales.get(_last_complete_val, 0)
+
+        _last_period = pd.Period(_last_complete_val, freq="M")
         future_months = [str(_last_period + i) for i in range(1, 13)]
-        _proj_x = [months_sorted[-1]] + future_months
+        _proj_x = [_last_complete_val] + future_months
         _proj_sales = analytics_projections["proj_sales"]
         _residual_std = analytics_projections.get("residual_std", 0)
 
         # Extend projections to 12 months using linear trend
         _lr_sales_trend = analytics_projections.get("sales_trend", 0)
-        _base_idx = len(months_sorted)
+        _complete_months = [m for m in months_sorted if m != _cur_m_val or datetime.now().day >= 25]
+        _base_idx = len(_complete_months)
         _proj_12 = [max(0, val_monthly_run_rate + _lr_sales_trend * (i - _base_idx + 1)) for i in range(_base_idx, _base_idx + 12)]
 
         proj_fig.add_trace(go.Scatter(
-            x=_proj_x, y=[rev_vals[-1]] + _proj_12,
+            x=_proj_x, y=[_last_complete_rev] + _proj_12,
             mode="lines+markers", name="Projected Revenue",
             line=dict(color=CYAN, width=2, dash="dash"), marker=dict(size=5),
         ))
         # Confidence bands (widening)
-        _upper = [rev_vals[-1]] + [max(0, _proj_12[i] + _residual_std * (i + 1) * 0.5) for i in range(12)]
-        _lower = [rev_vals[-1]] + [max(0, _proj_12[i] - _residual_std * (i + 1) * 0.5) for i in range(12)]
+        _upper = [_last_complete_rev] + [max(0, _proj_12[i] + _residual_std * (i + 1) * 0.5) for i in range(12)]
+        _lower = [_last_complete_rev] + [max(0, _proj_12[i] - _residual_std * (i + 1) * 0.5) for i in range(12)]
         proj_fig.add_trace(go.Scatter(
             x=_proj_x + _proj_x[::-1], y=_upper + _lower[::-1],
             fill="toself", fillcolor="rgba(0,212,255,0.09)", line=dict(color="rgba(0,0,0,0)"),
@@ -11975,6 +12095,27 @@ def _generate_actions():
 def _detect_patterns():
     """Detect cross-source intelligence patterns."""
     patterns = []
+
+    # 0. Current month run-rate vs last month
+    from datetime import datetime as _dt_pat
+    import calendar as _cal_pat
+    _cur_m_pat = _dt_pat.now().strftime("%Y-%m")
+    _day_pat = _dt_pat.now().day
+    if _cur_m_pat in months_sorted and _day_pat >= 3:
+        _cur_sales = monthly_sales.get(_cur_m_pat, 0)
+        _days_in_m = _cal_pat.monthrange(_dt_pat.now().year, _dt_pat.now().month)[1]
+        _pace = _cur_sales / _day_pat * _days_in_m
+        _complete_m = [m for m in months_sorted if m != _cur_m_pat]
+        _last_full = monthly_sales.get(_complete_m[-1], 0) if _complete_m else 0
+        _vs_last = ((_pace - _last_full) / _last_full * 100) if _last_full > 0 else 0
+        _direction = "ahead of" if _vs_last > 0 else "behind"
+        patterns.append({
+            "type": "Opportunity" if _vs_last >= 0 else "Warning",
+            "insight": f"March pace: ${_cur_sales:,.0f} through {_day_pat} days → on track for ~${_pace:,.0f}/month. "
+                       f"That's {abs(_vs_last):.0f}% {_direction} last month (${_last_full:,.0f}). "
+                       f"Daily avg: ${_cur_sales / _day_pat:,.0f}/day.",
+            "sources": ["Etsy Sales (Live)"],
+        })
 
     # 1. Inventory spend → revenue correlation
     if len(months_sorted) >= 3:
