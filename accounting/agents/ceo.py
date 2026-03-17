@@ -393,6 +393,36 @@ def _check_cross_source(pipeline) -> AgentResult:
                       f"Cross-source reconciliation OK ({len(recon.matched)} matched)")
 
 
+def _check_refund_assignments(pipeline) -> AgentResult:
+    """Agent 22: Alert if any refunds are unassigned (need TJ or Braden)."""
+    import sys
+    mod = sys.modules.get("etsy_dashboard") or sys.modules.get("etsy_dashboard_mono")
+    if not mod:
+        return AgentResult("RefundAssignment", True, "info", "Dashboard not loaded")
+
+    assignments = getattr(mod, "_refund_assignments", {})
+    rdf = getattr(mod, "refund_df", None)
+    if rdf is None or not len(rdf):
+        return AgentResult("RefundAssignment", True, "info", "No refund data")
+
+    extract = getattr(mod, "_extract_order_num", None)
+    if not extract:
+        return AgentResult("RefundAssignment", True, "info", "Extract function unavailable")
+
+    unassigned = []
+    for _, row in rdf.iterrows():
+        order_key = extract(row.get("Title", ""))
+        if order_key and assignments.get(order_key, "") == "":
+            unassigned.append(order_key)
+
+    if unassigned:
+        return AgentResult("RefundAssignment", False, "warning",
+                          f"{len(unassigned)} refund(s) need TJ or Braden assigned",
+                          f"Unassigned: {', '.join(unassigned[:5])}")
+    return AgentResult("RefundAssignment", True, "info",
+                      "All refunds assigned")
+
+
 def _check_config_completeness(pipeline) -> AgentResult:
     """Agent 21: Missing config values that affect calculations."""
     import sys
@@ -430,6 +460,7 @@ _NEW_AGENTS = [
     _check_shipping_cost,            # 19
     _check_cross_source,             # 20
     _check_config_completeness,      # 21
+    _check_refund_assignments,       # 22
 ]
 
 # Lightweight agents for periodic checks (every 15 min)
@@ -438,17 +469,18 @@ _PERIODIC_AGENTS = [
     _check_cash_flow,
     _check_refund_rate,
     _check_cross_source,
+    _check_refund_assignments,
 ]
 
 
 class CEOAgent:
-    """Orchestrates all 21 validation agents."""
+    """Orchestrates all 22 validation agents."""
 
     def __init__(self):
         self._last_report: Optional[HealthReport] = None
 
     def run_startup_check(self, pipeline) -> HealthReport:
-        """Run ALL 21 agents at boot time."""
+        """Run ALL 22 agents at boot time."""
         report = HealthReport()
 
         # Existing agents (1-7) — get results from pipeline

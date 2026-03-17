@@ -3156,6 +3156,18 @@ def _build_chat_context():
     lines.append("\n=== REFUNDS ===")
     refund_rate = len(refund_df) / len(sales_df) * 100 if len(sales_df) else 0
     lines.append(f"Total refunds: ${total_refunds:,.2f} ({len(refund_df)} orders, {refund_rate:.1f}% rate)")
+    # Refund assignments (TJ / Braden / Cancelled)
+    _tj_count = sum(1 for v in _refund_assignments.values() if v == "TJ")
+    _br_count = sum(1 for v in _refund_assignments.values() if v == "Braden")
+    _ca_count = sum(1 for v in _refund_assignments.values() if v == "Cancelled")
+    _unassigned = []
+    for _, _rr in refund_df.iterrows():
+        _rkey = _extract_order_num(_rr["Title"])
+        if _rkey and _refund_assignments.get(_rkey, "") == "":
+            _unassigned.append(_rkey)
+    lines.append(f"Refund responsibility: TJ={_tj_count}, Braden={_br_count}, Cancelled={_ca_count}")
+    if _unassigned:
+        lines.append(f"*** {len(_unassigned)} refund(s) UNASSIGNED — need TJ or Braden assigned: {', '.join(_unassigned[:5])}")
 
     # Bank / Cash
     lines.append("\n=== BANK & CASH ===")
@@ -13818,13 +13830,14 @@ def build_tab3_financials():
                 html.Span(f"${abs(r['Net_Clean']):,.2f}", style={"color": RED, "fontFamily": "monospace", "width": "80px", "textAlign": "right", "fontSize": "12px"}),
                 dbc.Select(
                     id={"type": "refund-assignee", "index": (_extract_order_num(r['Title']) or f"row-{i}")},
-                    options=[{"label": "—", "value": ""}, {"label": "TJ", "value": "TJ"}, {"label": "Braden", "value": "Braden"}],
+                    options=[{"label": "—", "value": ""}, {"label": "TJ", "value": "TJ"}, {"label": "Braden", "value": "Braden"}, {"label": "Cancelled", "value": "Cancelled"}],
                     value=_refund_assignments.get(_extract_order_num(r['Title']) or f"row-{i}", ""),
                     style={"width": "90px", "height": "26px", "fontSize": "11px", "padding": "2px 4px",
                            "backgroundColor": "#1a1a2e", "color": WHITE,
                            "border": f"1px solid {CYAN}" if _refund_assignments.get(_extract_order_num(r['Title']) or f"row-{i}") == "TJ"
                                      else (f"1px solid {GREEN}" if _refund_assignments.get(_extract_order_num(r['Title']) or f"row-{i}") == "Braden"
-                                           else "1px solid #ffffff20"),
+                                           else (f"1px solid {ORANGE}" if _refund_assignments.get(_extract_order_num(r['Title']) or f"row-{i}") == "Cancelled"
+                                                 else "1px solid #ffffff20")),
                            "borderRadius": "4px", "marginLeft": "8px"},
                 ),
             ], style={"display": "flex", "alignItems": "center", "padding": "3px 0", "borderBottom": "1px solid #ffffff08"})
@@ -18074,6 +18087,8 @@ def save_refund_assignee(value, comp_id):
         base["border"] = f"1px solid {CYAN}"
     elif value == "Braden":
         base["border"] = f"1px solid {GREEN}"
+    elif value == "Cancelled":
+        base["border"] = f"1px solid {ORANGE}"
     else:
         base["border"] = "1px solid #ffffff20"
     return base
