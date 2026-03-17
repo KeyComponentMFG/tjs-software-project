@@ -290,6 +290,12 @@ else:
 
 # Auto-calculate Etsy balance from CSV deposit titles instead of stale config value
 import re as _re_mod
+
+def _extract_order_num(title: str) -> str | None:
+    """Extract 'Order #XXXXX' from a refund title string."""
+    m = _re_mod.search(r"Order #\d+", str(title))
+    return m.group(0) if m else None
+
 _etsy_deposit_total = 0.0
 _deposit_rows = DATA[DATA["Type"] == "Deposit"]
 for _, _dr in _deposit_rows.iterrows():
@@ -950,6 +956,16 @@ try:
     _dismissed_raw = _get_cfg("dismissed_ceo_alerts", [])
     if isinstance(_dismissed_raw, list):
         _dismissed_alerts = set(_dismissed_raw)
+except Exception:
+    pass
+
+# Load refund shipped-by assignments (TJ / Braden) from Supabase config
+_refund_assignments = {}
+try:
+    from supabase_loader import get_config_value as _get_cfg2
+    _ra_raw = _get_cfg2("refund_assignments", {})
+    if isinstance(_ra_raw, dict):
+        _refund_assignments = _ra_raw
 except Exception:
     pass
 
@@ -13800,8 +13816,19 @@ def build_tab3_financials():
                 html.Span(f"{r['Date']}", style={"color": GRAY, "width": "120px", "display": "inline-block", "fontSize": "12px"}),
                 html.Span(f"{r['Title'][:60]}", style={"color": WHITE, "flex": "1", "fontSize": "12px"}),
                 html.Span(f"${abs(r['Net_Clean']):,.2f}", style={"color": RED, "fontFamily": "monospace", "width": "80px", "textAlign": "right", "fontSize": "12px"}),
-            ], style={"display": "flex", "padding": "3px 0", "borderBottom": "1px solid #ffffff08"})
-            for _, r in refund_df.sort_values("Date_Parsed", ascending=False).iterrows()
+                dbc.Select(
+                    id={"type": "refund-assignee", "index": (_extract_order_num(r['Title']) or f"row-{i}")},
+                    options=[{"label": "—", "value": ""}, {"label": "TJ", "value": "TJ"}, {"label": "Braden", "value": "Braden"}],
+                    value=_refund_assignments.get(_extract_order_num(r['Title']) or f"row-{i}", ""),
+                    style={"width": "90px", "height": "26px", "fontSize": "11px", "padding": "2px 4px",
+                           "backgroundColor": "#1a1a2e", "color": WHITE,
+                           "border": f"1px solid {CYAN}" if _refund_assignments.get(_extract_order_num(r['Title']) or f"row-{i}") == "TJ"
+                                     else (f"1px solid {GREEN}" if _refund_assignments.get(_extract_order_num(r['Title']) or f"row-{i}") == "Braden"
+                                           else "1px solid #ffffff20"),
+                           "borderRadius": "4px", "marginLeft": "8px"},
+                ),
+            ], style={"display": "flex", "alignItems": "center", "padding": "3px 0", "borderBottom": "1px solid #ffffff08"})
+            for i, (_, r) in enumerate(refund_df.sort_values("Date_Parsed", ascending=False).iterrows())
         ], ORANGE),
 
         # Missing statements
@@ -18021,6 +18048,35 @@ def mark_receipt_verified(n_clicks):
          "cursor": "default", "marginLeft": "4px", "fontWeight": "bold"},
         True,
     )
+
+
+# ── Refund assignee (TJ / Braden) callback ──────────────────────────────────
+
+@app.callback(
+    Output({"type": "refund-assignee", "index": MATCH}, "style"),
+    Input({"type": "refund-assignee", "index": MATCH}, "value"),
+    State({"type": "refund-assignee", "index": MATCH}, "id"),
+    prevent_initial_call=True,
+)
+def save_refund_assignee(value, comp_id):
+    """Save who shipped/made a refunded order (TJ or Braden)."""
+    order_key = comp_id["index"]
+    _refund_assignments[order_key] = value or ""
+    try:
+        from supabase_loader import save_config_value
+        save_config_value("refund_assignments", _refund_assignments)
+    except Exception:
+        pass
+    # Color the dropdown border based on assignment
+    base = {"width": "90px", "height": "26px", "fontSize": "11px", "padding": "2px 4px",
+            "backgroundColor": "#1a1a2e", "color": WHITE, "borderRadius": "4px", "marginLeft": "8px"}
+    if value == "TJ":
+        base["border"] = f"1px solid {CYAN}"
+    elif value == "Braden":
+        base["border"] = f"1px solid {GREEN}"
+    else:
+        base["border"] = "1px solid #ffffff20"
+    return base
 
 
 # ── Run ──────────────────────────────────────────────────────────────────────
