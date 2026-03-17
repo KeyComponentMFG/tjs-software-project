@@ -44,10 +44,10 @@
     "bank_net_cash": -20.26,
     "etsy_balance": 0.00,
     "expense_receipt_verified": 47.97,
-    "expense_bank_recorded": 98.95,
-    "expense_gap": 50.98,
-    "expense_missing_count": 3,
+    "expense_bank_recorded": 66.96,
+    "expense_gap": 18.99,
+    "expense_missing_count": 1,
     "expense_matched_count": 2,
-    "_notes": "fees=abs(-0.20-2.93-1.98-0.20-3.58-2.42)=11.31. ship=4.75+5.25=10.00. net=100-11.31-10.00=78.69. Amazon#1(35.47) matched by receipt. Amazon#2(18.99) NOT matched — receipt date June 1 is 25 days after bank date May 7, exceeds ±14 day tolerance. Hobby Lobby(12.50) matched. Subscriptions(9.99) + Shipping(22.00) have no receipt source → always missing. Verified=35.47+12.50=47.97. Gap=98.95-47.97=50.98. Missing: Amazon#2, Subscriptions, Shipping."
+    "_notes": "fees=abs(-0.20-2.93-1.98-0.20-3.58-2.42)=11.31. ship=4.75+5.25=10.00. net=100-11.31-10.00=78.69. Amazon#1(35.47) matched by receipt. Amazon#2(18.99) NOT matched — receipt date June 1 is 25 days after bank date May 7, exceeds ±14 day tolerance. Hobby Lobby(12.50) matched. Subscriptions(9.99) and Shipping(22.00) are now SKIPPED (not receipt-matchable categories). Verified=35.47+12.50=47.97. Bank_recorded=35.47+18.99+12.50=66.96. Gap=66.96-47.97=18.99. Missing: Amazon#2 only."
   }
 }

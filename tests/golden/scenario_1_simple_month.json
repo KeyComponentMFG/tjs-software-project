@@ -46,10 +46,10 @@
     "bank_net_cash": 40.45,
     "etsy_balance": 1.00,
     "expense_receipt_verified": 23.79,
-    "expense_bank_recorded": 32.29,
-    "expense_gap": 8.50,
-    "expense_missing_count": 1,
+    "expense_bank_recorded": 23.79,
+    "expense_gap": 0.00,
+    "expense_missing_count": 0,
     "expense_matched_count": 1,
-    "_notes": "gross=40+25+35=100. fees=abs(-0.20*3 -2.60-1.63-2.28 -1.76-1.10-1.54)=11.51. ship=5.25+4.50+5.00=14.75. net=100-11.51-14.75=73.74. deposit_parsed=72.74. balance=73.74-72.74=1.00. bank_debits=23.79+8.50=32.29. Amazon matched by receipt, Shipping missing."
+    "_notes": "gross=40+25+35=100. fees=abs(-0.20*3 -2.60-1.63-2.28 -1.76-1.10-1.54)=11.51. ship=5.25+4.50+5.00=14.75. net=100-11.51-14.75=73.74. deposit_parsed=72.74. balance=73.74-72.74=1.00. bank_debits=23.79+8.50=32.29. Amazon matched by receipt, Shipping SKIPPED (verified by Etsy CSV)."
   }
 }

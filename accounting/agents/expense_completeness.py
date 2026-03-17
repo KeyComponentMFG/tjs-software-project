@@ -28,6 +28,11 @@ SKIP_CATEGORIES = {
     "Other Deposit",
     "Etsy Fees",           # verified by Etsy CSV
     "Business Credit Card",  # payment to CC, not the purchase itself
+    "Shipping",            # verified by Etsy CSV shipping labels
+    "Subscriptions",       # recurring charges — bank statement is the receipt
+    "Personal",            # not a business expense — doesn't need receipt
+    "Pending",             # pending transactions — not finalized yet
+    "Uncategorized",       # needs categorization first, not receipt matching
 }
 
 # Bank category → which receipt/invoice sources can match it
@@ -98,8 +103,6 @@ class ExpenseCompletenessAgent:
             pool = []
             for inv in invoices:
                 if inv.get("source") not in sources:
-                    continue
-                if "Gigi" in inv.get("file", ""):
                     continue
                 pool.append({
                     "amount": Decimal(str(inv.get("grand_total", 0))),

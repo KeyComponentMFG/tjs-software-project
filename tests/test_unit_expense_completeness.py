@@ -76,8 +76,14 @@ class TestSkipCategories:
     def test_amazon_not_skipped(self):
         assert "Amazon Inventory" not in SKIP_CATEGORIES
 
-    def test_shipping_not_skipped(self):
-        assert "Shipping" not in SKIP_CATEGORIES
+    def test_shipping_skipped(self):
+        assert "Shipping" in SKIP_CATEGORIES
+
+    def test_subscriptions_skipped(self):
+        assert "Subscriptions" in SKIP_CATEGORIES
+
+    def test_personal_skipped(self):
+        assert "Personal" in SKIP_CATEGORIES
 
 
 # ── Scenario 1: 1 Matched, 1 Missing ──
@@ -99,21 +105,20 @@ class TestScenario1ExpenseCompleteness:
         assert match.amount_diff <= Decimal("0.02")
 
     def test_missing_count(self):
-        assert len(self.result.missing_receipts) == 1
+        assert len(self.result.missing_receipts) == 0
 
-    def test_missing_is_shipping(self):
-        missing = self.result.missing_receipts[0]
-        assert missing.bank_category == "Shipping"
-        assert_money(float(missing.amount), 8.50, "missing_amount")
+    def test_shipping_is_skipped(self):
+        skipped_cats = {e.category for e in self.result.skipped_transactions}
+        assert "Shipping" in skipped_cats
 
     def test_gap(self):
-        assert_money(float(self.result.gap_total), 8.50, "gap_total")
+        assert_money(float(self.result.gap_total), 0.00, "gap_total")
 
     def test_verified_total(self):
         assert_money(float(self.result.receipt_verified_total), 23.79, "verified")
 
     def test_bank_recorded_total(self):
-        assert_money(float(self.result.bank_recorded_total), 32.29, "bank_recorded")
+        assert_money(float(self.result.bank_recorded_total), 23.79, "bank_recorded")
 
     def test_gap_equation(self):
         """gap = bank_recorded - verified."""
@@ -155,13 +160,14 @@ class TestScenario5ExpenseCompleteness:
         assert len(self.result.receipt_matches) == 2
 
     def test_missing_count(self):
-        assert len(self.result.missing_receipts) == 3
+        assert len(self.result.missing_receipts) == 1
 
     def test_verified_total(self):
         assert_money(float(self.result.receipt_verified_total), 47.97, "verified")
 
     def test_gap(self):
-        assert_money(float(self.result.gap_total), 50.98, "gap")
+        # Only Amazon $18.99 is unmatched (Shipping/Subscriptions are skipped)
+        assert_money(float(self.result.gap_total), 18.99, "gap")
 
     def test_missing_sorted_by_priority(self):
         """Missing receipts should be sorted by priority_score descending."""
@@ -186,8 +192,9 @@ class TestScenario5ExpenseCompleteness:
         by_cat = self.result.by_category
         assert "Amazon Inventory" in by_cat
         assert "Craft Supplies" in by_cat
-        assert "Subscriptions" in by_cat
-        assert "Shipping" in by_cat
+        # Shipping and Subscriptions are now skipped — not in expense categories
+        assert "Subscriptions" not in by_cat
+        assert "Shipping" not in by_cat
 
     def test_category_gap_sums(self):
         """Sum of per-category gaps should equal total gap."""
