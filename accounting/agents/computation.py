@@ -210,10 +210,13 @@ class ComputationAgent:
                                                  "pre_capone_deposits + bank_total_deposits",
                                                  len(bank_dep_entries),
                                                  notes="Includes estimated pre-CapOne deposits")
-            etsy_balance_calculated = etsy_net_earned - etsy_total_deposited
+            # $18.44 Amazon refund deposited to Etsy Payments — not from Etsy sales
+            _non_etsy_adjustments = Decimal("18.44")
+            etsy_balance_calculated = etsy_net_earned - etsy_total_deposited + _non_etsy_adjustments
             m["etsy_balance_calculated"] = _metric("etsy_balance_calculated", etsy_balance_calculated,
                                                     Confidence.ESTIMATED,
-                                                    "etsy_net_earned - etsy_total_deposited", 0)
+                                                    "etsy_net_earned - etsy_total_deposited + non_etsy_adjustments", 0,
+                                                    notes="Includes $18.44 Amazon refund (non-Etsy)")
             etsy_csv_gap = etsy_balance_calculated - etsy_balance
             m["etsy_csv_gap"] = _metric("etsy_csv_gap", etsy_csv_gap, Confidence.ESTIMATED,
                                          "etsy_balance_calculated - etsy_balance", 0,

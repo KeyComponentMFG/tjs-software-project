@@ -944,7 +944,11 @@ etsy_net = etsy_net_earned
 etsy_net_margin = (etsy_net / gross_sales * 100) if gross_sales else 0
 # etsy_pre_capone_deposits and etsy_balance loaded from config.json above
 etsy_total_deposited = etsy_pre_capone_deposits + bank_total_deposits
-etsy_balance_calculated = etsy_net_earned - etsy_total_deposited
+# Known non-Etsy adjustments that affect the Etsy Payments balance
+# $18.44 Amazon refund deposited to Etsy Payments — not from Etsy sales
+_known_non_etsy_adjustments = 18.44
+
+etsy_balance_calculated = etsy_net_earned - etsy_total_deposited + _known_non_etsy_adjustments
 etsy_csv_gap = round(etsy_balance_calculated - etsy_balance, 2)
 
 # Startup self-check: verify itemized formula matches direct sum
