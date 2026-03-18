@@ -13568,6 +13568,91 @@ def build_tab3_financials():
     """Tab 3 - Financials: Full P&L + Cash Flow + Shipping + Monthly + Fees + Ledger"""
     net_fees_after_credits = total_fees_gross - abs(total_credits)
 
+    # Build order->product map for refund display
+    _refund_product_map = {}
+    _all_data = _DATA_ALL if _DATA_ALL is not None else DATA
+    _all_fees = _all_data[_all_data["Type"] == "Fee"]
+    for _, _fr in _all_fees.iterrows():
+        _ftitle = str(_fr.get("Title", ""))
+        _finfo = str(_fr.get("Info", ""))
+        if _ftitle.startswith("Transaction fee:") and "Shipping" not in _ftitle:
+            _prod = _ftitle.replace("Transaction fee: ", "").strip()
+            if _finfo and _finfo != "nan":
+                _refund_product_map[_finfo] = _prod
+
+    # Refund accountability totals
+    _rtj_n = _rtj_amt = _rbr_n = _rbr_amt = _rca_n = _rca_amt = 0
+    for _, _rr in refund_df.iterrows():
+        _rkey = _extract_order_num(_rr.get("Title", ""))
+        _rassign = _refund_assignments.get(_rkey, "") if _rkey else ""
+        _rval = abs(_rr["Net_Clean"])
+        if _rassign == "TJ":
+            _rtj_n += 1; _rtj_amt += _rval
+        elif _rassign == "Braden":
+            _rbr_n += 1; _rbr_amt += _rval
+        elif _rassign == "Cancelled":
+            _rca_n += 1; _rca_amt += _rval
+
+    # Build refund section rows (before return statement)
+    _refund_section_rows = [
+        html.Div([
+            html.Div([
+                html.Span("Total Refunded", style={"color": GRAY, "fontSize": "11px"}),
+                html.Div(f"${total_refunds:,.2f}", style={"color": RED, "fontSize": "20px", "fontWeight": "bold", "fontFamily": "monospace"}),
+            ], style={"textAlign": "center", "flex": "1"}),
+            html.Div([
+                html.Span("Count", style={"color": GRAY, "fontSize": "11px"}),
+                html.Div(f"{len(refund_df)}", style={"color": ORANGE, "fontSize": "20px", "fontWeight": "bold", "fontFamily": "monospace"}),
+            ], style={"textAlign": "center", "flex": "1"}),
+            html.Div([
+                html.Span("Avg Refund", style={"color": GRAY, "fontSize": "11px"}),
+                html.Div(f"${total_refunds / len(refund_df) if len(refund_df) else 0:,.2f}", style={"color": ORANGE, "fontSize": "20px", "fontWeight": "bold", "fontFamily": "monospace"}),
+            ], style={"textAlign": "center", "flex": "1"}),
+        ], style={"display": "flex", "gap": "8px", "padding": "10px", "backgroundColor": "#ffffff06", "borderRadius": "8px", "marginBottom": "4px"}),
+    ]
+    if len(refund_df) > 0:
+        _refund_section_rows.append(html.Div([
+            html.Span(f"TJ: {_rtj_n} (${_rtj_amt:,.2f})", style={"color": CYAN, "fontSize": "12px", "fontWeight": "bold"}),
+            html.Span("  |  ", style={"color": DARKGRAY}),
+            html.Span(f"Braden: {_rbr_n} (${_rbr_amt:,.2f})", style={"color": GREEN, "fontSize": "12px", "fontWeight": "bold"}),
+            html.Span("  |  ", style={"color": DARKGRAY}),
+            html.Span(f"Cancelled: {_rca_n} (${_rca_amt:,.2f})", style={"color": ORANGE, "fontSize": "12px"}),
+        ], style={"textAlign": "center", "padding": "6px", "marginBottom": "10px"}))
+    for i, (_, r) in enumerate(refund_df.sort_values("Date_Parsed", ascending=False).iterrows()):
+        _rkey = _extract_order_num(r['Title']) or f"row-{i}"
+        _rprod = _refund_product_map.get(_extract_order_num(r['Title']), "")
+        _rassignee = _refund_assignments.get(_rkey, "")
+        _rstore = r.get('Store', 'keycomponentmfg')
+        _rborder = (f"1px solid {CYAN}" if _rassignee == "TJ"
+                    else (f"1px solid {GREEN}" if _rassignee == "Braden"
+                          else (f"1px solid {ORANGE}" if _rassignee == "Cancelled"
+                                else "1px solid #ffffff20")))
+        _store_badge = ([html.Span(f" | {_rstore}", style={"color": STORE_COLORS.get(_rstore, GRAY),
+                         "fontSize": "10px", "fontWeight": "bold"})]
+                        if _rstore != "keycomponentmfg" else [])
+        _refund_section_rows.append(html.Div([
+            html.Span(f"{r['Date']}", style={"color": GRAY, "width": "90px", "display": "inline-block", "fontSize": "11px"}),
+            html.Div([
+                html.Div(_rprod[:45] if _rprod else r['Title'][:45],
+                         style={"color": WHITE, "fontSize": "12px", "lineHeight": "1.2"}),
+                html.Div([
+                    html.Span(_extract_order_num(r['Title']) or "", style={"color": DARKGRAY, "fontSize": "10px"}),
+                ] + _store_badge, style={"display": "flex", "gap": "4px"}),
+            ], style={"flex": "1"}),
+            html.Span(f"${abs(r['Net_Clean']):,.2f}", style={"color": RED, "fontFamily": "monospace",
+                       "width": "70px", "textAlign": "right", "fontSize": "12px"}),
+            dbc.Select(
+                id={"type": "refund-assignee", "index": _rkey},
+                options=[{"label": "—", "value": ""}, {"label": "TJ", "value": "TJ"},
+                         {"label": "Braden", "value": "Braden"}, {"label": "Cancelled", "value": "Cancelled"}],
+                value=_rassignee,
+                style={"width": "90px", "height": "26px", "fontSize": "11px", "padding": "2px 4px",
+                       "backgroundColor": "#1a1a2e", "color": WHITE, "border": _rborder,
+                       "borderRadius": "4px", "marginLeft": "8px"},
+            ),
+        ], style={"display": "flex", "alignItems": "center", "padding": "4px 0",
+                   "borderBottom": "1px solid #ffffff08"}))
+
     # Shipping data needed
     usps_labels = ship_df[ship_df["Title"] == "USPS shipping label"]["Net_Clean"].abs()
     usps_min = usps_labels.min() if len(usps_labels) else 0
@@ -14197,45 +14282,7 @@ def build_tab3_financials():
         ], RED),
 
         # Refunds list
-        section("REFUNDS", [
-            html.Div([
-                html.Div([
-                    html.Span("Total Refunded", style={"color": GRAY, "fontSize": "11px"}),
-                    html.Div(f"${total_refunds:,.2f}",
-                             style={"color": RED, "fontSize": "20px", "fontWeight": "bold", "fontFamily": "monospace"}),
-                ], style={"textAlign": "center", "flex": "1"}),
-                html.Div([
-                    html.Span("Count", style={"color": GRAY, "fontSize": "11px"}),
-                    html.Div(f"{len(refund_df)}",
-                             style={"color": ORANGE, "fontSize": "20px", "fontWeight": "bold", "fontFamily": "monospace"}),
-                ], style={"textAlign": "center", "flex": "1"}),
-                html.Div([
-                    html.Span("Avg Refund", style={"color": GRAY, "fontSize": "11px"}),
-                    html.Div(f"${total_refunds / len(refund_df) if len(refund_df) else 0:,.2f}",
-                             style={"color": ORANGE, "fontSize": "20px", "fontWeight": "bold", "fontFamily": "monospace"}),
-                ], style={"textAlign": "center", "flex": "1"}),
-            ], style={"display": "flex", "gap": "8px", "padding": "10px",
-                       "backgroundColor": "#ffffff06", "borderRadius": "8px", "marginBottom": "10px"}),
-        ] + [
-            html.Div([
-                html.Span(f"{r['Date']}", style={"color": GRAY, "width": "120px", "display": "inline-block", "fontSize": "12px"}),
-                html.Span(f"{r['Title'][:60]}", style={"color": WHITE, "flex": "1", "fontSize": "12px"}),
-                html.Span(f"${abs(r['Net_Clean']):,.2f}", style={"color": RED, "fontFamily": "monospace", "width": "80px", "textAlign": "right", "fontSize": "12px"}),
-                dbc.Select(
-                    id={"type": "refund-assignee", "index": (_extract_order_num(r['Title']) or f"row-{i}")},
-                    options=[{"label": "—", "value": ""}, {"label": "TJ", "value": "TJ"}, {"label": "Braden", "value": "Braden"}, {"label": "Cancelled", "value": "Cancelled"}],
-                    value=_refund_assignments.get(_extract_order_num(r['Title']) or f"row-{i}", ""),
-                    style={"width": "90px", "height": "26px", "fontSize": "11px", "padding": "2px 4px",
-                           "backgroundColor": "#1a1a2e", "color": WHITE,
-                           "border": f"1px solid {CYAN}" if _refund_assignments.get(_extract_order_num(r['Title']) or f"row-{i}") == "TJ"
-                                     else (f"1px solid {GREEN}" if _refund_assignments.get(_extract_order_num(r['Title']) or f"row-{i}") == "Braden"
-                                           else (f"1px solid {ORANGE}" if _refund_assignments.get(_extract_order_num(r['Title']) or f"row-{i}") == "Cancelled"
-                                                 else "1px solid #ffffff20")),
-                           "borderRadius": "4px", "marginLeft": "8px"},
-                ),
-            ], style={"display": "flex", "alignItems": "center", "padding": "3px 0", "borderBottom": "1px solid #ffffff08"})
-            for i, (_, r) in enumerate(refund_df.sort_values("Date_Parsed", ascending=False).iterrows())
-        ], ORANGE),
+        section("REFUNDS", _refund_section_rows, ORANGE),
 
         # Missing statements
         section("MISSING STATEMENTS & RECEIPTS", [
