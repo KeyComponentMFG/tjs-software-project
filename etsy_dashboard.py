@@ -564,14 +564,15 @@ def _apply_store_filter(store="all"):
     order_count = len(sales_df)
     avg_order = gross_sales / order_count if order_count else 0
 
-    # For per-store views, compute Etsy-side profit (bank metrics stay unified)
-    if store != "all" and store:
-        global etsy_net, profit, profit_margin
-        etsy_net = gross_sales - total_fees - total_shipping_cost - total_marketing - total_refunds - total_taxes - total_buyer_fees
-        # Per-store "profit" = Etsy net minus proportional share of bank expenses
-        # For simplicity, use Etsy net as the store's contribution
-        profit = etsy_net
-        profit_margin = (profit / gross_sales * 100) if gross_sales else 0
+    # For per-store views: only override profit when there are multiple stores
+    # with actual data. Otherwise keep the real bank-derived profit from _cascade_reload.
+    if store != "all" and store and _DATA_ALL is not None:
+        _stores_with_data = _DATA_ALL[_DATA_ALL["Type"] == "Sale"]["Store"].nunique() if "Store" in _DATA_ALL.columns else 1
+        if _stores_with_data > 1:
+            global etsy_net, profit, profit_margin
+            etsy_net = gross_sales - total_fees - total_shipping_cost - total_marketing - total_refunds - total_taxes - total_buyer_fees
+            profit = etsy_net
+            profit_margin = (profit / gross_sales * 100) if gross_sales else 0
 
 
 # ── Pre-compute metrics ─────────────────────────────────────────────────────
