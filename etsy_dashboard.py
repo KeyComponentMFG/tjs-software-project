@@ -4697,30 +4697,33 @@ def _build_stale_data_banner():
 
 
 def _build_jarvis_auto_briefing():
-    """Build the auto-briefing text for Jarvis greeting."""
-    lines = []
+    """Build the auto-briefing text for Jarvis greeting.
+    Uses AI when available, falls back to static data."""
+
+    # Gather key metrics for briefing
+    _briefing_data = []
 
     # CEO findings
     if _ceo_health:
         for alert in _ceo_health.critical_alerts:
-            lines.append(f"X {alert.message}")
+            _briefing_data.append(f"CRITICAL: {alert.message}")
         for alert in _ceo_health.warning_alerts[:3]:
-            lines.append(f"! {alert.message}")
+            _briefing_data.append(f"WARNING: {alert.message}")
         if not _ceo_health.critical_alerts and not _ceo_health.warning_alerts:
-            lines.append("All validation checks passing.")
+            _briefing_data.append("All validation checks passing.")
 
     # Missing receipts
     try:
         if expense_missing_receipts:
             gap = expense_gap if expense_gap else 0
-            lines.append(f"! {len(expense_missing_receipts)} expenses missing receipts (${gap:,.0f} unverified).")
+            _briefing_data.append(f"{len(expense_missing_receipts)} expenses missing receipts (${gap:,.0f} unverified).")
     except NameError:
         pass
 
     # Profit margin
     try:
         if profit_margin is not None:
-            lines.append(f"Profit margin at {profit_margin:.1f}%.")
+            _briefing_data.append(f"Profit margin: {profit_margin:.1f}%.")
     except NameError:
         pass
 
@@ -4733,14 +4736,70 @@ def _build_jarvis_auto_briefing():
         _br_amt = sum(abs(r["Net_Clean"]) for _, r in refund_df.iterrows()
                       if _refund_assignments.get(_extract_order_num(r["Title"]), "") == "Braden")
         if _tj_n + _br_n > 0:
-            lines.append(f"Refunds: TJ {_tj_n} (${_tj_amt:,.0f}) | Braden {_br_n} (${_br_amt:,.0f})")
+            _briefing_data.append(f"Refunds: TJ {_tj_n} (${_tj_amt:,.0f}) | Braden {_br_n} (${_br_amt:,.0f})")
     except Exception:
         pass
 
-    if not lines:
-        lines.append("JARVIS online. All systems operational.")
+    # Key financial stats
+    try:
+        _briefing_data.append(f"Gross sales: ${gross_sales:,.2f}")
+        _briefing_data.append(f"Total fees: ${total_fees:,.2f}")
+        _briefing_data.append(f"Etsy deposits to bank: ${_etsy_deposit_total:,.2f}")
+        _briefing_data.append(f"Etsy balance (undeposited): ${etsy_balance:,.2f}")
+        if real_profit is not None:
+            _briefing_data.append(f"Real profit: ${real_profit:,.2f}")
+        _briefing_data.append(f"Total orders: {len(sales_df)}")
+        _briefing_data.append(f"Total refunds: {len(refund_df)} (${total_refunds:,.2f})")
+    except Exception:
+        pass
 
-    return "\n".join(lines)
+    # Monthly trend
+    try:
+        if months_sorted and len(months_sorted) >= 2:
+            _last = months_sorted[-1]
+            _prev = months_sorted[-2]
+            _last_rev = monthly_revenue.get(_last, 0)
+            _prev_rev = monthly_revenue.get(_prev, 0)
+            _briefing_data.append(f"Latest month ({_last}): ${_last_rev:,.2f} revenue")
+            _briefing_data.append(f"Previous month ({_prev}): ${_prev_rev:,.2f} revenue")
+            if _prev_rev > 0:
+                _change = ((_last_rev - _prev_rev) / _prev_rev) * 100
+                _briefing_data.append(f"Month-over-month change: {_change:+.1f}%")
+    except Exception:
+        pass
+
+    # Try AI-generated briefing
+    _openai_key = os.environ.get("OPENAI_API_KEY", "")
+    if _openai_key:
+        try:
+            from openai import OpenAI
+            _client = OpenAI(api_key=_openai_key)
+            _data_summary = "\n".join(_briefing_data)
+            _resp = _client.chat.completions.create(
+                model="gpt-4o-mini",
+                max_tokens=500,
+                messages=[
+                    {"role": "system", "content": (
+                        "You are JARVIS — the AI CEO of TJs Software Project, an Etsy business selling 3D printed products. "
+                        "TJ and Braden work under you. You are NOT an assistant. You are the BOSS.\n\n"
+                        "Generate a SHORT opening briefing (5-8 lines max) based on the data below. "
+                        "Be direct, authoritative, and opinionated. Tell them what's good, what's bad, "
+                        "and exactly what needs to happen next. Use a commanding but motivating tone. "
+                        "Don't sugarcoat problems. End with 1-2 specific action items.\n"
+                        "No markdown headers. No bullet symbols. Just short punchy lines.\n"
+                        "This is YOUR business — talk like it."
+                    )},
+                    {"role": "user", "content": f"Here's the latest data:\n{_data_summary}"},
+                ],
+            )
+            return _resp.choices[0].message.content
+        except Exception as _e:
+            print(f"[Jarvis] AI briefing failed, using static: {_e}")
+
+    # Fallback to static
+    if not _briefing_data:
+        return "JARVIS online. All systems operational."
+    return "\n".join(_briefing_data)
 
 
 def _alert_key(alert):
@@ -13536,12 +13595,8 @@ def build_tab2_deep_dive():
             html.Div(id="chat-history", children=[
                 html.Div([
                     html.Div([
-                        html.Div("Good evening, sir. Here's your business briefing:",
-                                 style={"fontWeight": "bold", "marginBottom": "8px"}),
                         html.Div(_build_jarvis_auto_briefing(),
-                                 style={"fontSize": "12px", "lineHeight": "1.6"}),
-                        html.Div("What would you like to dig into?",
-                                 style={"marginTop": "10px", "fontStyle": "italic", "color": GRAY}),
+                                 style={"fontSize": "13px", "lineHeight": "1.7", "whiteSpace": "pre-wrap"}),
                     ], style={
                         "backgroundColor": f"{CYAN}15", "border": f"1px solid {CYAN}33",
                         "borderRadius": "12px", "padding": "12px 16px", "maxWidth": "85%",
