@@ -14979,8 +14979,12 @@ def _build_store_etsy_tab(store_key, store_label, store_color):
     else:
         # Per-store tab — has upload zone + stats + file list
         return html.Div([
-            _build_upload_zone("etsy", "\U0001f4ca", f"Etsy Statements — {store_label}", store_color, ".csv",
-                               f"Upload Etsy CSV for {store_label}. Rebuilds all sales, fees, and financial data."),
+            html.Div([
+                _build_upload_zone("etsy", "\U0001f4ca", f"Etsy Statements — {store_label}", store_color, ".csv",
+                                   f"Upload Etsy CSV for {store_label}. Rebuilds all sales, fees, and financial data."),
+                _build_upload_zone("orders", "\U0001f4e6", f"Order CSV — {store_label}", store_color, ".csv",
+                                   f"Upload Etsy order export CSV for {store_label}. Links shipping labels to orders for per-order profit tracking."),
+            ], style={"display": "flex", "gap": "16px", "flexWrap": "wrap"}),
         ], style={"marginBottom": "16px"})
 
 
@@ -17433,18 +17437,23 @@ def init_datahub_files(_trigger, _selected_store, _tab_content, _dh_store_tab):
     Output("datahub-summary-strip", "children"),
     Output("app-header-content", "children"),
     Output("upload-reload-trigger", "data"),
+    Output("datahub-orders-status", "children"),
+    Output("datahub-orders-files", "children"),
+    Output("datahub-orders-stats", "children"),
     Input("datahub-etsy-upload", "contents"),
     Input("datahub-receipt-upload", "contents"),
     Input("datahub-bank-upload", "contents"),
+    Input("datahub-orders-upload", "contents"),
     State("datahub-etsy-upload", "filename"),
     State("datahub-receipt-upload", "filename"),
     State("datahub-bank-upload", "filename"),
+    State("datahub-orders-upload", "filename"),
     State("datahub-activity-log", "children"),
     State("datahub-etsy-store-picker", "data"),
     prevent_initial_call=True,
 )
-def handle_datahub_upload(etsy_contents, receipt_contents, bank_contents,
-                          etsy_filename, receipt_filename, bank_filename,
+def handle_datahub_upload(etsy_contents, receipt_contents, bank_contents, orders_contents,
+                          etsy_filename, receipt_filename, bank_filename, orders_filename,
                           activity_log, etsy_store_picker):
     """Handle file uploads from all 3 Data Hub zones.
 
@@ -17464,6 +17473,7 @@ def handle_datahub_upload(etsy_contents, receipt_contents, bank_contents,
     etsy_status, etsy_file_list, etsy_stats = nu, nu, nu
     rcpt_status, rcpt_file_list, rcpt_stats = nu, nu, nu
     bank_status, bank_file_list, bank_stats = nu, nu, nu
+    orders_status, orders_file_list, orders_stats = nu, nu, nu
     new_log = activity_log or []
     summary = nu
     header = nu
@@ -17802,6 +17812,93 @@ def handle_datahub_upload(etsy_contents, receipt_contents, bank_contents,
                          style={"color": DARKGRAY, "fontSize": "11px", "marginTop": "4px"}),
             ])
 
+    # ── Order CSV Upload ────────────────────────────────────────────────
+    elif "datahub-orders-upload" in trigger and orders_contents:
+        try:
+            content_type, content_string = orders_contents.split(",")
+            decoded = base64.b64decode(content_string)
+
+            _upload_store = etsy_store_picker or "keycomponentmfg"
+            _store_display = STORES.get(_upload_store, _upload_store)
+            fname = orders_filename or "orders.csv"
+
+            # Save to data/order_csvs/{store}/
+            _orders_dir = os.path.join(BASE_DIR, "data", "order_csvs", _upload_store)
+            os.makedirs(_orders_dir, exist_ok=True)
+            save_path = os.path.join(_orders_dir, fname)
+            with open(save_path, "wb") as f:
+                f.write(decoded)
+
+            # Parse and show preview
+            import io
+            _order_df = pd.read_csv(io.BytesIO(decoded))
+            _cols = list(_order_df.columns)
+            _row_count = len(_order_df)
+
+            print(f"[UPLOAD] Order CSV for {_store_display}: {fname}, {_row_count} rows, columns: {_cols}")
+
+            # Show column preview so we can see what data is available
+            _col_preview = ", ".join(_cols[:15])
+            if len(_cols) > 15:
+                _col_preview += f" ... (+{len(_cols) - 15} more)"
+
+            orders_status = html.Div([
+                html.Span("\u2713 ", style={"color": GREEN, "fontWeight": "bold"}),
+                html.Span(f"[{_store_display}] Uploaded {fname} — {_row_count} orders",
+                          style={"color": GREEN, "fontSize": "13px"}),
+                html.Div(f"Columns: {_col_preview}",
+                         style={"color": GRAY, "fontSize": "11px", "marginTop": "4px", "fontFamily": "monospace"}),
+            ])
+            orders_stats = html.Div(f"{_row_count} orders loaded from {fname}",
+                                     style={"color": ORANGE, "fontSize": "12px", "fontFamily": "monospace"})
+            # List existing order CSV files for this store
+            _existing_order_files = []
+            for _s in ("keycomponentmfg", "aurvio", "lunalinks"):
+                _od = os.path.join(BASE_DIR, "data", "order_csvs", _s)
+                if os.path.isdir(_od):
+                    for _of in sorted(os.listdir(_od)):
+                        if _of.endswith(".csv"):
+                            _existing_order_files.append(f"[{STORES.get(_s, _s)}] {_of}")
+            orders_file_list = html.Div([
+                html.Div(f, style={"color": GRAY, "fontSize": "11px", "padding": "2px 0"})
+                for f in _existing_order_files
+            ]) if _existing_order_files else html.Div("No files", style={"color": DARKGRAY, "fontSize": "11px"})
+
+            new_log = [html.Div([
+                html.Span(f"[{now_str}] ", style={"color": DARKGRAY, "fontSize": "11px"}),
+                html.Span(f"\u2713 Order CSV [{_store_display}]: {fname} ({_row_count} orders)",
+                          style={"color": GREEN, "fontSize": "12px"}),
+            ], style={"padding": "3px 0", "borderBottom": "1px solid #ffffff08"})] + (
+                new_log if isinstance(new_log, list) else [])
+
+            # Sync to Supabase if on Railway
+            if IS_RAILWAY:
+                try:
+                    from supabase_loader import get_client
+                    _sb = get_client()
+                    # Store order CSV data in a dedicated table
+                    _order_records = _order_df.to_dict("records")
+                    for _rec in _order_records:
+                        _rec["_store"] = _upload_store
+                    import threading
+                    def _sync_orders():
+                        try:
+                            _sb.table("order_csvs").upsert(_order_records).execute()
+                            print(f"[UPLOAD] Order CSV synced to Supabase: {len(_order_records)} rows")
+                        except Exception as _e:
+                            print(f"[UPLOAD] Order CSV Supabase sync failed: {_e}")
+                    threading.Thread(target=_sync_orders, daemon=True).start()
+                except Exception as _e:
+                    print(f"[UPLOAD] Order CSV Supabase setup failed: {_e}")
+
+        except Exception as e:
+            orders_status = html.Div([
+                html.Span("\u2717 ", style={"color": RED, "fontWeight": "bold"}),
+                html.Span(f"Upload failed: {e}", style={"color": RED, "fontSize": "13px"}),
+                html.Div("Expected: Etsy order CSV export from Shop Manager (Orders > Download CSV)",
+                         style={"color": DARKGRAY, "fontSize": "11px", "marginTop": "4px"}),
+            ])
+
     # If any upload succeeded, trigger a page reload after a short delay
     # so ALL tabs (not just Data Hub) show fresh data.
     if any(x is not nu for x in [etsy_status, rcpt_status, bank_status]):
@@ -17811,7 +17908,8 @@ def handle_datahub_upload(etsy_contents, receipt_contents, bank_contents,
     return (etsy_status, etsy_file_list, etsy_stats,
             rcpt_status, rcpt_file_list, rcpt_stats,
             bank_status, bank_file_list, bank_stats,
-            new_log, summary, header, reload_trigger)
+            new_log, summary, header, reload_trigger,
+            orders_status, orders_file_list, orders_stats)
 
 
 # ── Delete Data Callbacks ─────────────────────────────────────────────────────
