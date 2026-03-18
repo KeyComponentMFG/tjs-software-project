@@ -94,12 +94,19 @@ def _load_etsy_from_supabase(client) -> pd.DataFrame:
         "fees_and_taxes": "Fees & Taxes",
         "net": "Net",
         "tax_details": "Tax Details",
+        "store": "Store",
     })
 
     # Drop Supabase-internal columns
     for col in ("id", "created_at", "statement_file"):
         if col in df.columns:
             df = df.drop(columns=[col])
+
+    # Default store for rows that predate multi-store support
+    if "Store" not in df.columns:
+        df["Store"] = "keycomponentmfg"
+    else:
+        df["Store"] = df["Store"].fillna("keycomponentmfg").replace("", "keycomponentmfg")
 
     return df
 
@@ -735,6 +742,7 @@ def sync_etsy_transactions(data_df) -> bool:
                 "fees_and_taxes": str(r.get("Fees & Taxes", "--")),
                 "net": str(r.get("Net", "--")),
                 "tax_details": str(r.get("Tax Details", "--")),
+                "store": str(r.get("Store", "keycomponentmfg")),
             })
         for i in range(0, len(rows), 500):
             client.table("etsy_transactions").insert(rows[i:i+500]).execute()
@@ -773,13 +781,14 @@ def append_etsy_transactions(data_df) -> dict:
         _offset = 0
         while True:
             batch = (client.table("etsy_transactions")
-                     .select("date,type,title,info,amount,net")
+                     .select("date,type,title,info,amount,net,store")
                      .order("id")
                      .range(_offset, _offset + 999)
                      .execute())
             for r in batch.data:
                 key = (r.get("date", ""), r.get("type", ""), r.get("title", ""),
-                       r.get("info", ""), r.get("amount", ""), r.get("net", ""))
+                       r.get("info", ""), r.get("amount", ""), r.get("net", ""),
+                       r.get("store", "keycomponentmfg"))
                 existing_counts[key] += 1
             if len(batch.data) < 1000:
                 break
@@ -791,7 +800,8 @@ def append_etsy_transactions(data_df) -> dict:
         new_rows_by_key = {}
         for _, r in data_df.iterrows():
             key = (str(r.get("Date", "")), str(r.get("Type", "")), str(r.get("Title", "")),
-                   str(r.get("Info", "")), str(r.get("Amount", "")), str(r.get("Net", "")))
+                   str(r.get("Info", "")), str(r.get("Amount", "")), str(r.get("Net", "")),
+                   str(r.get("Store", "keycomponentmfg")))
             new_counts[key] += 1
             if key not in new_rows_by_key:
                 new_rows_by_key[key] = {
@@ -804,6 +814,7 @@ def append_etsy_transactions(data_df) -> dict:
                     "fees_and_taxes": str(r.get("Fees & Taxes", "--")),
                     "net": str(r.get("Net", "--")),
                     "tax_details": str(r.get("Tax Details", "--")),
+                    "store": str(r.get("Store", "keycomponentmfg")),
                 }
 
         # Insert only the EXCESS rows: new_count - existing_count for each key

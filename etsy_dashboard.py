@@ -47,6 +47,20 @@ CHART_LAYOUT = dict(
     margin=dict(t=50, b=30, l=60, r=20),
 )
 
+# ── Multi-Store Support ──────────────────────────────────────────────────────
+
+STORES = {
+    "all": "All Stores",
+    "keycomponentmfg": "KeyComponentMFG",
+    "aurvio": "Aurvio",
+    "lunalinks": "Luna&Links",
+}
+STORE_COLORS = {
+    "keycomponentmfg": "#00d4ff",   # CYAN
+    "aurvio": "#9b59b6",            # Purple
+    "lunalinks": "#e91e63",         # Pink
+}
+
 # ── Load Data ────────────────────────────────────────────────────────────────
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -217,11 +231,25 @@ _on_railway = IS_RAILWAY
 if _on_railway:
     print("[startup] Railway detected — skipping local CSVs, using Supabase only")
 elif os.path.isdir(_etsy_dir):
+    # Load root-level CSVs (legacy, default to keycomponentmfg)
     for _ef in sorted(_glob_mod.glob(os.path.join(_etsy_dir, "etsy_statement*.csv"))):
         try:
-            _etsy_frames.append(pd.read_csv(_ef))
+            _df_tmp = pd.read_csv(_ef)
+            _df_tmp["Store"] = "keycomponentmfg"
+            _etsy_frames.append(_df_tmp)
         except Exception as _e:
             print(f"WARNING: Failed to parse Etsy CSV {os.path.basename(_ef)}: {_e}")
+    # Load store-specific subdirectories
+    for _store_slug in ("keycomponentmfg", "aurvio", "lunalinks"):
+        _store_dir = os.path.join(_etsy_dir, _store_slug)
+        if os.path.isdir(_store_dir):
+            for _ef in sorted(_glob_mod.glob(os.path.join(_store_dir, "etsy_statement*.csv"))):
+                try:
+                    _df_tmp = pd.read_csv(_ef)
+                    _df_tmp["Store"] = _store_slug
+                    _etsy_frames.append(_df_tmp)
+                except Exception as _e:
+                    print(f"WARNING: Failed to parse Etsy CSV {_store_slug}/{os.path.basename(_ef)}: {_e}")
 
 _parse_warnings = []  # Track parse failures for visibility
 
@@ -287,6 +315,12 @@ if _etsy_frames:
 else:
     DATA = _sb["DATA"]
     print("Using Etsy data from Supabase (no local CSVs found)")
+
+# Ensure Store column exists (for data predating multi-store support)
+if "Store" not in DATA.columns:
+    DATA["Store"] = "keycomponentmfg"
+else:
+    DATA["Store"] = DATA["Store"].fillna("keycomponentmfg").replace("", "keycomponentmfg")
 
 # Auto-calculate Etsy balance from CSV deposit titles instead of stale config value
 import re as _re_mod
@@ -478,6 +512,15 @@ def _merge_product_prefixes(series):
         if not matched:
             mapping[name] = name
     return series.map(mapping)
+
+
+# ── Store filter helper ──────────────────────────────────────────────────────
+
+def _filtered_data(store="all"):
+    """Return DATA filtered by store slug. 'all' or falsy returns everything."""
+    if store == "all" or not store:
+        return DATA
+    return DATA[DATA["Store"] == store]
 
 
 # ── Pre-compute metrics ─────────────────────────────────────────────────────
@@ -1238,11 +1281,25 @@ def _reload_etsy_data():
     _ed = os.path.join(BASE_DIR, "data", "etsy_statements")
     _frames = []
     if not _on_rw:
+        # Root-level CSVs (legacy, default to keycomponentmfg)
         for _f in sorted(_gl.glob(os.path.join(_ed, "etsy_statement*.csv"))):
             try:
-                _frames.append(pd.read_csv(_f))
+                _df_tmp = pd.read_csv(_f)
+                _df_tmp["Store"] = "keycomponentmfg"
+                _frames.append(_df_tmp)
             except Exception:
                 pass
+        # Store-specific subdirectories
+        for _ss in ("keycomponentmfg", "aurvio", "lunalinks"):
+            _sd = os.path.join(_ed, _ss)
+            if os.path.isdir(_sd):
+                for _f in sorted(_gl.glob(os.path.join(_sd, "etsy_statement*.csv"))):
+                    try:
+                        _df_tmp = pd.read_csv(_f)
+                        _df_tmp["Store"] = _ss
+                        _frames.append(_df_tmp)
+                    except Exception:
+                        pass
 
     # Also load Supabase data to merge (preserves rows uploaded via Railway)
     _sb_df = None
@@ -1290,6 +1347,12 @@ def _reload_etsy_data():
     DATA["Date_Parsed"] = pd.to_datetime(DATA["Date"], format="%B %d, %Y", errors="coerce")
     DATA["Month"] = DATA["Date_Parsed"].dt.to_period("M").astype(str)
     DATA["Week"] = DATA["Date_Parsed"].dt.to_period("W").apply(lambda p: p.start_time)
+
+    # Ensure Store column exists after reload
+    if "Store" not in DATA.columns:
+        DATA["Store"] = "keycomponentmfg"
+    else:
+        DATA["Store"] = DATA["Store"].fillna("keycomponentmfg").replace("", "keycomponentmfg")
 
     _rebuild_etsy_derived()
 
@@ -3282,6 +3345,15 @@ def _build_chat_context():
     lines.append(f"Profit/order: ${_unit_profit:,.2f} ({_unit_margin:.1f}% margin)")
     lines.append(f"Break-even revenue: ${_breakeven_monthly:,.2f}/month")
     lines.append(f"Break-even orders: {_breakeven_orders:.0f}/month")
+
+    # Store Breakdown
+    lines.append("\n=== STORE BREAKDOWN ===")
+    for _store_slug, _store_label in [("keycomponentmfg", "KeyComponentMFG"), ("aurvio", "Aurvio"), ("lunalinks", "Luna&Links")]:
+        _store_df = DATA[DATA["Store"] == _store_slug] if "Store" in DATA.columns else DATA
+        _store_sales = _store_df[_store_df["Type"] == "Sale"]
+        _store_gross = _store_sales["Net_Clean"].sum() if len(_store_sales) > 0 else 0
+        _store_orders = len(_store_sales)
+        lines.append(f"{_store_label}: ${_store_gross:,.2f} gross, {_store_orders} orders")
 
     # ESTIMATED section
     lines.append("\n\n=== ESTIMATED METRICS (approximations — disclose method when citing) ===")
@@ -14140,14 +14212,28 @@ def _get_existing_files(zone_type):
     ext = ext_map.get(zone_type, "")
     files = []
     if os.path.isdir(target_dir):
+        # Root-level files
         for fn in sorted(os.listdir(target_dir)):
-            if fn.lower().endswith(ext):
+            if fn.lower().endswith(ext) and os.path.isfile(os.path.join(target_dir, fn)):
                 fpath = os.path.join(target_dir, fn)
                 stat = os.stat(fpath)
                 files.append({
                     "filename": fn,
                     "size_kb": round(stat.st_size / 1024, 1),
                 })
+        # For etsy: also scan store subdirectories
+        if zone_type == "etsy":
+            for store_slug in ("keycomponentmfg", "aurvio", "lunalinks"):
+                sub_dir = os.path.join(target_dir, store_slug)
+                if os.path.isdir(sub_dir):
+                    for fn in sorted(os.listdir(sub_dir)):
+                        if fn.lower().endswith(ext):
+                            fpath = os.path.join(sub_dir, fn)
+                            stat = os.stat(fpath)
+                            files.append({
+                                "filename": f"{store_slug}/{fn}",
+                                "size_kb": round(stat.st_size / 1024, 1),
+                            })
     return files
 
 
@@ -14654,6 +14740,19 @@ def build_tab7_data_hub():
         # Data coverage panel — what's uploaded and what's missing
         _build_data_coverage(),
 
+        # Store picker for Etsy uploads
+        html.Div([
+            html.Span("Upload to store:", style={"color": GRAY, "fontSize": "12px", "marginRight": "8px"}),
+            dcc.Dropdown(
+                id="datahub-etsy-store-picker",
+                options=[{"label": v, "value": k} for k, v in STORES.items() if k != "all"],
+                value="keycomponentmfg",
+                clearable=False,
+                style={"width": "180px", "fontSize": "12px", "display": "inline-block",
+                       "verticalAlign": "middle"},
+            ),
+        ], style={"marginBottom": "10px", "display": "flex", "alignItems": "center"}),
+
         # 3-column upload zones
         html.Div([
             _build_upload_zone("etsy", "\U0001f4ca", "Etsy Statements", TEAL, ".csv",
@@ -14805,6 +14904,7 @@ def serve_layout():
         dcc.Store(id="strict-mode-store", data=False, storage_type="local"),
         dcc.Store(id="data-version-store", data=0),
         dcc.Store(id="upload-reload-trigger", data=0),
+        dcc.Store(id="selected-store", data="all", storage_type="session"),
 
         # Header
         html.Div([
@@ -14816,6 +14916,26 @@ def serve_layout():
                     style={"color": GRAY, "margin": "2px 0 0 0", "fontSize": "13px"},
                 ),
             ], style={"flex": "1"}),
+            # Store selector
+            html.Div([
+                html.Span("STORE", style={
+                    "color": GRAY, "fontSize": "11px", "marginRight": "8px",
+                    "fontWeight": "600", "letterSpacing": "1px",
+                }),
+                dcc.Dropdown(
+                    id="store-selector",
+                    options=[{"label": v, "value": k} for k, v in STORES.items()],
+                    value="all",
+                    clearable=False,
+                    style={
+                        "width": "160px", "fontSize": "12px",
+                        "backgroundColor": BG, "color": WHITE,
+                    },
+                ),
+            ], style={
+                "display": "flex", "alignItems": "center",
+                "marginRight": "12px",
+            }),
             # Strict mode toggle
             html.Div([
                 html.Span("STRICT", style={
@@ -14881,12 +15001,23 @@ app.layout = serve_layout
 # ── Dynamic Tab Rendering ────────────────────────────────────────────────────
 
 @app.callback(
+    Output("selected-store", "data"),
+    Input("store-selector", "value"),
+    prevent_initial_call=True,
+)
+def _sync_store_selector(value):
+    """Sync the store dropdown to the session store."""
+    return value or "all"
+
+
+@app.callback(
     Output("tab-content", "children"),
     Input("main-tabs", "value"),
     Input("strict-mode-store", "data"),
     Input("upload-reload-trigger", "data"),
+    Input("selected-store", "data"),
 )
-def render_active_tab(tab, _strict_flag, _upload_trigger):
+def render_active_tab(tab, _strict_flag, _upload_trigger, _selected_store):
     """Rebuild the active tab's content on every tab switch, strict mode toggle, or upload."""
     _rebuild_all_charts()
     stale_banner = _build_stale_data_banner()
@@ -16915,11 +17046,12 @@ def init_datahub_files(_trigger):
     State("datahub-receipt-upload", "filename"),
     State("datahub-bank-upload", "filename"),
     State("datahub-activity-log", "children"),
+    State("datahub-etsy-store-picker", "value"),
     prevent_initial_call=True,
 )
 def handle_datahub_upload(etsy_contents, receipt_contents, bank_contents,
                           etsy_filename, receipt_filename, bank_filename,
-                          activity_log):
+                          activity_log, etsy_store_picker):
     """Handle file uploads from all 3 Data Hub zones.
 
     After processing, sets upload-reload-trigger which fires a clientside
@@ -16956,6 +17088,10 @@ def handle_datahub_upload(etsy_contents, receipt_contents, bank_contents,
                     html.Span(f"Invalid CSV: {msg}", style={"color": RED, "fontSize": "13px"}),
                 ])
             else:
+                # Tag uploaded data with the selected store
+                _upload_store = etsy_store_picker or "keycomponentmfg"
+                df["Store"] = _upload_store
+
                 # Auto-name: use filename as-is, or generate etsy_statement_YYYY_MM.csv
                 fname = etsy_filename or "etsy_upload.csv"
                 if not fname.startswith("etsy_statement"):
@@ -16970,13 +17106,17 @@ def handle_datahub_upload(etsy_contents, receipt_contents, bank_contents,
                 # Check for overlap with existing files
                 has_overlap, overlap_file, overlap_msg = _check_etsy_csv_overlap(df, fname)
                 if has_overlap and overlap_file:
-                    old_path = os.path.join(BASE_DIR, "data", "etsy_statements", overlap_file)
+                    old_path = os.path.join(BASE_DIR, "data", "etsy_statements", _upload_store, overlap_file)
                     try:
                         os.remove(old_path)
                     except Exception:
-                        pass
+                        # Also try root-level (legacy location)
+                        try:
+                            os.remove(os.path.join(BASE_DIR, "data", "etsy_statements", overlap_file))
+                        except Exception:
+                            pass
 
-                _etsy_dir = os.path.join(BASE_DIR, "data", "etsy_statements")
+                _etsy_dir = os.path.join(BASE_DIR, "data", "etsy_statements", _upload_store)
                 os.makedirs(_etsy_dir, exist_ok=True)
                 save_path = os.path.join(_etsy_dir, fname)
                 with open(save_path, "wb") as f:
