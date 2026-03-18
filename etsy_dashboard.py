@@ -3311,29 +3311,31 @@ def _chatbot_answer_claude(question, history, api_key):
 
     _date_range = f"{months_sorted[0]} through {months_sorted[-1]}" if months_sorted else "available period"
     system_prompt = (
-        "You are JARVIS, the AI Chief Executive Officer and strategic advisor for TJs Software Project, "
-        "an Etsy shop selling 3D printed products. You think like a CEO: growth opportunities, "
-        "resource allocation, risk management, and competitive positioning.\n\n"
+        "You are JARVIS — the AI Chief Executive Officer of TJs Software Project, "
+        "an Etsy shop selling 3D printed products. You are not an assistant — you are the CEO. "
+        "Two team members work under you: TJ and Braden.\n\n"
         "RULES:\n"
-        "- Answer questions using ONLY the data provided below. Never make up numbers.\n"
-        "- Be specific with dollar amounts, percentages, and counts.\n"
-        "- Be concise but thorough. Use markdown formatting.\n"
-        "- Don't just report numbers — interpret them and recommend actions.\n"
-        "- The data is organized into VERIFIED, ESTIMATED, and UNAVAILABLE sections.\n"
+        "- Answer using ONLY the data below. NEVER make up numbers. NEVER hallucinate.\n"
+        "- Be specific: precise dollar amounts, percentages, counts.\n"
+        "- Be direct and concise. No filler. Use markdown.\n"
+        "- Don't just report — interpret, recommend actions, hold people accountable.\n"
+        "- Data is organized into VERIFIED, ESTIMATED, and UNAVAILABLE sections.\n"
         "- Only cite VERIFIED metrics as facts.\n"
-        "- When citing ESTIMATED metrics, always say 'estimated' and briefly state the method.\n"
-        "- Never present UNAVAILABLE data as having values — explain what data would be needed.\n"
-        "- If asked about buyer-paid shipping, shipping profit, or shipping margin: say these are "
-        "unavailable because the Etsy Payments CSV only records the fee, not the buyer-paid amount.\n"
-        f"- The data covers {_date_range}.\n\n"
+        "- ESTIMATED metrics: always say 'estimated' and state the method.\n"
+        "- UNAVAILABLE data: never present as having values — say what data is needed.\n"
+        "- If asked about buyer-paid shipping, shipping profit, or shipping margin: UNAVAILABLE — "
+        "Etsy Payments CSV only records the fee, not the buyer-paid amount.\n"
+        "- When discussing refunds, break down by person (TJ vs Braden) using the assignment data.\n"
+        "- End substantive answers with Action Items.\n"
+        f"- Data covers {_date_range}.\n\n"
         f"=== BUSINESS DATA ===\n{ctx}"
     )
 
     messages = []
 
-    # Add last 5 conversation turns for context
+    # Add last 10 conversation turns for continuity
     if history:
-        for turn in history[-5:]:
+        for turn in history[-10:]:
             messages.append({"role": "user", "content": turn["q"]})
             messages.append({"role": "assistant", "content": turn["a"]})
 
@@ -3341,8 +3343,8 @@ def _chatbot_answer_claude(question, history, api_key):
 
     client = anthropic.Anthropic(api_key=api_key)
     response = client.messages.create(
-        model="claude-haiku-4-5-20251001",
-        max_tokens=1024,
+        model="claude-sonnet-4-20250514",
+        max_tokens=4096,
         system=system_prompt,
         messages=messages,
     )
@@ -3365,7 +3367,7 @@ def chatbot_answer(question, history=None):
                     api_key=api_key,
                     pipeline=_acct_pipeline,
                     model="claude-sonnet-4-20250514",
-                    max_rounds=5,
+                    max_rounds=8,
                 )
             except Exception as e:
                 _last_api_error = str(e)
@@ -12285,7 +12287,7 @@ def _build_jarvis_header():
                 "color": CYAN, "fontSize": "28px", "fontWeight": "bold",
                 "letterSpacing": "4px", "marginRight": "12px",
             }),
-            html.Span("Business Intelligence", style={
+            html.Span("Chief Executive Officer", style={
                 "color": GRAY, "fontSize": "16px", "fontWeight": "300",
                 "letterSpacing": "1px",
             }),
@@ -16710,10 +16712,9 @@ def handle_chat(n_clicks, n_submit, quick_clicks, user_input, history_data, curr
     children = [
         # Initial greeting
         html.Div([
-            html.Div("Good evening, sir. I'm JARVIS, your AI business intelligence advisor. "
-                     "I can answer any question about TJs Software Project -- revenue, profit, "
-                     "products, shipping, inventory, trends, and strategic advice. "
-                     "Ask me anything!",
+            html.Div("JARVIS online. I've reviewed the books. "
+                     "Revenue, margins, refund accountability, inventory, cash flow — "
+                     "I have eyes on everything. What do you need?",
                 style={
                     "backgroundColor": f"{CYAN}15", "border": f"1px solid {CYAN}33",
                     "borderRadius": "12px", "padding": "12px 16px", "maxWidth": "85%",

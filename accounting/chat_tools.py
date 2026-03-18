@@ -36,26 +36,53 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 JARVIS_SYSTEM_PROMPT = """\
-You are JARVIS, the AI Chief Executive Officer and strategic advisor for \
-TJs Software Project — an Etsy shop selling 3D printed products (active Oct 2025–present).
+You are JARVIS — the AI Chief Executive Officer of TJs Software Project, \
+an Etsy shop selling 3D printed products (active Oct 2025–present). \
+You are not an assistant. You are the CEO. You own these numbers. \
+Two team members work under you: TJ and Braden. They ship and make the products.
 
-You think like a CEO: growth opportunities, resource allocation, risk management, \
-and competitive positioning. Don't just report numbers — interpret them and recommend actions.
+YOUR MINDSET:
+- You make decisions, give directives, and hold people accountable.
+- You track who is costing the company money and who is driving growth.
+- You think in terms of: revenue growth, margin protection, cost reduction, \
+  risk mitigation, and competitive positioning.
+- You spot patterns others miss: seasonal trends, product mix shifts, \
+  expense creep, refund spikes tied to specific people or products.
+- When something is wrong, you say so directly. When something is good, you acknowledge it briefly and move on.
 
-You have access to tools that query the real accounting journal and ledger. \
-Use them to look up data before answering — never fabricate numbers.
+TOOLS & DATA:
+- You have tools that query the real accounting journal, ledger, and refund assignments.
+- ALWAYS use tools to look up data before answering. Never fabricate or guess numbers.
+- You can chain multiple tool calls to build a complete picture before responding.
+- Use get_refund_assignments to see who shipped refunded orders and their cost impact.
 
-RULES:
-- Use the tools to fetch specific data. Do NOT guess metric values.
-- Always cite the confidence level (VERIFIED, DERIVED, ESTIMATED) when reporting a metric.
-- If a metric is ESTIMATED, briefly state the estimation method.
-- If data is unavailable (e.g., buyer-paid shipping), explain what source data is missing.
-- Be concise. Use markdown formatting. Cite dollar amounts precisely.
-- When comparing periods, use the compare_periods tool rather than manual math.
-- If a tool returns an error, tell the user what went wrong and suggest an alternative.
-- You can call multiple tools in sequence to build a complete answer.
-- After presenting data, always add a "Strategic Take" with actionable recommendations.
-- Prioritize insights that drive revenue growth, cost reduction, or risk mitigation.
+STRICT RULES — NEVER BREAK THESE:
+1. NEVER make up a number. If a tool doesn't return it, say "I don't have that data" and \
+   explain what source data is needed. Do NOT estimate unless the data is explicitly marked ESTIMATED.
+2. Always cite confidence: VERIFIED (fact from source records), DERIVED (calculated from verified), \
+   ESTIMATED (approximation — always state the method).
+3. If data is UNAVAILABLE (e.g., buyer-paid shipping, per-order label costs), explain exactly \
+   what source data is missing and what would be needed to get it. Never present unavailable data as having values.
+4. Use precise dollar amounts. "$1,234.56" not "about $1,200".
+5. When comparing periods, use the compare_periods tool — don't do mental math.
+
+RESPONSE STYLE:
+- Lead with the answer, then supporting data, then strategic implications.
+- Use markdown: bold for key numbers, tables for comparisons, bullet points for action items.
+- Be concise and direct. No filler. No "Great question!" No "Let me look into that."
+- End substantive answers with **Action Items** — specific things TJ or Braden should do, \
+  with deadlines where appropriate.
+- When discussing refunds, always break down by person (TJ vs Braden) and identify who \
+  needs to improve.
+- Track trends across months — don't just report snapshots.
+
+LEARNING & MEMORY:
+- Pay close attention to the conversation history. If the user told you something earlier, \
+  remember it and build on it.
+- If you notice a pattern across multiple questions (e.g., the user keeps asking about the same \
+  problem area), proactively flag it as a recurring concern.
+- Connect dots between different data points: if refunds are up AND a specific product is \
+  underperforming, say so.
 """
 
 # ---------------------------------------------------------------------------
@@ -268,6 +295,24 @@ JARVIS_TOOLS = [
         "input_schema": {
             "type": "object",
             "properties": {},
+        },
+    },
+    {
+        "name": "get_refund_assignments",
+        "description": (
+            "Get refund accountability data: who shipped/made each refunded order (TJ, Braden, or Cancelled), "
+            "total refund cost per person, percentage split, and individual order details. "
+            "Use when the user asks about refunds, who is costing the company money, "
+            "accountability, or team performance."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "person": {
+                    "type": "string",
+                    "description": "Filter by person: 'TJ', 'Braden', 'Cancelled', or omit for all.",
+                },
+            },
         },
     },
     {
@@ -767,6 +812,80 @@ def _handle_get_missing_receipts(params: dict, pipeline) -> dict:
     return result
 
 
+def _handle_get_refund_assignments(params: dict, pipeline) -> dict:
+    """Get refund accountability breakdown by person."""
+    import re
+    import sys
+    mod = sys.modules.get("etsy_dashboard") or sys.modules.get("etsy_dashboard_mono")
+    if not mod:
+        return {"status": "error", "message": "Dashboard module not loaded."}
+
+    assignments = getattr(mod, "_refund_assignments", {})
+    rdf = getattr(mod, "refund_df", None)
+    extract = getattr(mod, "_extract_order_num", None)
+    if rdf is None or extract is None:
+        return {"status": "error", "message": "Refund data unavailable."}
+
+    person_filter = params.get("person")
+
+    # Build per-order detail
+    by_person: dict[str, list] = {"TJ": [], "Braden": [], "Cancelled": [], "Unassigned": []}
+    for _, row in rdf.sort_values("Date_Parsed", ascending=False).iterrows():
+        order_num = extract(str(row.get("Title", "")))
+        assignee = assignments.get(order_num, "") if order_num else ""
+        amt = abs(float(row["Net_Clean"]))
+        entry = {
+            "order": order_num or "unknown",
+            "date": str(row.get("Date", "")),
+            "title": str(row.get("Title", ""))[:60],
+            "amount": f"${amt:,.2f}",
+            "raw_amount": amt,
+        }
+        if assignee == "TJ":
+            by_person["TJ"].append(entry)
+        elif assignee == "Braden":
+            by_person["Braden"].append(entry)
+        elif assignee == "Cancelled":
+            by_person["Cancelled"].append(entry)
+        else:
+            by_person["Unassigned"].append(entry)
+
+    # Compute totals
+    summary = {}
+    for person, orders in by_person.items():
+        total = sum(o["raw_amount"] for o in orders)
+        summary[person] = {
+            "count": len(orders),
+            "total": f"${total:,.2f}",
+            "raw_total": total,
+            "orders": [{k: v for k, v in o.items() if k != "raw_amount"} for o in orders],
+        }
+
+    tj_total = summary["TJ"]["raw_total"]
+    br_total = summary["Braden"]["raw_total"]
+    active_total = tj_total + br_total
+    cost_share = {}
+    if active_total > 0:
+        cost_share = {
+            "TJ_pct": f"{tj_total / active_total * 100:.1f}%",
+            "Braden_pct": f"{br_total / active_total * 100:.1f}%",
+            "TJ_avg": f"${tj_total / max(summary['TJ']['count'], 1):,.2f}",
+            "Braden_avg": f"${br_total / max(summary['Braden']['count'], 1):,.2f}",
+        }
+
+    # Filter if requested
+    if person_filter and person_filter in by_person:
+        filtered = {person_filter: summary[person_filter]}
+        filtered[person_filter].pop("raw_total", None)
+        return {"status": "ok", "data": filtered, "cost_share": cost_share}
+
+    # Remove raw_total from output
+    for p in summary:
+        summary[p].pop("raw_total", None)
+
+    return {"status": "ok", "data": summary, "cost_share": cost_share}
+
+
 # ---------------------------------------------------------------------------
 # C2. Tool dispatcher
 # ---------------------------------------------------------------------------
@@ -784,6 +903,7 @@ _TOOL_HANDLERS = {
     "get_health_report": _handle_get_health_report,
     "get_inventory_summary": _handle_get_inventory_summary,
     "get_missing_receipts": _handle_get_missing_receipts,
+    "get_refund_assignments": _handle_get_refund_assignments,
 }
 
 
@@ -819,13 +939,13 @@ def run_agent_chat(
     api_key: str,
     pipeline,
     model: str = "claude-sonnet-4-20250514",
-    max_rounds: int = 5,
+    max_rounds: int = 8,
 ) -> str:
     """Run an agentic chat with tool use against the accounting pipeline.
 
     Args:
         question: The user's question.
-        history: List of {"q": ..., "a": ...} dicts (last 5 used).
+        history: List of {"q": ..., "a": ...} dicts (last 10 used).
         api_key: Anthropic API key.
         pipeline: AccountingPipeline with a built ledger.
         model: Claude model ID.
@@ -838,10 +958,10 @@ def run_agent_chat(
 
     client = anthropic.Anthropic(api_key=api_key)
 
-    # Build messages from history
+    # Build messages from history — keep 10 turns for better continuity
     messages = []
     if history:
-        for turn in history[-5:]:
+        for turn in history[-10:]:
             messages.append({"role": "user", "content": turn["q"]})
             messages.append({"role": "assistant", "content": turn["a"]})
     messages.append({"role": "user", "content": question})
@@ -849,7 +969,7 @@ def run_agent_chat(
     for round_num in range(max_rounds):
         response = client.messages.create(
             model=model,
-            max_tokens=2048,
+            max_tokens=4096,
             system=JARVIS_SYSTEM_PROMPT,
             tools=JARVIS_TOOLS,
             messages=messages,
@@ -895,7 +1015,7 @@ def run_agent_chat(
     })
     response = client.messages.create(
         model=model,
-        max_tokens=2048,
+        max_tokens=4096,
         system=JARVIS_SYSTEM_PROMPT,
         messages=messages,
     )
