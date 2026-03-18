@@ -3156,16 +3156,32 @@ def _build_chat_context():
     lines.append("\n=== REFUNDS ===")
     refund_rate = len(refund_df) / len(sales_df) * 100 if len(sales_df) else 0
     lines.append(f"Total refunds: ${total_refunds:,.2f} ({len(refund_df)} orders, {refund_rate:.1f}% rate)")
-    # Refund assignments (TJ / Braden / Cancelled)
-    _tj_count = sum(1 for v in _refund_assignments.values() if v == "TJ")
-    _br_count = sum(1 for v in _refund_assignments.values() if v == "Braden")
-    _ca_count = sum(1 for v in _refund_assignments.values() if v == "Cancelled")
+    # Refund assignments — dollar amounts per person for trend analysis
+    _tj_total = 0.0
+    _br_total = 0.0
+    _ca_total = 0.0
+    _tj_count = 0
+    _br_count = 0
+    _ca_count = 0
     _unassigned = []
     for _, _rr in refund_df.iterrows():
         _rkey = _extract_order_num(_rr["Title"])
-        if _rkey and _refund_assignments.get(_rkey, "") == "":
+        _assignee = _refund_assignments.get(_rkey, "") if _rkey else ""
+        _ramt = abs(_rr["Net_Clean"])
+        if _assignee == "TJ":
+            _tj_total += _ramt
+            _tj_count += 1
+        elif _assignee == "Braden":
+            _br_total += _ramt
+            _br_count += 1
+        elif _assignee == "Cancelled":
+            _ca_total += _ramt
+            _ca_count += 1
+        elif _rkey:
             _unassigned.append(_rkey)
-    lines.append(f"Refund responsibility: TJ={_tj_count}, Braden={_br_count}, Cancelled={_ca_count}")
+    lines.append(f"Refund responsibility: TJ={_tj_count} refunds (${_tj_total:,.2f}), Braden={_br_count} refunds (${_br_total:,.2f}), Cancelled={_ca_count} (${_ca_total:,.2f})")
+    if _tj_count + _br_count > 0:
+        lines.append(f"Refund cost share: TJ={_tj_total / (_tj_total + _br_total) * 100:.0f}%, Braden={_br_total / (_tj_total + _br_total) * 100:.0f}% (excludes cancelled)")
     if _unassigned:
         lines.append(f"*** {len(_unassigned)} refund(s) UNASSIGNED — need TJ or Braden assigned: {', '.join(_unassigned[:5])}")
 
