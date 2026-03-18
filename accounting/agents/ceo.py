@@ -395,23 +395,30 @@ def _check_cross_source(pipeline) -> AgentResult:
 
 def _check_refund_assignments(pipeline) -> AgentResult:
     """Agent 22: Alert if any refunds are unassigned (need TJ or Braden)."""
+    import re
     import sys
-    mod = sys.modules.get("etsy_dashboard") or sys.modules.get("etsy_dashboard_mono")
-    if not mod:
-        return AgentResult("RefundAssignment", True, "info", "Dashboard not loaded")
 
-    assignments = getattr(mod, "_refund_assignments", {})
-    rdf = getattr(mod, "refund_df", None)
-    if rdf is None or not len(rdf):
+    # Get assignments — try module first, then load directly from Supabase
+    mod = sys.modules.get("etsy_dashboard") or sys.modules.get("etsy_dashboard_mono")
+    assignments = getattr(mod, "_refund_assignments", {}) if mod else {}
+    if not assignments:
+        try:
+            from supabase_loader import get_config_value
+            assignments = get_config_value("refund_assignments", {})
+            if not isinstance(assignments, dict):
+                assignments = {}
+        except Exception:
+            assignments = {}
+
+    # Get refund entries from journal
+    refunds = pipeline.journal.by_type(TxnType.REFUND)
+    if not refunds:
         return AgentResult("RefundAssignment", True, "info", "No refund data")
 
-    extract = getattr(mod, "_extract_order_num", None)
-    if not extract:
-        return AgentResult("RefundAssignment", True, "info", "Extract function unavailable")
-
     unassigned = []
-    for _, row in rdf.iterrows():
-        order_key = extract(row.get("Title", ""))
+    for entry in refunds:
+        m = re.search(r"Order #\d+", entry.title)
+        order_key = m.group(0) if m else None
         if order_key and assignments.get(order_key, "") == "":
             unassigned.append(order_key)
 

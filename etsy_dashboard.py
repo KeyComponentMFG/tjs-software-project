@@ -3390,14 +3390,9 @@ def chatbot_answer(question, history=None):
             _last_api_error = str(e)
             print(f"[Jarvis] Claude context-dump failed, falling back to keywords: {e}")
         # If API errors mention billing/credits, tell the user directly
-        if _last_api_error and ("credit balance" in _last_api_error or "billing" in _last_api_error.lower()):
-            return (
-                "**JARVIS AI is offline** -- the Anthropic API credit balance is empty.\n\n"
-                "Add credits at [console.anthropic.com/settings/billing](https://console.anthropic.com/settings/billing) "
-                "to restore full AI chat with tool access to your accounting data.\n\n"
-                "In the meantime, I'll try to answer with basic keyword matching:\n\n---\n\n"
-                + _chatbot_answer_inner(question)
-            )
+        if _last_api_error and ("credit balance" in _last_api_error or "billing" in _last_api_error.lower()
+                                 or "disabled" in _last_api_error.lower()):
+            return _chatbot_answer_inner(question)
     try:
         return _chatbot_answer_inner(question)
     except Exception as e:
@@ -3547,23 +3542,74 @@ def _chatbot_answer_inner(question):
             f"**Net fees after credits: ${total_fees:,.2f}** ({total_fees / gross_sales * 100:.1f}% of sales)"
         )
 
-    # ── Refund / Return questions ──
-    if any(w in q for w in ["refund", "return", "refunded"]):
+    # ── Refund / Return / TJ / Braden / accountability questions ──
+    if any(w in q for w in ["refund", "return", "refunded", "tj", "braden", "who cost",
+                             "who is costing", "accountability", "whose fault", "who shipped"]):
         refund_rate = len(refund_df) / len(sales_df) * 100 if len(sales_df) else 0
         avg_ref = total_refunds / len(refund_df) if len(refund_df) else 0
 
+        # Build per-person breakdown from assignments
+        import re as _re_inner
+        _tj_orders, _br_orders, _ca_orders = [], [], []
+        for _, _rr in refund_df.sort_values("Date_Parsed", ascending=False).iterrows():
+            _m = _re_inner.search(r"Order #\d+", str(_rr.get("Title", "")))
+            _onum = _m.group(0) if _m else "unknown"
+            _assignee = _refund_assignments.get(_onum, "")
+            _entry = {"order": _onum, "date": str(_rr.get("Date", "")), "amount": abs(_rr["Net_Clean"]),
+                       "title": str(_rr.get("Title", ""))[:50]}
+            if _assignee == "TJ":
+                _tj_orders.append(_entry)
+            elif _assignee == "Braden":
+                _br_orders.append(_entry)
+            elif _assignee == "Cancelled":
+                _ca_orders.append(_entry)
+
+        _tj_total = sum(o["amount"] for o in _tj_orders)
+        _br_total = sum(o["amount"] for o in _br_orders)
+        _ca_total = sum(o["amount"] for o in _ca_orders)
+        _active_total = _tj_total + _br_total
+
         lines = [
-            f"**Refunds:** ${total_refunds:,.2f} ({len(refund_df)} orders, {refund_rate:.1f}% rate)\n",
-            f"Average refund: ${avg_ref:,.2f}\n",
-            f"**Monthly refunds:**",
+            f"**REFUND ACCOUNTABILITY REPORT**\n",
+            f"Total refunded: **${total_refunds:,.2f}** ({len(refund_df)} orders, {refund_rate:.1f}% rate)\n",
+            f"---",
+            f"**Braden: {len(_br_orders)} refunds — ${_br_total:,.2f}** "
+            f"({_br_total / _active_total * 100:.0f}% of refund cost)" if _active_total > 0 else f"**Braden: {len(_br_orders)} refunds — ${_br_total:,.2f}**",
         ]
+        for o in _br_orders:
+            lines.append(f"  - {o['date']}: ${o['amount']:,.2f} — {o['title']}")
+
+        lines.append("")
+        lines.append(
+            f"**TJ: {len(_tj_orders)} refunds — ${_tj_total:,.2f}** "
+            f"({_tj_total / _active_total * 100:.0f}% of refund cost)" if _active_total > 0 else f"**TJ: {len(_tj_orders)} refunds — ${_tj_total:,.2f}**"
+        )
+        for o in _tj_orders:
+            lines.append(f"  - {o['date']}: ${o['amount']:,.2f} — {o['title']}")
+
+        if _ca_orders:
+            lines.append(f"\n**Cancelled by buyer: {len(_ca_orders)} orders — ${_ca_total:,.2f}** (not shipped)")
+
+        lines.append(f"\n---")
+        if _active_total > 0:
+            _tj_avg = _tj_total / len(_tj_orders) if _tj_orders else 0
+            _br_avg = _br_total / len(_br_orders) if _br_orders else 0
+            lines.append(f"**Avg refund:** TJ ${_tj_avg:,.2f} | Braden ${_br_avg:,.2f}")
+            if _br_total > _tj_total:
+                lines.append(f"\n**Braden is costing the company more in refunds** — "
+                           f"${_br_total - _tj_total:,.2f} more than TJ.")
+            elif _tj_total > _br_total:
+                lines.append(f"\n**TJ is costing the company more in refunds** — "
+                           f"${_tj_total - _br_total:,.2f} more than Braden.")
+
+        lines.append(f"\n**Monthly refunds:**")
         for m in months_sorted:
             lines.append(f"- {m}: ${monthly_refunds.get(m, 0):,.2f}")
 
         if return_label_matches:
             lines.append(f"\n**Return labels:** {usps_return_count} totaling ${usps_return:,.2f}")
-            for match in return_label_matches:
-                lines.append(f"- {match['date']}: ${match['cost']:.2f} -- {match['product'][:45]}")
+            for match in return_label_matches[:5]:
+                lines.append(f"- {match['date']}: ${match['cost']:.2f} — {match['product'][:45]}")
 
         return "\n".join(lines)
 
@@ -3788,6 +3834,10 @@ def _chatbot_answer_inner(question):
             f"**Cash:** Bank ${bank_net_cash:,.2f} | Etsy ${etsy_balance:,.2f} | "
             f"Owner Draws ${bank_owner_draw_total:,.2f}\n\n"
             f"**Top product:** {_top_prod}\n\n"
+            f"**Refund accountability:** TJ={sum(1 for v in _refund_assignments.values() if v == 'TJ')} "
+            f"(${sum(abs(r['Net_Clean']) for _, r in refund_df.iterrows() if _refund_assignments.get(_extract_order_num(r['Title']), '') == 'TJ'):,.2f}) | "
+            f"Braden={sum(1 for v in _refund_assignments.values() if v == 'Braden')} "
+            f"(${sum(abs(r['Net_Clean']) for _, r in refund_df.iterrows() if _refund_assignments.get(_extract_order_num(r['Title']), '') == 'Braden'):,.2f})\n\n"
             f"**Trend:** {analytics_projections.get('growth_pct', 0):+.1f}% monthly growth\n\n"
             f"**Best Buy CC:** ${bb_cc_balance:,.2f} owed (${bb_cc_total_paid:,.2f} paid of ${bb_cc_total_charged:,.2f} equipment)"
         )
@@ -4446,8 +4496,21 @@ def _build_jarvis_auto_briefing():
     except NameError:
         pass
 
+    # Refund accountability
+    try:
+        _tj_n = sum(1 for v in _refund_assignments.values() if v == "TJ")
+        _br_n = sum(1 for v in _refund_assignments.values() if v == "Braden")
+        _tj_amt = sum(abs(r["Net_Clean"]) for _, r in refund_df.iterrows()
+                      if _refund_assignments.get(_extract_order_num(r["Title"]), "") == "TJ")
+        _br_amt = sum(abs(r["Net_Clean"]) for _, r in refund_df.iterrows()
+                      if _refund_assignments.get(_extract_order_num(r["Title"]), "") == "Braden")
+        if _tj_n + _br_n > 0:
+            lines.append(f"Refunds: TJ {_tj_n} (${_tj_amt:,.0f}) | Braden {_br_n} (${_br_amt:,.0f})")
+    except Exception:
+        pass
+
     if not lines:
-        lines.append("I'm JARVIS, your AI business intelligence advisor. Ask me anything!")
+        lines.append("JARVIS online. All systems operational.")
 
     return "\n".join(lines)
 
