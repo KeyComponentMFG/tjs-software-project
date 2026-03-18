@@ -15002,7 +15002,6 @@ def build_tab7_data_hub():
             ], style={"marginBottom": "12px"}),
             dcc.Tabs(
                 id="datahub-store-tabs",
-                value="dh-keycomponentmfg",
                 children=_store_subtabs,
                 style={"borderBottom": f"1px solid {DARKGRAY}33"},
             ),
@@ -15172,6 +15171,7 @@ def serve_layout():
         dcc.Store(id="data-version-store", data=0),
         dcc.Store(id="upload-reload-trigger", data=0),
         dcc.Store(id="selected-store", data="all", storage_type="session"),
+        dcc.Store(id="datahub-active-store-tab", data="dh-keycomponentmfg", storage_type="session"),
 
         # Header
         html.Div([
@@ -17284,13 +17284,25 @@ def handle_chat(n_clicks, n_submit, quick_clicks, user_input, history_data, curr
 
 @app.callback(
     Output("datahub-etsy-store-picker", "data"),
+    Output("datahub-active-store-tab", "data"),
     Input("datahub-store-tabs", "value"),
 )
 def sync_datahub_store_tab(tab):
-    """Set the hidden store picker based on which store sub-tab is active."""
+    """Set the hidden store picker and remember active tab."""
     store_map = {"dh-all": "all", "dh-keycomponentmfg": "keycomponentmfg",
                  "dh-aurvio": "aurvio", "dh-lunalinks": "lunalinks"}
-    return store_map.get(tab, "keycomponentmfg")
+    return store_map.get(tab, "keycomponentmfg"), tab or "dh-keycomponentmfg"
+
+# Restore the active store tab after page rebuild (e.g., after upload)
+app.clientside_callback(
+    """
+    function(saved_tab) {
+        return saved_tab || "dh-keycomponentmfg";
+    }
+    """,
+    Output("datahub-store-tabs", "value"),
+    Input("datahub-active-store-tab", "data"),
+)
 
 
 @app.callback(
