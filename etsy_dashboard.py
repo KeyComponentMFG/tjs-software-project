@@ -4872,6 +4872,143 @@ def _rebuild_all_charts():
     global ship_pcts, ship_type_colors, ship_type_fig, ship_type_names, ship_type_vals, shipping_compare, texas_cat_fig, top_n
     global top_products, trend_profit_rev, true_profit_monthly, tulsa_cat_fig, unit_wf
 
+    # ── Guard: empty store (no data yet) ────────────────────────────────────────
+    if not months_sorted or order_count == 0:
+        # Set safe defaults for all chart globals so tab builders don't crash
+        monthly_fig = go.Figure()
+        daily_fig = go.Figure()
+        dow_fig = go.Figure()
+        product_fig = go.Figure()
+        product_heat = go.Figure()
+        expense_pie = go.Figure()
+        aov_fig = go.Figure()
+        anomaly_fig = go.Figure()
+        bank_monthly_fig = go.Figure()
+        cashflow_fig = go.Figure()
+        cum_fig = go.Figure()
+        corr_fig = go.Figure()
+        cost_ratio_fig = go.Figure()
+        trend_profit_rev = go.Figure()
+        profit_rolling_fig = go.Figure()
+        proj_chart = go.Figure()
+        sankey_fig = go.Figure()
+        ship_type_fig = go.Figure()
+        shipping_compare = go.Figure()
+        intl_fig = go.Figure()
+        ppo_fig = go.Figure()
+        rev_cogs_fig = go.Figure()
+        rev_inv_fig = go.Figure()
+        orders_day_fig = go.Figure()
+        unit_wf = go.Figure()
+        inv_cat_fig = go.Figure()
+        inv_cat_bar = go.Figure()
+        inv_monthly_fig = go.Figure()
+        loc_fig = go.Figure()
+        loc_monthly_fig = go.Figure()
+        tulsa_cat_fig = go.Figure()
+        texas_cat_fig = go.Figure()
+        true_profit_monthly = go.Figure()
+        # Safe scalar defaults
+        _latest_month_rev = 0
+        _latest_month_net = 0
+        _growth_pct = 0
+        _r2_sales = 0
+        _daily_rev_avg = 0
+        _daily_rev_mean = 0
+        _daily_rev_std = 0
+        _daily_profit_avg = 0
+        _daily_orders_avg = 0
+        _current_14d_profit_avg = 0
+        _net_margin_overall = 0
+        _best_dow = "N/A"
+        _worst_dow = "N/A"
+        _dow_names = []
+        _dow_rev_vals = [0]
+        _dow_ord_vals = [0]
+        _dow_prof_vals = [0]
+        _peak_orders_day = "N/A"
+        _zero_days = 0
+        _anomaly_high = []
+        _anomaly_low = []
+        _unit_rev = 0
+        _unit_fees = 0
+        _unit_ship = 0
+        _unit_ads = 0
+        _unit_refund = 0
+        _unit_cogs = 0
+        _unit_profit = 0
+        _unit_margin = 0
+        _monthly_fixed = 0
+        _contrib_margin_pct = 0
+        _breakeven_monthly = 0
+        _breakeven_orders = 0
+        _breakeven_daily = 0
+        _total_costs = 0
+        _etsy_took = 0
+        _month_abbr = []
+        _top_n_products = 0
+        _top_prod_names = []
+        _supplier_spend = {}
+        _inv_cogs_ratio = 0
+        _last_aov_val = 0
+        _aov_best_week = "N/A"
+        _aov_worst_week = "N/A"
+        expense_labels_list = []
+        expense_values_list = []
+        expense_colors_list = []
+        aov_vals = []
+        top_products = pd.Series(dtype=float)
+        top_n = 10
+        inv_months_sorted = []
+        all_inv_months = []
+        all_loc_months = []
+        ppo_months = []
+        ppo_vals = []
+        ratio_months = []
+        fee_pcts = []
+        ship_pcts = []
+        mkt_pcts_list = []
+        ref_pcts = []
+        margin_pcts = []
+        net_by_month = {}
+        bank_months_sorted = []
+        BANK_MONTH_NAMES = []
+        bank_month_deps = []
+        bank_month_debs = []
+        bank_month_nets = []
+        bank_month_labels = []
+        sankey_node_labels = []
+        sankey_node_colors = []
+        sankey_sources = []
+        sankey_targets = []
+        sankey_values = []
+        sankey_link_colors = []
+        ship_type_names = []
+        ship_type_vals = []
+        ship_type_colors = []
+        _corr_rev_vals = []
+        _corr_ad_vals = []
+        _corr_r2 = 0
+        _inv_months = []
+        _inv_rev_vals = []
+        _inv_spend_vals = []
+        _prod_monthly = {}
+        _cf_months = []
+        _cf_deposits = []
+        _cf_debits = []
+        _cf_net = []
+        _cf_cum = []
+        _last_fee_pct = 0
+        _last_ship_pct = 0
+        _last_mkt_pct = 0
+        _last_ref_pct = 0
+        _last_margin_pct = 0
+        _last_ppo_m = "N/A"
+        _last_ppo_val = 0
+        _last_ratio_m = "N/A"
+        _best_day_rev = 0
+        return
+
     # ── Build Charts ─────────────────────────────────────────────────────────────
 
     # --- TAB 1: OVERVIEW CHARTS ---
@@ -15077,6 +15214,26 @@ def render_active_tab(tab, _strict_flag, _upload_trigger, _selected_store):
     _apply_store_filter(_selected_store or "all")
     _rebuild_all_charts()
     stale_banner = _build_stale_data_banner()
+
+    # Store label for header
+    _store_label = STORES.get(_selected_store, "All Stores") if _selected_store and _selected_store != "all" else None
+
+    # Empty store guard — show message instead of crashing
+    _store_empty = order_count == 0 and _selected_store and _selected_store != "all"
+    if _store_empty and tab not in ("tab-data-hub", "tab-inventory"):
+        return html.Div([
+            stale_banner,
+            html.Div([
+                html.Div(f"No data for {STORES.get(_selected_store, _selected_store)}", style={
+                    "color": ORANGE, "fontSize": "24px", "fontWeight": "bold", "textAlign": "center",
+                    "marginTop": "60px",
+                }),
+                html.Div("Upload Etsy CSV statements for this store in the Data Hub tab.", style={
+                    "color": GRAY, "fontSize": "14px", "textAlign": "center", "marginTop": "12px",
+                }),
+            ], style={"padding": "40px"}),
+        ])
+
     if tab == "tab-overview":
         return html.Div([stale_banner, build_tab1_overview()])
     elif tab == "tab-deep-dive":
