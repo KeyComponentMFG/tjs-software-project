@@ -17227,22 +17227,45 @@ def handle_chat(n_clicks, n_submit, quick_clicks, user_input, history_data, curr
     Output("datahub-receipt-stats", "children"),
     Output("datahub-bank-stats", "children"),
     Input("datahub-init-trigger", "data"),
+    Input("selected-store", "data"),
 )
-def init_datahub_files(_trigger):
+def init_datahub_files(_trigger, _selected_store):
     """Populate existing file lists and initial stats on page load."""
+    _store = _selected_store or "all"
+    _all_data = _DATA_ALL if _DATA_ALL is not None else DATA
+
+    # Etsy stats — filtered by selected store
+    if _store == "all" or not _store:
+        _etsy_data = _all_data
+        _store_label = "All Stores"
+    else:
+        _etsy_data = _all_data[_all_data["Store"] == _store] if "Store" in _all_data.columns else _all_data
+        _store_label = STORES.get(_store, _store)
+
+    _etsy_sales = _etsy_data[_etsy_data["Type"] == "Sale"] if len(_etsy_data) > 0 else _etsy_data
+    _etsy_order_count = len(_etsy_sales)
+    _etsy_gross = _etsy_sales["Net_Clean"].sum() if _etsy_order_count > 0 else 0
+
+    etsy_stats = html.Div([
+        html.Span(f"[{_store_label}] ", style={"color": STORE_COLORS.get(_store, TEAL), "fontWeight": "bold"}),
+        html.Span(f"{len(_etsy_data)} transactions  |  {_etsy_order_count} orders  |  Gross: ${_etsy_gross:,.2f}"),
+    ], style={"color": TEAL, "fontSize": "12px", "fontFamily": "monospace"})
+
+    # Etsy files — show per-store or all
     etsy_files = _get_existing_files("etsy")
+
+    # Tag root-level files (no subdirectory) as keycomponentmfg
+    for f in etsy_files:
+        if "/" not in f["filename"]:
+            f["filename"] = f"keycomponentmfg/{f['filename']}"
+
+    if _store != "all" and _store:
+        # Filter to only show files from selected store
+        etsy_files = [f for f in etsy_files if f["filename"].startswith(f"{_store}/")]
+
+    # Receipts and bank — always show all (shared across stores)
     receipt_files = _get_existing_files("receipt")
     bank_files = _get_existing_files("bank")
-
-    # Always show ALL stores data in Data Hub, not filtered
-    _all_data = _DATA_ALL if _DATA_ALL is not None else DATA
-    _all_sales = _all_data[_all_data["Type"] == "Sale"] if len(_all_data) > 0 else _all_data
-    _all_order_count = len(_all_sales)
-    _all_gross = _all_sales["Net_Clean"].sum() if _all_order_count > 0 else 0
-
-    etsy_stats = html.Div(f"{len(_all_data)} transactions  |  {_all_order_count} orders  |  "
-                           f"Gross: ${_all_gross:,.2f}",
-                           style={"color": TEAL, "fontSize": "12px", "fontFamily": "monospace"})
     receipt_stats = html.Div(f"{len(INVOICES)} orders  |  ${total_inventory_cost:,.2f} total spend",
                               style={"color": PURPLE, "fontSize": "12px", "fontFamily": "monospace"})
     bank_stats = html.Div(f"{len(BANK_TXNS)} transactions  |  Net: ${bank_net_cash:,.2f}",
