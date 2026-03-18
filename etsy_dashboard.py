@@ -3436,6 +3436,175 @@ def _build_chat_context():
     except Exception:
         pass
 
+    # Day-of-Week Patterns
+    lines.append("\n=== DAY-OF-WEEK PERFORMANCE ===")
+    try:
+        for i, _dn in enumerate(_dow_names):
+            lines.append(f"  {_dn}: ${_dow_rev_vals[i]:,.0f} revenue, {_dow_ord_vals[i]:.0f} orders")
+    except Exception:
+        pass
+
+    # Cost Ratio Trends
+    lines.append("\n=== COST RATIO TRENDS (% of sales by month) ===")
+    try:
+        for i, _rm in enumerate(ratio_months):
+            lines.append(f"  {_rm}: Fees={fee_pcts[i]:.1f}% Ship={ship_pcts[i]:.1f}% Ads={mkt_pcts_list[i]:.1f}% Refunds={ref_pcts[i]:.1f}% Margin={margin_pcts[i]:.1f}%")
+    except Exception:
+        pass
+
+    # Cash Flow Monthly
+    lines.append("\n=== MONTHLY CASH FLOW ===")
+    try:
+        for i, _cfm in enumerate(_cf_months):
+            lines.append(f"  {_cfm}: Deposits=${_cf_deposits[i]:,.0f} Expenses=${_cf_debits[i]:,.0f} Net=${_cf_net[i]:,.0f} Cumulative=${_cf_cum[i]:,.0f}")
+    except Exception:
+        pass
+
+    # Daily Performance Peaks
+    lines.append("\n=== DAILY PERFORMANCE ===")
+    try:
+        lines.append(f"Average daily revenue: ${_daily_rev_avg:,.2f}")
+        lines.append(f"Average daily orders: {_daily_orders_avg:.1f}")
+        lines.append(f"Best single day revenue: ${_best_day_rev:,.2f}")
+        lines.append(f"Peak orders in a day: {_peak_orders_day}")
+        lines.append(f"14-day rolling avg profit: ${_current_14d_profit_avg:,.2f}")
+        lines.append(f"Days with $0 revenue: {_zero_days}")
+    except Exception:
+        pass
+
+    # Health Score Components
+    lines.append("\n=== HEALTH SCORE BREAKDOWN ===")
+    try:
+        lines.append(f"Overall: {val_health_score}/100 ({val_health_grade})")
+        lines.append(f"  Profitability: {_hs_profit}/25")
+        lines.append(f"  Growth: {_hs_growth}/25")
+        lines.append(f"  Product Diversity: {_hs_diversity}/15")
+        lines.append(f"  Cash Position: {_hs_cash}/15")
+        lines.append(f"  Debt: {_hs_debt}/10")
+        lines.append(f"  Shipping: {_hs_shipping}/10")
+        lines.append(f"Top 3 products concentration: {_top3_conc:.1f}%")
+    except Exception:
+        pass
+
+    # Risks & Strengths
+    lines.append("\n=== BUSINESS RISKS ===")
+    try:
+        for _risk in val_risks:
+            lines.append(f"  [{_risk.get('severity', 'MED')}] {_risk.get('text', _risk) if isinstance(_risk, dict) else _risk}")
+    except Exception:
+        pass
+    lines.append("\n=== BUSINESS STRENGTHS ===")
+    try:
+        for _str in val_strengths:
+            lines.append(f"  {_str.get('text', _str) if isinstance(_str, dict) else _str}")
+    except Exception:
+        pass
+
+    # Bank Transaction Detail (recent 30)
+    lines.append("\n=== RECENT BANK TRANSACTIONS (last 30) ===")
+    try:
+        for _bt in bank_running[-30:]:
+            _bt_type = _bt.get("type", "")
+            _bt_desc = _bt.get("desc", "")
+            _bt_amt = _bt.get("amount", 0)
+            _bt_date = _bt.get("date", "")
+            _bt_cat = _bt.get("category", "")
+            _bt_bal = _bt.get("_balance", 0)
+            lines.append(f"  {_bt_date} | {_bt_type} | {_bt_desc} | ${_bt_amt:,.2f} | {_bt_cat} | bal=${_bt_bal:,.2f}")
+    except Exception:
+        pass
+
+    # Return Label Matching
+    lines.append("\n=== RETURN LABELS MATCHED TO REFUNDS ===")
+    try:
+        if return_label_matches:
+            for _rlm in return_label_matches:
+                lines.append(f"  {_rlm.get('date','')} | Label: {_rlm.get('label','')} ${_rlm.get('cost',0):,.2f} | "
+                             f"Product: {_rlm.get('product','?')} | Order: {_rlm.get('order','?')} | Refund: ${_rlm.get('refund_amt',0):,.2f}")
+        else:
+            lines.append("No return labels matched.")
+    except Exception:
+        pass
+
+    # Individual Refund Detail
+    lines.append("\n=== REFUND DETAIL ===")
+    try:
+        for _, _rf in refund_df.iterrows():
+            _rkey = _extract_order_num(_rf["Title"])
+            _assignee = _refund_assignments.get(_rkey, "Unassigned") if _rkey else "Unknown"
+            _rf_product = _rf.get("product_name", _rf.get("Title", ""))
+            lines.append(f"  {_rf.get('Date','')} | {_rkey or 'no order#'} | ${abs(_rf['Net_Clean']):,.2f} | {_assignee} | {_rf_product}")
+    except Exception:
+        pass
+
+    # Inventory Stock Status
+    lines.append("\n=== INVENTORY STOCK STATUS ===")
+    try:
+        if STOCK_SUMMARY is not None and len(STOCK_SUMMARY) > 0:
+            lines.append(f"Out of stock: {out_of_stock_count} items | Low stock (1-2): {low_stock_count}")
+            for _, _si in STOCK_SUMMARY.iterrows():
+                _si_name = _si.get("display_name", "?")
+                _si_stock = _si.get("in_stock", 0)
+                _si_purchased = _si.get("total_purchased", 0)
+                _si_used = _si.get("total_used", 0)
+                _si_cost = _si.get("total_cost", 0)
+                _si_loc = _si.get("location", "?")
+                _status = "OUT OF STOCK" if _si_stock <= 0 else "LOW" if _si_stock <= 2 else "OK"
+                lines.append(f"  [{_status}] {_si_name}: {_si_stock} in stock (bought {_si_purchased}, used {_si_used}) ${_si_cost:,.2f} | {_si_loc}")
+    except Exception:
+        pass
+
+    # Tax Year Breakdown
+    lines.append("\n=== TAX YEAR BREAKDOWN ===")
+    try:
+        for _yr, _yd in TAX_YEARS.items():
+            lines.append(f"\n  --- {_yr} ---")
+            lines.append(f"  Revenue: ${_yd.get('gross', 0):,.2f}")
+            lines.append(f"  Fees: ${_yd.get('fees', 0):,.2f}")
+            lines.append(f"  Shipping: ${_yd.get('shipping', 0):,.2f}")
+            lines.append(f"  Marketing: ${_yd.get('marketing', 0):,.2f}")
+            lines.append(f"  Refunds: ${_yd.get('refunds', 0):,.2f}")
+            lines.append(f"  Taxes: ${_yd.get('taxes', 0):,.2f}")
+            lines.append(f"  Net: ${_yd.get('net', _yd.get('etsy_net', 0)):,.2f}")
+            _yd_cogs = _yd.get('cogs', _yd.get('inventory_cost', 0))
+            if _yd_cogs:
+                lines.append(f"  COGS/Inventory: ${_yd_cogs:,.2f}")
+    except Exception:
+        pass
+
+    # Analytics Insights
+    lines.append("\n=== AI ANALYTICS INSIGHTS ===")
+    try:
+        for _ai in analytics_insights:
+            _ai_cat = _ai[1] if len(_ai) > 1 else ""
+            _ai_title = _ai[2] if len(_ai) > 2 else ""
+            _ai_detail = _ai[3] if len(_ai) > 3 else ""
+            _ai_sev = _ai[4] if len(_ai) > 4 else ""
+            lines.append(f"  [{_ai_sev.upper()}] {_ai_cat}: {_ai_title} — {_ai_detail}")
+    except Exception:
+        pass
+
+    # Location Breakdown (Tulsa vs Texas)
+    lines.append("\n=== LOCATION BREAKDOWN (Inventory) ===")
+    try:
+        lines.append(f"Tulsa (TJ): ${loc_spend.get('Tulsa', 0):,.2f} spend, {loc_orders.get('Tulsa', 0)} orders")
+        lines.append(f"Texas (Braden): ${loc_spend.get('Texas', 0):,.2f} spend, {loc_orders.get('Texas', 0)} orders")
+    except Exception:
+        pass
+
+    # Product Revenue (all, not just top 20)
+    lines.append("\n=== ALL PRODUCTS BY REVENUE ===")
+    try:
+        total_prod_rev2 = product_revenue_est.sum()
+        for i, (name, rev) in enumerate(product_revenue_est.items(), 1):
+            pct = rev / total_prod_rev2 * 100 if total_prod_rev2 else 0
+            lines.append(f"  {i}. {name} — ${rev:,.2f} ({pct:.1f}%)")
+            if i >= 50:
+                lines.append(f"  ... and {len(product_revenue_est) - 50} more products")
+                break
+    except Exception:
+        pass
+
     # ESTIMATED section
     lines.append("\n\n=== ESTIMATED METRICS (approximations — disclose method when citing) ===")
     lines.append("")
