@@ -14932,18 +14932,29 @@ def build_tab7_data_hub():
         # Data coverage panel — what's uploaded and what's missing
         _build_data_coverage(),
 
-        # Store picker for Etsy uploads
+        # Store picker for Etsy uploads — PROMINENT
         html.Div([
-            html.Span("Upload to store:", style={"color": GRAY, "fontSize": "12px", "marginRight": "8px"}),
-            dcc.Dropdown(
-                id="datahub-etsy-store-picker",
-                options=[{"label": v, "value": k} for k, v in STORES.items() if k != "all"],
-                value="keycomponentmfg",
-                clearable=False,
-                style={"width": "180px", "fontSize": "12px", "display": "inline-block",
-                       "verticalAlign": "middle"},
-            ),
-        ], style={"marginBottom": "10px", "display": "flex", "alignItems": "center"}),
+            html.Div([
+                html.Span("UPLOADING ETSY CSV TO:", style={
+                    "color": WHITE, "fontSize": "14px", "fontWeight": "bold",
+                    "letterSpacing": "1px", "marginRight": "12px",
+                }),
+                dcc.Dropdown(
+                    id="datahub-etsy-store-picker",
+                    options=[{"label": v, "value": k} for k, v in STORES.items() if k != "all"],
+                    value="keycomponentmfg",
+                    clearable=False,
+                    style={"width": "200px", "fontSize": "14px", "fontWeight": "bold"},
+                ),
+            ], style={"display": "flex", "alignItems": "center"}),
+            html.Div("Make sure you select the correct store before uploading. "
+                     "Receipts and bank statements are shared across all stores.",
+                     style={"color": ORANGE, "fontSize": "11px", "marginTop": "6px"}),
+        ], style={
+            "marginBottom": "16px", "padding": "12px 16px",
+            "backgroundColor": f"{ORANGE}12", "border": f"1px solid {ORANGE}44",
+            "borderRadius": "8px",
+        }),
 
         # 3-column upload zones
         html.Div([
@@ -17352,7 +17363,8 @@ def handle_datahub_upload(etsy_contents, receipt_contents, bank_contents,
                     if "Month" not in _old.columns:
                         _old["Date_Parsed"] = pd.to_datetime(_old["Date"], format="%B %d, %Y", errors="coerce")
                         _old["Month"] = _old["Date_Parsed"].dt.to_period("M").astype(str)
-                    _old_keep = _old[~_old["Month"].isin(_new_months)]
+                    # Only replace rows from the SAME store and same months
+                    _old_keep = _old[~((_old["Month"].isin(_new_months)) & (_old["Store"] == _upload_store))]
                     _replaced_count = len(_old) - len(_old_keep)
                     DATA = pd.concat([_old_keep, _new_df], ignore_index=True)
                     print(f"[UPLOAD] Railway replace: {len(_old)} - {_replaced_count} old month rows + {len(_new_df)} new = {len(DATA)} total")
@@ -17386,21 +17398,22 @@ def handle_datahub_upload(etsy_contents, receipt_contents, bank_contents,
                 if not _sb_ok:
                     msg += " (WARNING: Supabase sync failed — data may not persist after restart)"
 
+                _store_display = STORES.get(_upload_store, _upload_store)
                 if has_overlap:
                     etsy_status = html.Div([
                         html.Span("\u26a0 ", style={"color": ORANGE, "fontWeight": "bold"}),
-                        html.Span(f"Replaced {overlap_file} — {overlap_msg}. {msg}",
+                        html.Span(f"[{_store_display}] Replaced {overlap_file} — {overlap_msg}. {msg}",
                                   style={"color": ORANGE, "fontSize": "13px"}),
                     ])
                     log_icon, log_color = "\u26a0", ORANGE
-                    log_text = f"Etsy CSV: Replaced {overlap_file} with {fname} ({msg})"
+                    log_text = f"Etsy CSV [{_store_display}]: Replaced {overlap_file} with {fname} ({msg})"
                 else:
                     etsy_status = html.Div([
                         html.Span("\u2713 ", style={"color": GREEN, "fontWeight": "bold"}),
-                        html.Span(f"Uploaded {fname} — {msg}", style={"color": GREEN, "fontSize": "13px"}),
+                        html.Span(f"[{_store_display}] Uploaded {fname} — {msg}", style={"color": GREEN, "fontSize": "13px"}),
                     ])
                     log_icon, log_color = "\u2713", GREEN
-                    log_text = f"Etsy CSV: {fname} ({msg})"
+                    log_text = f"Etsy CSV [{_store_display}]: {fname} ({msg})"
 
                 etsy_stats = html.Div(
                     f"{stats['transactions']} transactions  |  {stats['orders']} orders  |  "
