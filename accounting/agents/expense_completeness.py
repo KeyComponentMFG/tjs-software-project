@@ -113,7 +113,7 @@ class ExpenseCompletenessAgent:
                 })
             category_pools[cat] = pool
 
-        # Match debits against receipt pools — strict single pass
+        # Match debits against receipt pools — two-pass: exact date first, then fuzzy
         matched_entries: set[str] = set()  # dedup_hash of matched debits
 
         for cat, sources in CATEGORY_TO_RECEIPT_SOURCES.items():
@@ -123,46 +123,52 @@ class ExpenseCompletenessAgent:
             )
             pool = category_pools.get(cat, [])
 
-            for entry in cat_debits:
+            # Build all candidate pairs scored by (date_diff, amt_diff)
+            # then greedily match closest pairs first to avoid amount collisions
+            candidates = []
+            for d_idx, entry in enumerate(cat_debits):
                 bank_amt = abs(entry.amount)
                 bank_dt = datetime(entry.txn_date.year, entry.txn_date.month, entry.txn_date.day)
 
-                best_idx = -1
-                best_score = 999999
-
-                for i, r in enumerate(pool):
-                    if r["used"]:
-                        continue
+                for r_idx, r in enumerate(pool):
                     amt_diff = abs(r["amount"] - bank_amt)
-                    # Strict: ±$0.02 only
                     if amt_diff > Decimal("0.02"):
                         continue
                     if r["date"]:
                         day_diff = abs((bank_dt - r["date"]).days)
                         if day_diff > 14:
                             continue
-                        score = int(amt_diff * 10000) + day_diff
                     else:
-                        score = 50000 + int(amt_diff * 10000)
+                        day_diff = 999
+                    # Score: date proximity is primary (x1000), amount diff is tiebreaker
+                    score = day_diff * 1000 + int(amt_diff * 10000)
+                    candidates.append((score, d_idx, r_idx, entry, bank_amt, bank_dt))
 
-                    if score < best_score:
-                        best_score = score
-                        best_idx = i
+            # Sort by score (best matches first) and greedily assign
+            candidates.sort(key=lambda x: x[0])
+            used_debits: set[int] = set()
+            used_receipts: set[int] = set()
 
-                if best_idx >= 0:
-                    r = pool[best_idx]
-                    r["used"] = True
-                    matched_entries.add(entry.dedup_hash)
+            for score, d_idx, r_idx, entry, bank_amt, bank_dt in candidates:
+                if d_idx in used_debits or r_idx in used_receipts:
+                    continue
+                used_debits.add(d_idx)
+                used_receipts.add(r_idx)
 
-                    receipt_matches.append(ReceiptMatch(
-                        bank_entry=entry,
-                        receipt_source=r["source"],
-                        receipt_date=r["date"].date() if r["date"] else entry.txn_date,
-                        receipt_amount=r["amount"],
-                        amount_diff=abs(r["amount"] - bank_amt),
-                        date_diff_days=abs((bank_dt - r["date"]).days) if r["date"] else 0,
-                        invoice_id=r["invoice_id"],
-                    ))
+                r = pool[r_idx]
+                r["used"] = True
+                matched_entries.add(entry.dedup_hash)
+
+                day_diff = abs((bank_dt - r["date"]).days) if r["date"] else 0
+                receipt_matches.append(ReceiptMatch(
+                    bank_entry=entry,
+                    receipt_source=r["source"],
+                    receipt_date=r["date"].date() if r["date"] else entry.txn_date,
+                    receipt_amount=r["amount"],
+                    amount_diff=abs(r["amount"] - bank_amt),
+                    date_diff_days=day_diff,
+                    invoice_id=r["invoice_id"],
+                ))
 
         # All unmatched expense debits → MissingReceipt
         for entry in expense_debits:
