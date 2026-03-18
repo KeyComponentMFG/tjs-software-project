@@ -3296,9 +3296,17 @@ def _build_chat_context():
     # UNAVAILABLE section
     lines.append("\n\n=== UNAVAILABLE DATA (do NOT make up values for these) ===")
     lines.append("")
-    lines.append("Refund Buyer Shipping: NOT in Etsy Payments CSV")
+    lines.append("Buyer-Paid Shipping Amount: NOT in Etsy Payments CSV (only the label fee is recorded)")
     lines.append("Per-Order Label Costs: Labels don't carry order numbers")
     lines.append("Per-Order COGS: No link between inventory purchases and specific orders")
+    lines.append("")
+    lines.append("NOTE ON MISSING RECEIPTS: 'Missing receipts' means bank expenses that haven't been matched "
+                 "to uploaded invoice/receipt PDFs yet. This does NOT mean the expense is unaccounted for — "
+                 "it just means the paper trail hasn't been uploaded. Many categories (Owner Draws, Etsy Fees, "
+                 "Subscriptions) are bank-verified and don't need separate receipts.")
+    lines.append("")
+    lines.append("NOTE ON REFUND ASSIGNMENTS: All refunds have been categorized as TJ, Braden, or Cancelled. "
+                 "The data above shows the full breakdown. Use the get_refund_assignments tool for order-level detail.")
 
     return "\n".join(lines)
 
@@ -3326,6 +3334,9 @@ def _chatbot_answer_claude(question, history, api_key):
         "- If asked about buyer-paid shipping, shipping profit, or shipping margin: UNAVAILABLE — "
         "Etsy Payments CSV only records the fee, not the buyer-paid amount.\n"
         "- When discussing refunds, break down by person (TJ vs Braden) using the assignment data.\n"
+        "- All refunds ARE assigned to TJ, Braden, or Cancelled. Do NOT say they need to be defined.\n"
+        "- 'Missing receipts' = bank expenses without uploaded invoice PDFs. NOT unaccounted money. "
+        "Owner Draws, Etsy Fees, Subscriptions are bank-verified — don't flag these as problems.\n"
         "- End substantive answers with Action Items.\n"
         f"- Data covers {_date_range}.\n\n"
         f"=== BUSINESS DATA ===\n{ctx}"
