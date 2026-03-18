@@ -3546,12 +3546,16 @@ def chatbot_answer(question, history=None):
 
     # Try OpenAI first (GPT-4o-mini)
     openai_key = os.environ.get("OPENAI_API_KEY", "")
+    print(f"[Jarvis] OPENAI_API_KEY present: {bool(openai_key)}, length: {len(openai_key)}")
     if openai_key:
         try:
-            return _chatbot_answer_openai(question, history, openai_key)
+            print(f"[Jarvis] Calling OpenAI GPT-4o-mini...")
+            result = _chatbot_answer_openai(question, history, openai_key)
+            print(f"[Jarvis] OpenAI success, response length: {len(result)}")
+            return result
         except Exception as e:
             _last_api_error = str(e)
-            print(f"[Jarvis] OpenAI failed, trying Claude fallback: {e}")
+            print(f"[Jarvis] OpenAI failed: {e}")
 
     # Try Claude (Anthropic) as fallback
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
