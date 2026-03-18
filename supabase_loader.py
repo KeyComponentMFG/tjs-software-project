@@ -729,10 +729,22 @@ def sync_etsy_transactions(data_df) -> bool:
                 chunk = ids[i:i+500]
                 client.table("etsy_transactions").delete().in_("id", chunk).execute()
             print(f"  Deleted {len(ids)} rows from Supabase...")
+        # Detect if 'store' column exists in Supabase table
+        _has_store_col = True
+        try:
+            client.table("etsy_transactions").insert({
+                "date": "__col_test__", "type": "", "title": "", "info": "",
+                "currency": "", "amount": "", "fees_and_taxes": "", "net": "",
+                "tax_details": "", "store": "test",
+            }).execute()
+            client.table("etsy_transactions").delete().eq("date", "__col_test__").execute()
+        except Exception:
+            _has_store_col = False
+
         # Insert in batches
         rows = []
         for _, r in data_df.iterrows():
-            rows.append({
+            row = {
                 "date": str(r.get("Date", "")),
                 "type": str(r.get("Type", "")),
                 "title": str(r.get("Title", "")),
@@ -742,8 +754,10 @@ def sync_etsy_transactions(data_df) -> bool:
                 "fees_and_taxes": str(r.get("Fees & Taxes", "--")),
                 "net": str(r.get("Net", "--")),
                 "tax_details": str(r.get("Tax Details", "--")),
-                "store": str(r.get("Store", "keycomponentmfg")),
-            })
+            }
+            if _has_store_col:
+                row["store"] = str(r.get("Store", "keycomponentmfg"))
+            rows.append(row)
         for i in range(0, len(rows), 500):
             client.table("etsy_transactions").insert(rows[i:i+500]).execute()
         # Row-count guard: verify Supabase has expected number of rows
@@ -777,18 +791,26 @@ def append_etsy_transactions(data_df) -> dict:
         from collections import Counter
         total_new = len(data_df)
         # Fetch ALL existing rows to count duplicates per key (paginated)
+        # Detect if 'store' column exists
+        _has_store = True
+        try:
+            client.table("etsy_transactions").select("store").limit(1).execute()
+        except Exception:
+            _has_store = False
+
         existing_counts = Counter()
         _offset = 0
+        _select_cols = "date,type,title,info,amount,net" + (",store" if _has_store else "")
         while True:
             batch = (client.table("etsy_transactions")
-                     .select("date,type,title,info,amount,net,store")
+                     .select(_select_cols)
                      .order("id")
                      .range(_offset, _offset + 999)
                      .execute())
             for r in batch.data:
                 key = (r.get("date", ""), r.get("type", ""), r.get("title", ""),
                        r.get("info", ""), r.get("amount", ""), r.get("net", ""),
-                       r.get("store", "keycomponentmfg"))
+                       r.get("store", "keycomponentmfg") if _has_store else "keycomponentmfg")
                 existing_counts[key] += 1
             if len(batch.data) < 1000:
                 break
@@ -804,7 +826,7 @@ def append_etsy_transactions(data_df) -> dict:
                    str(r.get("Store", "keycomponentmfg")))
             new_counts[key] += 1
             if key not in new_rows_by_key:
-                new_rows_by_key[key] = {
+                _row = {
                     "date": str(r.get("Date", "")),
                     "type": str(r.get("Type", "")),
                     "title": str(r.get("Title", "")),
@@ -814,8 +836,10 @@ def append_etsy_transactions(data_df) -> dict:
                     "fees_and_taxes": str(r.get("Fees & Taxes", "--")),
                     "net": str(r.get("Net", "--")),
                     "tax_details": str(r.get("Tax Details", "--")),
-                    "store": str(r.get("Store", "keycomponentmfg")),
                 }
+                if _has_store:
+                    _row["store"] = str(r.get("Store", "keycomponentmfg"))
+                new_rows_by_key[key] = _row
 
         # Insert only the EXCESS rows: new_count - existing_count for each key
         rows = []
