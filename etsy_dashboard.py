@@ -523,6 +523,57 @@ def _filtered_data(store="all"):
     return DATA[DATA["Store"] == store]
 
 
+_DATA_ALL = None  # Stashed full DATA for store filter restore
+
+
+def _apply_store_filter(store="all"):
+    """Temporarily swap DATA to a store-filtered version and recompute all globals.
+
+    This lets all existing tab builders, charts, and metric computations work
+    without modification — they read globals, and we just swap what the globals point to.
+    Call with 'all' to restore the full dataset.
+    """
+    global DATA, _DATA_ALL
+    global gross_sales, total_refunds, net_sales, total_fees
+    global total_shipping_cost, total_marketing, total_taxes, total_payments
+    global order_count, avg_order, total_buyer_fees
+
+    # Stash full DATA on first call
+    if _DATA_ALL is None:
+        _DATA_ALL = DATA.copy()
+
+    # Swap DATA to filtered version
+    if store == "all" or not store:
+        DATA = _DATA_ALL
+    else:
+        DATA = _DATA_ALL[_DATA_ALL["Store"] == store].copy()
+
+    # Recompute all derived DataFrames and aggregations
+    _rebuild_etsy_derived()
+
+    # Recompute top-level scalars (not done by _rebuild_etsy_derived)
+    gross_sales = sales_df["Net_Clean"].sum()
+    total_refunds = abs(refund_df["Net_Clean"].sum())
+    net_sales = gross_sales - total_refunds
+    total_fees = abs(fee_df["Net_Clean"].sum())
+    total_shipping_cost = abs(ship_df["Net_Clean"].sum())
+    total_marketing = abs(mkt_df["Net_Clean"].sum())
+    total_taxes = abs(tax_df["Net_Clean"].sum())
+    total_payments = payment_df["Net_Clean"].sum()
+    total_buyer_fees = abs(buyer_fee_df["Net_Clean"].sum()) if len(buyer_fee_df) else 0
+    order_count = len(sales_df)
+    avg_order = gross_sales / order_count if order_count else 0
+
+    # For per-store views, compute Etsy-side profit (bank metrics stay unified)
+    if store != "all" and store:
+        global etsy_net, profit, profit_margin
+        etsy_net = gross_sales - total_fees - total_shipping_cost - total_marketing - total_refunds - total_taxes - total_buyer_fees
+        # Per-store "profit" = Etsy net minus proportional share of bank expenses
+        # For simplicity, use Etsy net as the store's contribution
+        profit = etsy_net
+        profit_margin = (profit / gross_sales * 100) if gross_sales else 0
+
+
 # ── Pre-compute metrics ─────────────────────────────────────────────────────
 
 sales_df = DATA[DATA["Type"] == "Sale"]
@@ -1944,6 +1995,10 @@ def _cascade_reload(source="etsy"):
     global real_profit, real_profit_margin, bank_cash_on_hand, bank_all_expenses
     global profit, profit_margin, receipt_cogs_outside_bank
     global bank_amazon_inv
+
+    # 0. Update the stashed full DATA so store filter stays current after uploads
+    global _DATA_ALL
+    _DATA_ALL = DATA.copy()
 
     # 1. Run pipeline FIRST to update all base metrics (etsy_balance, gross_sales, etc.)
     if _acct_pipeline is not None:
@@ -15019,6 +15074,7 @@ def _sync_store_selector(value):
 )
 def render_active_tab(tab, _strict_flag, _upload_trigger, _selected_store):
     """Rebuild the active tab's content on every tab switch, strict mode toggle, or upload."""
+    _apply_store_filter(_selected_store or "all")
     _rebuild_all_charts()
     stale_banner = _build_stale_data_banner()
     if tab == "tab-overview":
