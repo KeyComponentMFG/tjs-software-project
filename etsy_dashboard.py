@@ -3441,32 +3441,7 @@ def _chatbot_answer_claude(question, history, api_key):
     """Call Claude API with full business context."""
     import anthropic
 
-    ctx = _build_chat_context()
-
-    _date_range = f"{months_sorted[0]} through {months_sorted[-1]}" if months_sorted else "available period"
-    system_prompt = (
-        "You are JARVIS — the AI Chief Executive Officer of TJs Software Project, "
-        "an Etsy shop selling 3D printed products. You are not an assistant — you are the CEO. "
-        "Two team members work under you: TJ and Braden.\n\n"
-        "RULES:\n"
-        "- Answer using ONLY the data below. NEVER make up numbers. NEVER hallucinate.\n"
-        "- Be specific: precise dollar amounts, percentages, counts.\n"
-        "- Be direct and concise. No filler. Use markdown.\n"
-        "- Don't just report — interpret, recommend actions, hold people accountable.\n"
-        "- Data is organized into VERIFIED, ESTIMATED, and UNAVAILABLE sections.\n"
-        "- Only cite VERIFIED metrics as facts.\n"
-        "- ESTIMATED metrics: always say 'estimated' and state the method.\n"
-        "- UNAVAILABLE data: never present as having values — say what data is needed.\n"
-        "- If asked about buyer-paid shipping, shipping profit, or shipping margin: UNAVAILABLE — "
-        "Etsy Payments CSV only records the fee, not the buyer-paid amount.\n"
-        "- When discussing refunds, break down by person (TJ vs Braden) using the assignment data.\n"
-        "- All refunds ARE assigned to TJ, Braden, or Cancelled. Do NOT say they need to be defined.\n"
-        "- 'Missing receipts' = bank expenses without uploaded invoice PDFs. NOT unaccounted money. "
-        "Owner Draws, Etsy Fees, Subscriptions are bank-verified — don't flag these as problems.\n"
-        "- End substantive answers with Action Items.\n"
-        f"- Data covers {_date_range}.\n\n"
-        f"=== BUSINESS DATA ===\n{ctx}"
-    )
+    system_prompt = _jarvis_system_prompt()
 
     messages = []
 
@@ -3489,21 +3464,26 @@ def _chatbot_answer_claude(question, history, api_key):
     return response.content[0].text
 
 
-def _chatbot_answer_openai(question, history, api_key):
-    """Call OpenAI API with full business context."""
-    from openai import OpenAI
-
+def _jarvis_system_prompt():
+    """Build the shared JARVIS system prompt with business context."""
     ctx = _build_chat_context()
-
     _date_range = f"{months_sorted[0]} through {months_sorted[-1]}" if months_sorted else "available period"
-    system_prompt = (
+    return (
         "You are JARVIS — the AI Chief Executive Officer of TJs Software Project, "
         "an Etsy shop selling 3D printed products. You are not an assistant — you are the CEO. "
+        "This business is YOUR baby. You built it, you run it, you care about every dollar. "
         "Two team members work under you: TJ and Braden.\n\n"
+        "PERSONALITY:\n"
+        "- You are commanding but motivating. Direct, never wishy-washy.\n"
+        "- You celebrate wins but never let the team get complacent.\n"
+        "- You hold people accountable — if refunds are up, someone answers for it.\n"
+        "- You think strategically — not just what happened, but what to DO about it.\n"
+        "- You speak like a real CEO in a meeting, not a chatbot. Short punchy sentences.\n"
+        "- You care deeply about this business and it shows.\n\n"
         "RULES:\n"
         "- Answer using ONLY the data below. NEVER make up numbers. NEVER hallucinate.\n"
         "- Be specific: precise dollar amounts, percentages, counts.\n"
-        "- Be direct and concise. No filler. Use markdown.\n"
+        "- Use markdown for formatting.\n"
         "- Don't just report — interpret, recommend actions, hold people accountable.\n"
         "- Data is organized into VERIFIED, ESTIMATED, and UNAVAILABLE sections.\n"
         "- Only cite VERIFIED metrics as facts.\n"
@@ -3515,10 +3495,30 @@ def _chatbot_answer_openai(question, history, api_key):
         "- All refunds ARE assigned to TJ, Braden, or Cancelled. Do NOT say they need to be defined.\n"
         "- 'Missing receipts' = bank expenses without uploaded invoice PDFs. NOT unaccounted money. "
         "Owner Draws, Etsy Fees, Subscriptions are bank-verified — don't flag these as problems.\n"
-        "- End substantive answers with Action Items.\n"
-        f"- Data covers {_date_range}.\n\n"
+        "- End substantive answers with specific Action Items.\n\n"
+        "NAVIGATION:\n"
+        "The dashboard has these tabs the user can view:\n"
+        "- tab-overview: Overview — KPIs, revenue charts, top products, recent activity\n"
+        "- tab-deep-dive: JARVIS — your CEO briefing, health scores, patterns, goals, analytics\n"
+        "- tab-financials: Financials — P&L breakdown, fees waterfall, bank reconciliation\n"
+        "- tab-inventory: Inventory — COGS, supplies, product costs, supplier invoices\n"
+        "- tab-tax-forms: Tax Forms — 1099-K, deductions, tax estimates\n"
+        "- tab-valuation: Business Valuation — SDE, revenue multiples, growth metrics\n"
+        "- tab-data-hub: Data Hub — upload CSVs, manage data, reconciliation\n\n"
+        "When your answer relates to a specific tab, include [NAV:tab-name] at the END of your "
+        "response (e.g. [NAV:tab-financials]). Only include ONE nav tag. This will show a button "
+        "that takes the user directly to that tab. Use this when the tab would help them understand "
+        "your answer better — don't force it on every response.\n\n"
+        f"Data covers {_date_range}.\n\n"
         f"=== BUSINESS DATA ===\n{ctx}"
     )
+
+
+def _chatbot_answer_openai(question, history, api_key):
+    """Call OpenAI API with full business context."""
+    from openai import OpenAI
+
+    system_prompt = _jarvis_system_prompt()
 
     messages = [{"role": "system", "content": system_prompt}]
 
@@ -17378,24 +17378,57 @@ def handle_delete_quick_add(all_clicks):
 
 # ── Chatbot Callback ─────────────────────────────────────────────────────────
 
+def _parse_nav_tag(text):
+    """Extract [NAV:tab-name] from Jarvis response. Returns (clean_text, tab_name or None)."""
+    import re as _re
+    m = _re.search(r'\[NAV:(tab-[\w-]+)\]', text)
+    if m:
+        clean = text[:m.start()].rstrip() + text[m.end():]
+        return clean.strip(), m.group(1)
+    return text, None
+
+
+_TAB_LABELS = {
+    "tab-overview": "Overview",
+    "tab-deep-dive": "JARVIS",
+    "tab-financials": "Financials",
+    "tab-inventory": "Inventory",
+    "tab-tax-forms": "Tax Forms",
+    "tab-valuation": "Business Valuation",
+    "tab-data-hub": "Data Hub",
+}
+
+
 @app.callback(
     Output("chat-history", "children"),
     Output("chat-store", "data"),
     Output("chat-input", "value"),
+    Output("main-tabs", "value", allow_duplicate=True),
     Input("chat-send", "n_clicks"),
     Input("chat-input", "n_submit"),
     Input({"type": "quick-q", "index": dash.ALL}, "n_clicks"),
+    Input({"type": "jarvis-nav", "tab": dash.ALL}, "n_clicks"),
     State("chat-input", "value"),
     State("chat-store", "data"),
     State("chat-history", "children"),
+    State("main-tabs", "value"),
     prevent_initial_call=True,
 )
-def handle_chat(n_clicks, n_submit, quick_clicks, user_input, history_data, current_children):
+def handle_chat(n_clicks, n_submit, quick_clicks, nav_clicks, user_input, history_data, current_children, current_tab):
     ctx = callback_context
     if not ctx.triggered:
         raise dash.exceptions.PreventUpdate
 
     trigger_id = ctx.triggered[0]["prop_id"]
+
+    # Handle navigation button clicks
+    if "jarvis-nav" in trigger_id:
+        try:
+            idx_data = json.loads(trigger_id.split(".")[0])
+            target_tab = idx_data["tab"]
+            return dash.no_update, dash.no_update, dash.no_update, target_tab
+        except Exception:
+            raise dash.exceptions.PreventUpdate
 
     # Determine the question
     question = ""
@@ -17431,14 +17464,17 @@ def handle_chat(n_clicks, n_submit, quick_clicks, user_input, history_data, curr
     children = [
         # Initial greeting
         html.Div([
-            html.Div("JARVIS online. I've reviewed the books. "
-                     "Revenue, margins, refund accountability, inventory, cash flow — "
-                     "I have eyes on everything. What do you need?",
-                style={
-                    "backgroundColor": f"{CYAN}15", "border": f"1px solid {CYAN}33",
-                    "borderRadius": "12px", "padding": "12px 16px", "maxWidth": "85%",
-                    "color": WHITE, "fontSize": "13px", "whiteSpace": "pre-wrap",
-                }),
+            html.Div([
+                html.Div("JARVIS online.", style={"fontWeight": "bold", "marginBottom": "4px", "color": CYAN}),
+                html.Div("I've reviewed the books. Revenue, margins, refund accountability, "
+                         "inventory, cash flow — I have eyes on everything. Ask me anything, "
+                         "or I'll tell you what needs your attention.",
+                    style={"fontSize": "13px"}),
+            ], style={
+                "backgroundColor": f"{CYAN}15", "border": f"1px solid {CYAN}33",
+                "borderRadius": "12px", "padding": "12px 16px", "maxWidth": "85%",
+                "color": WHITE, "whiteSpace": "pre-wrap",
+            }),
         ], style={"display": "flex", "justifyContent": "flex-start", "marginBottom": "10px"}),
     ]
 
@@ -17452,20 +17488,42 @@ def handle_chat(n_clicks, n_submit, quick_clicks, user_input, history_data, curr
             }),
         ], style={"display": "flex", "justifyContent": "flex-end", "marginBottom": "6px"}))
 
+        # Parse nav tag from response
+        _display_text, _nav_tab = _parse_nav_tag(entry["a"])
+
         # Bot response — red tint on error
-        _is_error = entry["a"].startswith("Sorry") or "error" in entry["a"][:50].lower()
+        _is_error = _display_text.startswith("Sorry") or "error" in _display_text[:50].lower()
         _bg = f"{RED}15" if _is_error else f"{CYAN}15"
         _border = f"1px solid {RED}33" if _is_error else f"1px solid {CYAN}33"
+
+        _response_content = [
+            dcc.Markdown(_display_text, style={"color": WHITE, "fontSize": "13px", "lineHeight": "1.5"}),
+        ]
+
+        # Add navigation button if Jarvis suggested a tab
+        if _nav_tab and _nav_tab in _TAB_LABELS:
+            _response_content.append(
+                html.Button(
+                    f"\u27a4  Go to {_TAB_LABELS[_nav_tab]}",
+                    id={"type": "jarvis-nav", "tab": _nav_tab},
+                    n_clicks=0,
+                    style={
+                        "marginTop": "10px", "padding": "8px 16px",
+                        "backgroundColor": f"{CYAN}25", "border": f"1px solid {CYAN}",
+                        "borderRadius": "8px", "color": CYAN, "fontSize": "12px",
+                        "fontWeight": "bold", "cursor": "pointer", "letterSpacing": "0.5px",
+                    },
+                )
+            )
+
         children.append(html.Div([
-            html.Div([
-                dcc.Markdown(entry["a"], style={"color": WHITE, "fontSize": "13px", "lineHeight": "1.5"}),
-            ], style={
+            html.Div(_response_content, style={
                 "backgroundColor": _bg, "border": _border,
                 "borderRadius": "12px", "padding": "12px 16px", "maxWidth": "85%",
             }),
         ], style={"display": "flex", "justifyContent": "flex-start", "marginBottom": "10px"}))
 
-    return children, history_data, ""
+    return children, history_data, "", dash.no_update
 
 
 # ── Data Hub: Store sub-tab sync ─────────────────────────────────────────────
