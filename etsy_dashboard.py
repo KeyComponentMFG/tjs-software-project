@@ -17234,8 +17234,14 @@ def init_datahub_files(_trigger):
     receipt_files = _get_existing_files("receipt")
     bank_files = _get_existing_files("bank")
 
-    etsy_stats = html.Div(f"{len(DATA)} transactions  |  {order_count} orders  |  "
-                           f"Gross: ${gross_sales:,.2f}",
+    # Always show ALL stores data in Data Hub, not filtered
+    _all_data = _DATA_ALL if _DATA_ALL is not None else DATA
+    _all_sales = _all_data[_all_data["Type"] == "Sale"] if len(_all_data) > 0 else _all_data
+    _all_order_count = len(_all_sales)
+    _all_gross = _all_sales["Net_Clean"].sum() if _all_order_count > 0 else 0
+
+    etsy_stats = html.Div(f"{len(_all_data)} transactions  |  {_all_order_count} orders  |  "
+                           f"Gross: ${_all_gross:,.2f}",
                            style={"color": TEAL, "fontSize": "12px", "fontFamily": "monospace"})
     receipt_stats = html.Div(f"{len(INVOICES)} orders  |  ${total_inventory_cost:,.2f} total spend",
                               style={"color": PURPLE, "fontSize": "12px", "fontFamily": "monospace"})
