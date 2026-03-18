@@ -3489,11 +3489,73 @@ def _chatbot_answer_claude(question, history, api_key):
     return response.content[0].text
 
 
+def _chatbot_answer_openai(question, history, api_key):
+    """Call OpenAI API with full business context."""
+    from openai import OpenAI
+
+    ctx = _build_chat_context()
+
+    _date_range = f"{months_sorted[0]} through {months_sorted[-1]}" if months_sorted else "available period"
+    system_prompt = (
+        "You are JARVIS — the AI Chief Executive Officer of TJs Software Project, "
+        "an Etsy shop selling 3D printed products. You are not an assistant — you are the CEO. "
+        "Two team members work under you: TJ and Braden.\n\n"
+        "RULES:\n"
+        "- Answer using ONLY the data below. NEVER make up numbers. NEVER hallucinate.\n"
+        "- Be specific: precise dollar amounts, percentages, counts.\n"
+        "- Be direct and concise. No filler. Use markdown.\n"
+        "- Don't just report — interpret, recommend actions, hold people accountable.\n"
+        "- Data is organized into VERIFIED, ESTIMATED, and UNAVAILABLE sections.\n"
+        "- Only cite VERIFIED metrics as facts.\n"
+        "- ESTIMATED metrics: always say 'estimated' and state the method.\n"
+        "- UNAVAILABLE data: never present as having values — say what data is needed.\n"
+        "- If asked about buyer-paid shipping, shipping profit, or shipping margin: UNAVAILABLE — "
+        "Etsy Payments CSV only records the fee, not the buyer-paid amount.\n"
+        "- When discussing refunds, break down by person (TJ vs Braden) using the assignment data.\n"
+        "- All refunds ARE assigned to TJ, Braden, or Cancelled. Do NOT say they need to be defined.\n"
+        "- 'Missing receipts' = bank expenses without uploaded invoice PDFs. NOT unaccounted money. "
+        "Owner Draws, Etsy Fees, Subscriptions are bank-verified — don't flag these as problems.\n"
+        "- End substantive answers with Action Items.\n"
+        f"- Data covers {_date_range}.\n\n"
+        f"=== BUSINESS DATA ===\n{ctx}"
+    )
+
+    messages = [{"role": "system", "content": system_prompt}]
+
+    # Add last 10 conversation turns for continuity
+    if history:
+        for turn in history[-10:]:
+            messages.append({"role": "user", "content": turn["q"]})
+            messages.append({"role": "assistant", "content": turn["a"]})
+
+    messages.append({"role": "user", "content": question})
+
+    client = OpenAI(api_key=api_key)
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        max_tokens=4096,
+        messages=messages,
+    )
+
+    return response.choices[0].message.content
+
+
 def chatbot_answer(question, history=None):
-    """AI-powered chatbot: tool-based agent → context-dump fallback → keyword fallback."""
+    """AI-powered chatbot: OpenAI → Claude → keyword fallback."""
+    _last_api_error = None
+
+    # Try OpenAI first (GPT-4o-mini)
+    openai_key = os.environ.get("OPENAI_API_KEY", "")
+    if openai_key:
+        try:
+            return _chatbot_answer_openai(question, history, openai_key)
+        except Exception as e:
+            _last_api_error = str(e)
+            print(f"[Jarvis] OpenAI failed, trying Claude fallback: {e}")
+
+    # Try Claude (Anthropic) as fallback
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
     if api_key:
-        _last_api_error = None
         # Primary: tool-based agentic chat with accounting pipeline
         if _acct_pipeline is not None and _acct_pipeline.ledger is not None:
             try:
@@ -3509,16 +3571,14 @@ def chatbot_answer(question, history=None):
             except Exception as e:
                 _last_api_error = str(e)
                 print(f"[Jarvis] Agent chat failed, falling back to context-dump: {e}")
-        # Fallback 1: context-dump to Haiku
+        # Fallback: context-dump to Claude
         try:
             return _chatbot_answer_claude(question, history, api_key)
         except Exception as e:
             _last_api_error = str(e)
             print(f"[Jarvis] Claude context-dump failed, falling back to keywords: {e}")
-        # If API errors mention billing/credits, tell the user directly
-        if _last_api_error and ("credit balance" in _last_api_error or "billing" in _last_api_error.lower()
-                                 or "disabled" in _last_api_error.lower()):
-            return _chatbot_answer_inner(question)
+
+    # Final fallback: keyword-based answers
     try:
         return _chatbot_answer_inner(question)
     except Exception as e:
