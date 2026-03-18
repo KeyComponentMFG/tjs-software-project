@@ -14943,7 +14943,7 @@ def _build_store_etsy_tab(store_key, store_label, store_color):
         ], style={"marginBottom": "16px"})
 
 
-def build_tab7_data_hub():
+def build_tab7_data_hub(active_store_tab=None):
     """Build the Data Hub tab — upload & auto-update everything."""
     _sm = strict_mode if isinstance(strict_mode, bool) else False
     etsy_files = _get_existing_files("etsy")
@@ -15002,6 +15002,7 @@ def build_tab7_data_hub():
             ], style={"marginBottom": "12px"}),
             dcc.Tabs(
                 id="datahub-store-tabs",
+                value=active_store_tab or "dh-keycomponentmfg",
                 children=_store_subtabs,
                 style={"borderBottom": f"1px solid {DARKGRAY}33"},
             ),
@@ -15283,8 +15284,9 @@ def _sync_store_selector(value):
     Input("strict-mode-store", "data"),
     Input("upload-reload-trigger", "data"),
     Input("selected-store", "data"),
+    State("datahub-active-store-tab", "data"),
 )
-def render_active_tab(tab, _strict_flag, _upload_trigger, _selected_store):
+def render_active_tab(tab, _strict_flag, _upload_trigger, _selected_store, _dh_active_tab):
     """Rebuild the active tab's content on every tab switch, strict mode toggle, or upload."""
     _apply_store_filter(_selected_store or "all")
     _rebuild_all_charts()
@@ -15322,7 +15324,7 @@ def render_active_tab(tab, _strict_flag, _upload_trigger, _selected_store):
     elif tab == "tab-valuation":
         return html.Div([stale_banner, build_tab6_valuation()])
     elif tab == "tab-data-hub":
-        return html.Div([stale_banner, build_tab7_data_hub()])
+        return html.Div([stale_banner, build_tab7_data_hub(_dh_active_tab)])
     return html.Div("Select a tab")
 
 
@@ -17293,16 +17295,6 @@ def sync_datahub_store_tab(tab):
                  "dh-aurvio": "aurvio", "dh-lunalinks": "lunalinks"}
     return store_map.get(tab, "keycomponentmfg"), tab or "dh-keycomponentmfg"
 
-# Restore the active store tab after page rebuild (e.g., after upload)
-app.clientside_callback(
-    """
-    function(saved_tab) {
-        return saved_tab || "dh-keycomponentmfg";
-    }
-    """,
-    Output("datahub-store-tabs", "value"),
-    Input("datahub-active-store-tab", "data"),
-)
 
 
 @app.callback(
