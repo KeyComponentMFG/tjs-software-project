@@ -3897,6 +3897,44 @@ def _chatbot_answer_inner(question):
             f"\n\n**Monthly Inventory Spend:**\n" + "\n".join(monthly_inv_lines)
         )
 
+    # ── Missing receipts / expense verification ──
+    if any(w in q for w in ["missing receipt", "receipt", "expense verif", "unverified", "paper trail",
+                             "bank statement", "bank expense"]):
+        try:
+            expense_result = _acct_pipeline.get_expense_completeness() if _acct_pipeline else None
+        except Exception:
+            expense_result = None
+
+        if expense_result:
+            matched = len(expense_result.receipt_matches)
+            missing = len(expense_result.missing_receipts)
+            total = matched + missing
+            pct = matched / max(total, 1) * 100
+
+            lines = [
+                f"**EXPENSE VERIFICATION REPORT**\n",
+                f"**{matched}/{total}** bank expenses matched to receipts ({pct:.0f}% verified)\n",
+                f"**Unverified gap:** ${float(expense_result.gap_total):,.2f}\n",
+                f"---",
+                f"**{missing} expenses need receipts:**\n",
+            ]
+            for mr in sorted(expense_result.missing_receipts, key=lambda x: abs(x.amount), reverse=True):
+                lines.append(f"- {mr.date} | **{mr.vendor}** | ${abs(float(mr.amount)):,.2f} | {mr.bank_category}")
+
+            if expense_result.by_category:
+                lines.append(f"\n**By category:**")
+                for cat, info in expense_result.by_category.items():
+                    gap = float(info.get("gap", 0))
+                    if gap > 0:
+                        lines.append(f"- {cat}: ${gap:,.2f} unverified ({info.get('missing_count', 0)} transactions)")
+
+            lines.append(f"\n---")
+            lines.append(f"**Note:** Owner Draws, Etsy Fees, Subscriptions, and Shipping are "
+                        f"bank-verified and excluded — they don't need separate receipts.")
+            return "\n".join(lines)
+        else:
+            return "Expense completeness data not available. The accounting pipeline may not have run yet."
+
     # ── Unit economics / break-even ──
     if any(w in q for w in ["unit economics", "per order", "break even", "breakeven", "contribution", "margin per"]):
         return (
