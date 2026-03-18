@@ -14906,12 +14906,65 @@ def _build_manage_data_content():
     return html.Div(sections)
 
 
+def _build_store_etsy_tab(store_key, store_label, store_color):
+    """Build the Etsy section for a single store sub-tab (upload + files + stats)."""
+    if store_key == "all":
+        # All Stores tab — no upload zone, just combined stats and file list
+        return html.Div([
+            html.Div([
+                html.Span("\U0001f4ca", style={"fontSize": "20px", "marginRight": "8px"}),
+                html.Span("All Etsy Statements", style={"fontSize": "16px", "fontWeight": "bold", "color": TEAL}),
+            ], style={"marginBottom": "10px"}),
+            html.P("Combined Etsy data from all stores. Upload per-store using the store tabs above.",
+                   style={"color": GRAY, "fontSize": "12px", "margin": "0 0 12px 0"}),
+            # Stats line
+            html.Div(id="datahub-etsy-stats", style={"marginBottom": "10px", "minHeight": "16px"}),
+            # Existing files list
+            html.Div([
+                html.Div("Existing Files:", style={"color": GRAY, "fontSize": "11px",
+                                                     "fontWeight": "bold", "marginBottom": "4px",
+                                                     "textTransform": "uppercase", "letterSpacing": "1px"}),
+                html.Div(id="datahub-etsy-files"),
+            ]),
+        ], style={
+            "backgroundColor": CARD2, "borderRadius": "12px", "padding": "18px",
+            "borderLeft": f"4px solid {TEAL}", "marginBottom": "16px",
+            "boxShadow": "0 4px 15px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.05)",
+        })
+    else:
+        # Per-store tab — has upload zone + stats + file list
+        return html.Div([
+            _build_upload_zone("etsy", "\U0001f4ca", f"Etsy Statements — {store_label}", store_color, ".csv",
+                               f"Upload Etsy CSV for {store_label}. Rebuilds all sales, fees, and financial data."),
+        ], style={"marginBottom": "16px"})
+
+
 def build_tab7_data_hub():
     """Build the Data Hub tab — upload & auto-update everything."""
     _sm = strict_mode if isinstance(strict_mode, bool) else False
     etsy_files = _get_existing_files("etsy")
     receipt_files = _get_existing_files("receipt")
     bank_files = _get_existing_files("bank")
+
+    # Build store sub-tabs for Etsy section
+    _store_tab_style = {
+        "backgroundColor": "transparent", "color": GRAY, "border": "none",
+        "borderBottom": f"2px solid transparent", "padding": "10px 18px",
+        "fontSize": "13px", "fontWeight": "bold", "letterSpacing": "1px",
+    }
+    _store_tab_selected_style = {
+        "backgroundColor": f"{CYAN}15", "color": WHITE, "border": "none",
+        "borderBottom": f"2px solid {CYAN}", "padding": "10px 18px",
+        "fontSize": "13px", "fontWeight": "bold", "letterSpacing": "1px",
+    }
+    _store_subtabs = []
+    for _sk, _sl in STORES.items():
+        _sc = STORE_COLORS.get(_sk, TEAL)
+        _sel_style = {**_store_tab_selected_style, "borderBottom": f"2px solid {_sc}", "backgroundColor": f"{_sc}15"}
+        _store_subtabs.append(dcc.Tab(
+            label=_sl, value=f"dh-{_sk}",
+            style=_store_tab_style, selected_style=_sel_style,
+        ))
 
     return html.Div([
         # Strict mode banner
@@ -14933,39 +14986,45 @@ def build_tab7_data_hub():
         # Data coverage panel — what's uploaded and what's missing
         _build_data_coverage(),
 
-        # Store picker for Etsy uploads — PROMINENT
+        # Hidden dcc.Store to hold active store (replaces old dropdown)
+        dcc.Store(id="datahub-etsy-store-picker", data="keycomponentmfg"),
+
+        # ── Store Sub-Tabs for Etsy ──────────────────────────────────────
         html.Div([
             html.Div([
-                html.Span("UPLOADING ETSY CSV TO:", style={
-                    "color": WHITE, "fontSize": "14px", "fontWeight": "bold",
-                    "letterSpacing": "1px", "marginRight": "12px",
-                }),
-                dcc.Dropdown(
-                    id="datahub-etsy-store-picker",
-                    options=[{"label": v, "value": k} for k, v in STORES.items() if k != "all"],
-                    value="keycomponentmfg",
-                    clearable=False,
-                    style={"width": "200px", "fontSize": "14px", "fontWeight": "bold"},
-                ),
-            ], style={"display": "flex", "alignItems": "center"}),
-            html.Div("Make sure you select the correct store before uploading. "
-                     "Receipts and bank statements are shared across all stores.",
-                     style={"color": ORANGE, "fontSize": "11px", "marginTop": "6px"}),
+                html.Span("\U0001f3ea", style={"fontSize": "18px", "marginRight": "8px"}),
+                html.Span("ETSY STORES", style={"color": WHITE, "fontSize": "14px", "fontWeight": "bold",
+                                                   "letterSpacing": "1.5px"}),
+            ], style={"marginBottom": "12px"}),
+            dcc.Tabs(
+                id="datahub-store-tabs",
+                value="dh-keycomponentmfg",
+                children=_store_subtabs,
+                style={"borderBottom": f"1px solid {DARKGRAY}33"},
+            ),
+            html.Div(id="datahub-store-tab-content", style={"marginTop": "16px"}),
         ], style={
-            "marginBottom": "16px", "padding": "12px 16px",
-            "backgroundColor": f"{ORANGE}12", "border": f"1px solid {ORANGE}44",
-            "borderRadius": "8px",
+            "backgroundColor": f"{CARD}cc", "borderRadius": "12px", "padding": "18px",
+            "border": f"1px solid {DARKGRAY}33", "marginBottom": "20px",
+            "boxShadow": "0 4px 15px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.05)",
         }),
 
-        # 3-column upload zones
+        # ── Shared Upload Zones: Receipts + Bank ────────────────────────
         html.Div([
-            _build_upload_zone("etsy", "\U0001f4ca", "Etsy Statements", TEAL, ".csv",
-                               "Upload Etsy CSV statements. Rebuilds all sales, fees, and financial data."),
-            _build_upload_zone("receipt", "\U0001f4e6", "Receipt PDFs", PURPLE, ".pdf",
-                               "Upload Amazon/supplier invoice PDFs. Parses items and updates inventory."),
-            _build_upload_zone("bank", "\U0001f3e6", "Bank Statements", CYAN, ".pdf,.csv",
-                               "Upload Capital One bank PDFs or CSV transaction downloads. Deduplicates automatically."),
-        ], style={"display": "flex", "gap": "16px", "flexWrap": "wrap", "marginBottom": "20px"}),
+            html.Div([
+                html.Span("\U0001f4e6", style={"fontSize": "16px", "marginRight": "8px"}),
+                html.Span("SHARED DATA", style={"color": WHITE, "fontSize": "13px", "fontWeight": "bold",
+                                                    "letterSpacing": "1px"}),
+                html.Span("  — Receipts and bank statements apply to all stores",
+                           style={"color": GRAY, "fontSize": "11px", "marginLeft": "8px"}),
+            ], style={"marginBottom": "14px"}),
+            html.Div([
+                _build_upload_zone("receipt", "\U0001f4e6", "Receipt PDFs", PURPLE, ".pdf",
+                                   "Upload Amazon/supplier invoice PDFs. Parses items and updates inventory."),
+                _build_upload_zone("bank", "\U0001f3e6", "Bank Statements", CYAN, ".pdf,.csv",
+                                   "Upload Capital One bank PDFs or CSV transaction downloads. Deduplicates automatically."),
+            ], style={"display": "flex", "gap": "16px", "flexWrap": "wrap"}),
+        ], style={"marginBottom": "20px"}),
 
         # Reconciliation panel
         html.Hr(style={"border": "none", "borderTop": f"1px solid {DARKGRAY}33", "margin": "0 0 16px 0"}),
@@ -17217,6 +17276,33 @@ def handle_chat(n_clicks, n_submit, quick_clicks, user_input, history_data, curr
     return children, history_data, ""
 
 
+# ── Data Hub: Store sub-tab sync ─────────────────────────────────────────────
+
+@app.callback(
+    Output("datahub-etsy-store-picker", "data"),
+    Input("datahub-store-tabs", "value"),
+)
+def sync_datahub_store_tab(tab):
+    """Set the hidden store picker based on which store sub-tab is active."""
+    store_map = {"dh-all": "all", "dh-keycomponentmfg": "keycomponentmfg",
+                 "dh-aurvio": "aurvio", "dh-lunalinks": "lunalinks"}
+    return store_map.get(tab, "keycomponentmfg")
+
+
+@app.callback(
+    Output("datahub-store-tab-content", "children"),
+    Input("datahub-store-tabs", "value"),
+)
+def render_datahub_store_tab(tab):
+    """Render the content for the selected store sub-tab."""
+    store_map = {"dh-all": "all", "dh-keycomponentmfg": "keycomponentmfg",
+                 "dh-aurvio": "aurvio", "dh-lunalinks": "lunalinks"}
+    store_key = store_map.get(tab, "keycomponentmfg")
+    store_label = STORES.get(store_key, "KeyComponentMFG")
+    store_color = STORE_COLORS.get(store_key, TEAL)
+    return _build_store_etsy_tab(store_key, store_label, store_color)
+
+
 # ── Data Hub: Initial file list populator ───────────────────────────────────
 
 @app.callback(
@@ -17228,10 +17314,15 @@ def handle_chat(n_clicks, n_submit, quick_clicks, user_input, history_data, curr
     Output("datahub-bank-stats", "children"),
     Input("datahub-init-trigger", "data"),
     Input("selected-store", "data"),
+    Input("datahub-store-tab-content", "children"),
+    State("datahub-store-tabs", "value"),
 )
-def init_datahub_files(_trigger, _selected_store):
+def init_datahub_files(_trigger, _selected_store, _tab_content, _dh_store_tab):
     """Populate existing file lists and initial stats on page load."""
-    _store = _selected_store or "all"
+    # Use the Data Hub store sub-tab for Etsy filtering
+    _dh_store_map = {"dh-all": "all", "dh-keycomponentmfg": "keycomponentmfg",
+                     "dh-aurvio": "aurvio", "dh-lunalinks": "lunalinks"}
+    _store = _dh_store_map.get(_dh_store_tab, _selected_store or "all")
     _all_data = _DATA_ALL if _DATA_ALL is not None else DATA
 
     # Etsy stats — filtered by selected store
@@ -17300,7 +17391,7 @@ def init_datahub_files(_trigger, _selected_store):
     State("datahub-receipt-upload", "filename"),
     State("datahub-bank-upload", "filename"),
     State("datahub-activity-log", "children"),
-    State("datahub-etsy-store-picker", "value"),
+    State("datahub-etsy-store-picker", "data"),
     prevent_initial_call=True,
 )
 def handle_datahub_upload(etsy_contents, receipt_contents, bank_contents,
