@@ -133,6 +133,36 @@ input:focus, textarea:focus {
     background-color: #00d4ff08 !important;
 }
 
+/* ── Dash dcc.Dropdown dark theme ────────────────────────────────────── */
+.Select-control, .Select--single > .Select-control {
+    background-color: #0f0f1a !important;
+    border-color: #ffffff20 !important;
+    color: #ffffff !important;
+}
+.Select-value-label, .Select-placeholder,
+.Select--single > .Select-control .Select-value .Select-value-label {
+    color: #ffffff !important;
+}
+.Select-menu-outer {
+    background-color: #16213e !important;
+    border-color: #ffffff20 !important;
+    z-index: 9999 !important;
+}
+.VirtualizedSelectOption, .VirtualizedSelectFocusedOption {
+    background-color: #16213e !important;
+    color: #ffffff !important;
+}
+.VirtualizedSelectFocusedOption {
+    background-color: #00d4ff22 !important;
+}
+.Select-arrow { border-color: #ffffff66 transparent transparent !important; }
+.Select.is-open > .Select-control .Select-arrow {
+    border-color: transparent transparent #ffffff66 !important;
+}
+.Select-input > input { color: #ffffff !important; }
+.Select-clear-zone { color: #ffffff66 !important; }
+.Select-noresults { color: #aaaaaa !important; background-color: #16213e !important; }
+
 /* ── Selection polish ────────────────────────────────────────────────── */
 ::selection {
     background-color: #00d4ff33;
