@@ -3409,6 +3409,33 @@ def _build_chat_context():
         _store_orders = len(_store_sales)
         lines.append(f"{_store_label}: ${_store_gross:,.2f} gross, {_store_orders} orders")
 
+    # Missing Receipts Detail
+    lines.append("\n=== MISSING RECEIPTS ===")
+    try:
+        if expense_missing_receipts:
+            lines.append(f"Total missing: {len(expense_missing_receipts)} expenses, ${expense_gap:,.2f} unverified")
+            lines.append("Expenses without matching receipt/invoice uploads:")
+            for _mr in expense_missing_receipts:
+                _mr_date = _mr.get("date", "unknown")
+                _mr_desc = _mr.get("desc", _mr.get("description", "unknown"))
+                _mr_amt = _mr.get("amount", 0)
+                _mr_cat = _mr.get("category", "uncategorized")
+                lines.append(f"  {_mr_date} | {_mr_desc} | ${_mr_amt:,.2f} | {_mr_cat}")
+        else:
+            lines.append("All bank expenses have matching receipts.")
+    except Exception:
+        lines.append("Receipt matching data not available.")
+
+    # Etsy Deposits Detail
+    lines.append("\n=== ETSY DEPOSITS TO BANK ===")
+    lines.append(f"Total deposited: ${_etsy_deposit_total:,.2f} ({len(_deposit_rows)} deposits)")
+    lines.append(f"Etsy balance (undeposited): ${etsy_balance:,.2f}")
+    try:
+        for _, _dr in _deposit_rows.iterrows():
+            lines.append(f"  {_dr.get('Date', '')} — {_dr.get('Title', '')}")
+    except Exception:
+        pass
+
     # ESTIMATED section
     lines.append("\n\n=== ESTIMATED METRICS (approximations — disclose method when citing) ===")
     lines.append("")
