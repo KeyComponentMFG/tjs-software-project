@@ -1201,6 +1201,12 @@ def _compute_per_order_profit():
         ORDER_PROFIT_SUMMARY = {}
         return
 
+    # Deduplicate by (Order ID, store) — keep first occurrence
+    if "Order ID" in orders_df.columns:
+        orders_df = orders_df.drop_duplicates(subset=["Order ID", "_store"], keep="first")
+    if not items_df.empty and "Order ID" in items_df.columns and "Transaction ID" in items_df.columns:
+        items_df = items_df.drop_duplicates(subset=["Transaction ID", "_store"], keep="first")
+
     # Parse order ship dates
     orders_df["_ship_date"] = pd.to_datetime(orders_df["Date Shipped"], format="%m/%d/%y", errors="coerce")
 
