@@ -15274,58 +15274,80 @@ def _build_per_order_profit_section():
                 ], style={"width": "100%", "borderCollapse": "collapse"}),
             ], style={"marginBottom": "16px"})
 
-    # Order detail table
-    _th = {"color": GRAY, "padding": "6px 8px", "fontSize": "11px", "textAlign": "right"}
-    _header = html.Thead(html.Tr([
-        html.Th("Order #", style={**_th, "textAlign": "left"}),
-        html.Th("Date", style={**_th, "textAlign": "left"}),
-        html.Th("Store", style={**_th, "textAlign": "left"}),
-        html.Th("Item", style={**_th, "textAlign": "left"}),
-        html.Th("Value", style=_th),
-        html.Th("Buyer Ship", style=_th),
-        html.Th("Label", style=_th),
-        html.Th("Return Label", style=_th),
-        html.Th("Refund", style=_th),
-        html.Th("Ship P/L", style=_th),
-        html.Th("True P/L", style=_th),
-    ]))
-
-    _rows = []
+    # Order detail table — interactive DataTable with sort + filter
+    _table_data = []
     for _op in _filtered:
-        _sc = STORE_COLORS.get(_op["store"], TEAL)
         _store_short = {"keycomponentmfg": "KeyComp", "aurvio": "Aurvio", "lunalinks": "L&L"}.get(_op["store"], _op["store"])
-        _ship_color = GREEN if _op["shipping_pl"] >= 0 else RED
-        _profit_color = GREEN if _op["order_profit"] >= 0 else RED
-        _match_warn = "" if _op["label_matched"] else " *"
         _return_cost = _op.get("return_label_cost", 0)
         _refund_amt = _op.get("refund_amount", 0)
-        _was_refunded = _op.get("was_refunded", False)
-        _td = {"color": WHITE, "padding": "5px 8px", "fontSize": "11px", "fontFamily": "monospace", "textAlign": "right"}
-        _row_style = {"borderBottom": "1px solid #ffffff08"}
-        if _was_refunded:
-            _row_style["backgroundColor"] = f"{RED}10"
-        _oid = str(_op["order_id"])
-        _rows.append(html.Tr([
-            html.Td(
-                html.Span([
-                    html.Span(_oid, style={"marginRight": "4px"}),
-                    html.Span("\U0001f4cb", title="Copy order #", style={
-                        "cursor": "pointer", "opacity": "0.5", "fontSize": "10px",
-                    }, **{"data-clipboard-text": _oid, "className": "copy-btn"}),
-                ]),
-                style={"color": CYAN, "padding": "5px 8px", "fontSize": "11px", "fontFamily": "monospace", "whiteSpace": "nowrap"},
-            ),
-            html.Td(_op["ship_date"], style={"color": WHITE, "padding": "5px 8px", "fontSize": "11px"}),
-            html.Td(_store_short, style={"color": _sc, "padding": "5px 8px", "fontSize": "11px", "fontWeight": "bold"}),
-            html.Td(_op["items"][:50], style={"color": WHITE, "padding": "5px 8px", "fontSize": "11px", "maxWidth": "200px", "overflow": "hidden", "textOverflow": "ellipsis", "whiteSpace": "nowrap"}),
-            html.Td(f"${_op['order_value']:,.2f}", style=_td),
-            html.Td(f"${_op['shipping_charged']:,.2f}", style=_td),
-            html.Td(f"${_op['label_cost']:,.2f}{_match_warn}", style=_td),
-            html.Td(f"${_return_cost:,.2f}" if _return_cost > 0 else "—", style={**_td, "color": RED if _return_cost > 0 else DARKGRAY}),
-            html.Td(f"-${_refund_amt:,.2f}" if _was_refunded else "—", style={**_td, "color": RED if _was_refunded else DARKGRAY}),
-            html.Td(f"${_op['shipping_pl']:,.2f}", style={**_td, "color": _ship_color}),
-            html.Td(f"${_op['order_profit']:,.2f}", style={**_td, "color": _profit_color, "fontWeight": "bold"}),
-        ], style=_row_style))
+        _table_data.append({
+            "Order #": str(_op["order_id"]),
+            "Date": _op["ship_date"],
+            "Store": _store_short,
+            "Item": _op["items"][:60],
+            "Value": round(_op["order_value"], 2),
+            "Buyer Ship": round(_op["shipping_charged"], 2),
+            "Label": round(_op["label_cost"], 2),
+            "Return Label": round(_return_cost, 2) if _return_cost > 0 else None,
+            "Refund": round(-_refund_amt, 2) if _refund_amt > 0 else None,
+            "Ship P/L": round(_op["shipping_pl"], 2),
+            "True P/L": round(_op["order_profit"], 2),
+        })
+
+    _dt_columns = [
+        {"name": "Order #", "id": "Order #", "type": "text"},
+        {"name": "Date", "id": "Date", "type": "text"},
+        {"name": "Store", "id": "Store", "type": "text"},
+        {"name": "Item", "id": "Item", "type": "text"},
+        {"name": "Value", "id": "Value", "type": "numeric", "format": {"specifier": "$,.2f"}},
+        {"name": "Buyer Ship", "id": "Buyer Ship", "type": "numeric", "format": {"specifier": "$,.2f"}},
+        {"name": "Label", "id": "Label", "type": "numeric", "format": {"specifier": "$,.2f"}},
+        {"name": "Return Label", "id": "Return Label", "type": "numeric", "format": {"specifier": "$,.2f"}},
+        {"name": "Refund", "id": "Refund", "type": "numeric", "format": {"specifier": "$,.2f"}},
+        {"name": "Ship P/L", "id": "Ship P/L", "type": "numeric", "format": {"specifier": "$,.2f"}},
+        {"name": "True P/L", "id": "True P/L", "type": "numeric", "format": {"specifier": "$,.2f"}},
+    ]
+
+    _order_table = dash_table.DataTable(
+        id="per-order-profit-table",
+        columns=_dt_columns,
+        data=_table_data,
+        sort_action="native",
+        sort_mode="single",
+        filter_action="native",
+        page_size=50,
+        style_table={"overflowX": "auto", "maxHeight": "600px", "overflowY": "auto"},
+        style_header={
+            "backgroundColor": BG, "color": GRAY, "fontWeight": "bold",
+            "fontSize": "11px", "padding": "8px 8px", "borderBottom": f"2px solid {CYAN}33",
+            "textAlign": "right", "cursor": "pointer",
+        },
+        style_cell={
+            "backgroundColor": CARD, "color": WHITE, "fontSize": "11px",
+            "fontFamily": "monospace", "padding": "6px 8px", "borderBottom": "1px solid #ffffff08",
+            "textAlign": "right", "minWidth": "70px",
+        },
+        style_cell_conditional=[
+            {"if": {"column_id": "Order #"}, "textAlign": "left", "color": CYAN, "minWidth": "110px"},
+            {"if": {"column_id": "Date"}, "textAlign": "left", "minWidth": "90px"},
+            {"if": {"column_id": "Store"}, "textAlign": "left", "minWidth": "60px"},
+            {"if": {"column_id": "Item"}, "textAlign": "left", "minWidth": "150px", "maxWidth": "250px",
+             "overflow": "hidden", "textOverflow": "ellipsis"},
+        ],
+        style_data_conditional=[
+            {"if": {"filter_query": "{True P/L} < 0"}, "backgroundColor": f"{RED}15"},
+            {"if": {"filter_query": "{Ship P/L} < 0", "column_id": "Ship P/L"}, "color": RED},
+            {"if": {"filter_query": "{Ship P/L} >= 0", "column_id": "Ship P/L"}, "color": GREEN},
+            {"if": {"filter_query": "{True P/L} < 0", "column_id": "True P/L"}, "color": RED, "fontWeight": "bold"},
+            {"if": {"filter_query": "{True P/L} >= 0", "column_id": "True P/L"}, "color": GREEN, "fontWeight": "bold"},
+            {"if": {"filter_query": "{Refund} < 0", "column_id": "Refund"}, "color": RED},
+            {"if": {"filter_query": "{Return Label} > 0", "column_id": "Return Label"}, "color": RED},
+        ],
+        style_filter={
+            "backgroundColor": f"{CARD}cc", "color": WHITE, "fontSize": "11px",
+            "borderBottom": f"1px solid {DARKGRAY}33",
+        },
+    )
 
     return html.Div([
         html.H3("\U0001f4b0 PER-ORDER PROFIT", style={
@@ -15337,14 +15359,11 @@ def _build_per_order_profit_section():
         _kpi_row,
         _store_summary,
         html.Details([
-            html.Summary(f"Order Detail ({len(_filtered)} orders)", style={
+            html.Summary(f"Order Detail ({len(_filtered)} orders) — click column headers to sort, use filter row to search", style={
                 "color": ORANGE, "fontSize": "13px", "fontWeight": "bold",
                 "cursor": "pointer", "padding": "8px 0",
             }),
-            html.Div([
-                html.Table([_header, html.Tbody(_rows)],
-                           style={"width": "100%", "borderCollapse": "collapse"}),
-            ], style={"maxHeight": "500px", "overflowY": "auto"}),
+            _order_table,
         ], style={"marginTop": "8px"}),
     ])
 
