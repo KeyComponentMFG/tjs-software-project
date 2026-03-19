@@ -1063,6 +1063,16 @@ try:
 except Exception:
     pass
 
+# Manual label-to-order mapping: {"order_id": "Label #123456789"}
+_label_order_map = {}
+try:
+    from supabase_loader import get_config_value as _get_cfg4
+    _lom_raw = _get_cfg4("label_order_map", {})
+    if isinstance(_lom_raw, dict):
+        _label_order_map = _lom_raw
+except Exception:
+    pass
+
 # ── Expense completeness globals (defaults if pipeline didn't set them) ──
 try:
     expense_receipt_verified
@@ -1325,6 +1335,17 @@ def _compute_per_order_profit():
         if best_refund and best_gap <= 14:  # within 2 weeks
             _return_label_by_order[best_refund] = _return_label_by_order.get(best_refund, 0) + rl["cost"]
 
+    # Build label lookup by label number for manual matching
+    _label_by_number = {}  # "Label #xxx" -> {"cost": float, "store": str, "date": str}
+    for _, r in ship_rows.iterrows():
+        _lbl_info = str(r.get("Info", ""))
+        if _lbl_info and _lbl_info.startswith("Label #"):
+            _label_by_number[_lbl_info] = {
+                "cost": abs(r["Net_Clean"]),
+                "store": r.get("Store", "keycomponentmfg"),
+                "date": r["_date"].strftime("%Y-%m-%d") if pd.notna(r["_date"]) else "",
+            }
+
     results = []
     # Build refund lookup: order_id -> refund amount
     _refund_by_order = {}
@@ -1354,8 +1375,8 @@ def _compute_per_order_profit():
         else:
             item_names = str(o.get("SKU", "?"))
 
-        # Find matching label by date + closest shipping cost
-        # Try exact date first, then expand to ±2 days if no match
+        # Check for manual label assignment first
+        _manual_label = _label_order_map.get(str(order_id))
         try:
             _ship_charged = float(o.get("Shipping", 0))
         except (ValueError, TypeError):
@@ -1365,25 +1386,39 @@ def _compute_per_order_profit():
         best_diff = 999
         best_date_key = None
 
-        # Search exact date first, then ±1 day, then ±2 days
-        from datetime import timedelta
-        _search_dates = [ds]
-        for _offset in (1, -1, 2, -2):
-            _adj = (ship_dt + timedelta(days=_offset)).strftime("%Y-%m-%d")
-            _search_dates.append(_adj)
+        if _manual_label and _manual_label in _label_by_number:
+            # Manual match — exact label number provided
+            _ml = _label_by_number[_manual_label]
+            best_label = {"cost": _ml["cost"], "label": _manual_label}
+            best_diff = 0
+            # Remove from date pool so it's not double-matched
+            _ml_date_key = (_ml["store"], _ml["date"])
+            _ml_avail = labels_by_store_date.get(_ml_date_key, [])
+            for _lb in _ml_avail:
+                if _lb.get("label") == _manual_label:
+                    _ml_avail.remove(_lb)
+                    break
 
-        for _search_ds in _search_dates:
-            _search_key = (store, _search_ds)
-            available = labels_by_store_date.get(_search_key, [])
-            for lb in available:
-                diff = abs(lb["cost"] - _ship_charged)
-                if diff < best_diff:
-                    best_diff = diff
-                    best_label = lb
-                    best_date_key = _search_key
-            # If we found an exact-date match, prefer it
-            if best_label and _search_ds == ds:
-                break
+        # If no manual match, find by date + closest shipping cost
+        if not best_label:
+            from datetime import timedelta
+            _search_dates = [ds]
+            for _offset in (1, -1, 2, -2):
+                _adj = (ship_dt + timedelta(days=_offset)).strftime("%Y-%m-%d")
+                _search_dates.append(_adj)
+
+            for _search_ds in _search_dates:
+                _search_key = (store, _search_ds)
+                available = labels_by_store_date.get(_search_key, [])
+                for lb in available:
+                    diff = abs(lb["cost"] - _ship_charged)
+                    if diff < best_diff:
+                        best_diff = diff
+                        best_label = lb
+                        best_date_key = _search_key
+                # If we found an exact-date match, prefer it
+                if best_label and _search_ds == ds:
+                    break
 
         label_cost = best_label["cost"] if best_label else 0
         label_info = best_label["label"] if best_label else "NO MATCH"
@@ -15373,6 +15408,8 @@ def _build_per_order_profit_section():
         _store_short = {"keycomponentmfg": "KeyComp", "aurvio": "Aurvio", "lunalinks": "L&L"}.get(_op["store"], _op["store"])
         _return_cost = _op.get("return_label_cost", 0)
         _refund_amt = _op.get("refund_amount", 0)
+        _lbl_info = _op.get("label_info", "")
+        _lbl_display = _lbl_info.replace("Label #", "#") if _lbl_info.startswith("Label #") else _lbl_info
         _table_data.append({
             "Order #": str(_op["order_id"]),
             "Date": _op["ship_date"],
@@ -15380,8 +15417,9 @@ def _build_per_order_profit_section():
             "Item": _op["items"][:60],
             "Value": round(_op["order_value"], 2),
             "Buyer Ship": round(_op["shipping_charged"], 2),
-            "Label": round(_op["label_cost"], 2),
-            "Return Label": round(_return_cost, 2) if _return_cost > 0 else None,
+            "Label #": _lbl_display[:18] if _lbl_display else "",
+            "Label $": round(_op["label_cost"], 2),
+            "Return": round(_return_cost, 2) if _return_cost > 0 else None,
             "Refund": round(-_refund_amt, 2) if _refund_amt > 0 else None,
             "Ship P/L": round(_op["shipping_pl"], 2),
             "True P/L": round(_op["order_profit"], 2),
@@ -15393,9 +15431,10 @@ def _build_per_order_profit_section():
         {"name": "Store", "id": "Store", "type": "text"},
         {"name": "Item", "id": "Item", "type": "text"},
         {"name": "Value", "id": "Value", "type": "numeric", "format": {"specifier": "$,.2f"}},
-        {"name": "Buyer Ship", "id": "Buyer Ship", "type": "numeric", "format": {"specifier": "$,.2f"}},
-        {"name": "Label", "id": "Label", "type": "numeric", "format": {"specifier": "$,.2f"}},
-        {"name": "Return Label", "id": "Return Label", "type": "numeric", "format": {"specifier": "$,.2f"}},
+        {"name": "Ship $", "id": "Buyer Ship", "type": "numeric", "format": {"specifier": "$,.2f"}},
+        {"name": "Label #", "id": "Label #", "type": "text"},
+        {"name": "Label $", "id": "Label $", "type": "numeric", "format": {"specifier": "$,.2f"}},
+        {"name": "Return", "id": "Return", "type": "numeric", "format": {"specifier": "$,.2f"}},
         {"name": "Refund", "id": "Refund", "type": "numeric", "format": {"specifier": "$,.2f"}},
         {"name": "Ship P/L", "id": "Ship P/L", "type": "numeric", "format": {"specifier": "$,.2f"}},
         {"name": "True P/L", "id": "True P/L", "type": "numeric", "format": {"specifier": "$,.2f"}},
@@ -15422,18 +15461,19 @@ def _build_per_order_profit_section():
             "textAlign": "right",
         },
         style_cell_conditional=[
-            {"if": {"column_id": "Order #"}, "textAlign": "left", "color": CYAN, "width": "115px", "cursor": "pointer"},
-            {"if": {"column_id": "Date"}, "textAlign": "left", "width": "95px", "color": GRAY},
-            {"if": {"column_id": "Store"}, "textAlign": "left", "width": "65px"},
-            {"if": {"column_id": "Item"}, "textAlign": "left", "width": "200px",
-             "overflow": "hidden", "textOverflow": "ellipsis", "maxWidth": "200px"},
-            {"if": {"column_id": "Value"}, "width": "80px"},
-            {"if": {"column_id": "Buyer Ship"}, "width": "80px"},
-            {"if": {"column_id": "Label"}, "width": "70px"},
-            {"if": {"column_id": "Return Label"}, "width": "80px"},
-            {"if": {"column_id": "Refund"}, "width": "75px"},
-            {"if": {"column_id": "Ship P/L"}, "width": "75px"},
-            {"if": {"column_id": "True P/L"}, "width": "85px"},
+            {"if": {"column_id": "Order #"}, "textAlign": "left", "color": CYAN, "width": "110px", "cursor": "pointer"},
+            {"if": {"column_id": "Date"}, "textAlign": "left", "width": "90px", "color": GRAY},
+            {"if": {"column_id": "Store"}, "textAlign": "left", "width": "60px"},
+            {"if": {"column_id": "Item"}, "textAlign": "left", "width": "180px",
+             "overflow": "hidden", "textOverflow": "ellipsis", "maxWidth": "180px"},
+            {"if": {"column_id": "Value"}, "width": "70px"},
+            {"if": {"column_id": "Buyer Ship"}, "width": "65px"},
+            {"if": {"column_id": "Label #"}, "textAlign": "left", "width": "100px", "color": DARKGRAY, "fontSize": "10px"},
+            {"if": {"column_id": "Label $"}, "width": "65px"},
+            {"if": {"column_id": "Return"}, "width": "65px"},
+            {"if": {"column_id": "Refund"}, "width": "65px"},
+            {"if": {"column_id": "Ship P/L"}, "width": "70px"},
+            {"if": {"column_id": "True P/L"}, "width": "80px"},
         ],
         style_data_conditional=[
             {"if": {"filter_query": "{True P/L} < 0"}, "backgroundColor": "#1a0a0a"},
@@ -15442,7 +15482,7 @@ def _build_per_order_profit_section():
             {"if": {"filter_query": "{True P/L} < 0", "column_id": "True P/L"}, "color": RED, "fontWeight": "bold"},
             {"if": {"filter_query": "{True P/L} >= 0", "column_id": "True P/L"}, "color": GREEN, "fontWeight": "bold"},
             {"if": {"filter_query": "{Refund} < 0", "column_id": "Refund"}, "color": RED},
-            {"if": {"filter_query": "{Return Label} > 0", "column_id": "Return Label"}, "color": RED},
+            {"if": {"filter_query": "{Return} > 0", "column_id": "Return"}, "color": RED},
             {"if": {"row_index": "odd"}, "backgroundColor": "#0d1320"},
         ],
         page_action="native",
@@ -15533,13 +15573,49 @@ def _build_per_order_profit_section():
         _kpi_row,
         _store_summary,
         html.Details([
-            html.Summary(f"Order Detail ({len(_filtered)} orders) — click column headers to sort, use filter row to search", style={
+            html.Summary(f"Order Detail ({len(_filtered)} orders) — click column headers to sort", style={
                 "color": ORANGE, "fontSize": "13px", "fontWeight": "bold",
                 "cursor": "pointer", "padding": "8px 0",
             }),
             _order_table,
         ], style={"marginTop": "8px"}),
         _refund_editor,
+        # Label assignment editor — manually link labels to orders
+        html.Details([
+            html.Summary("Assign Label to Order", style={
+                "color": CYAN, "fontSize": "13px", "fontWeight": "bold",
+                "cursor": "pointer", "padding": "8px 0",
+            }),
+            html.P("Enter an Order # and Label # to manually link them. The label cost will be looked up automatically.",
+                   style={"color": GRAY, "fontSize": "11px", "margin": "6px 0"}),
+            html.Div(id="label-assign-status", style={"minHeight": "20px", "marginBottom": "6px"}),
+            html.Div([
+                dcc.Input(id="label-assign-order", type="text", placeholder="Order # (e.g. 3892814467)",
+                          style={"width": "160px", "fontSize": "12px", "backgroundColor": CARD, "color": WHITE,
+                                 "border": f"1px solid {DARKGRAY}44", "borderRadius": "4px", "padding": "6px 8px",
+                                 "marginRight": "8px"}),
+                dcc.Input(id="label-assign-label", type="text", placeholder="Label # (e.g. 287610098851)",
+                          style={"width": "180px", "fontSize": "12px", "backgroundColor": CARD, "color": WHITE,
+                                 "border": f"1px solid {DARKGRAY}44", "borderRadius": "4px", "padding": "6px 8px",
+                                 "marginRight": "8px"}),
+                html.Button("Link", id="label-assign-btn", n_clicks=0,
+                            style={"fontSize": "12px", "padding": "6px 14px", "backgroundColor": f"{CYAN}25",
+                                   "border": f"1px solid {CYAN}", "borderRadius": "4px", "color": CYAN,
+                                   "cursor": "pointer", "fontWeight": "bold"}),
+            ], style={"display": "flex", "alignItems": "center", "marginBottom": "10px"}),
+            # Show current manual assignments
+            html.Div([
+                html.Div([
+                    html.Span(f"#{oid}", style={"color": CYAN, "fontFamily": "monospace", "marginRight": "8px"}),
+                    html.Span("\u2192", style={"color": GRAY, "marginRight": "8px"}),
+                    html.Span(lbl, style={"color": WHITE, "fontFamily": "monospace", "marginRight": "8px"}),
+                    html.Span(f"(${_label_by_number.get(lbl, _label_by_number.get(f'Label #{lbl}', {})).get('cost', '?')})"
+                              if isinstance(_label_by_number.get(lbl, _label_by_number.get(f'Label #{lbl}', '')), dict) else "",
+                              style={"color": GREEN, "fontSize": "11px"}),
+                ], style={"padding": "3px 0", "fontSize": "12px"})
+                for oid, lbl in _label_order_map.items()
+            ]) if _label_order_map else html.Div("No manual assignments yet.", style={"color": DARKGRAY, "fontSize": "11px"}),
+        ], style={"marginTop": "12px"}),
     ])
 
 
@@ -15611,6 +15687,67 @@ def save_refund_cost_override(all_clicks, all_types, all_outbound, all_return):
                   style={"color": GREEN, "fontSize": "12px"}),
     ])
     return status, time.time()
+
+
+# ── Label Assignment Callback ────────────────────────────────────────────────
+
+@app.callback(
+    Output("label-assign-status", "children"),
+    Output("label-assign-order", "value"),
+    Output("label-assign-label", "value"),
+    Output("upload-reload-trigger", "data", allow_duplicate=True),
+    Input("label-assign-btn", "n_clicks"),
+    State("label-assign-order", "value"),
+    State("label-assign-label", "value"),
+    prevent_initial_call=True,
+)
+def save_label_assignment(n_clicks, order_id, label_num):
+    """Manually link a shipping label to an order."""
+    global _label_order_map
+    if not n_clicks or not order_id or not label_num:
+        raise dash.exceptions.PreventUpdate
+
+    order_id = str(order_id).strip().replace("#", "")
+    label_num = str(label_num).strip()
+    # Normalize label number — add "Label #" prefix if just a number
+    if label_num.isdigit():
+        label_num = f"Label #{label_num}"
+    elif not label_num.startswith("Label #"):
+        label_num = f"Label #{label_num.replace('Label ', '').replace('#', '').strip()}"
+
+    # Look up the label cost
+    _all_data = _DATA_ALL if _DATA_ALL is not None else DATA
+    ship_rows = _all_data[_all_data["Type"] == "Shipping"]
+    _found = ship_rows[ship_rows["Info"] == label_num]
+    if len(_found) == 0:
+        return html.Div([
+            html.Span("\u2717 ", style={"color": RED, "fontWeight": "bold"}),
+            html.Span(f"Label {label_num} not found in Etsy statements", style={"color": RED, "fontSize": "12px"}),
+        ]), dash.no_update, dash.no_update, dash.no_update
+
+    label_cost = abs(_found.iloc[0]["Net_Clean"])
+
+    # Save mapping
+    _label_order_map[order_id] = label_num
+    try:
+        from supabase_loader import save_config_value
+        save_config_value("label_order_map", _label_order_map)
+    except Exception as e:
+        print(f"[LabelAssign] Supabase save failed: {e}")
+
+    # Recompute profits
+    try:
+        _compute_per_order_profit()
+    except Exception:
+        pass
+
+    import time
+    status = html.Div([
+        html.Span("\u2713 ", style={"color": GREEN, "fontWeight": "bold"}),
+        html.Span(f"Order #{order_id} linked to {label_num} (${label_cost:.2f})",
+                  style={"color": GREEN, "fontSize": "12px"}),
+    ])
+    return status, "", "", time.time()
 
 
 # ── Data Hub Tab ─────────────────────────────────────────────────────────────
