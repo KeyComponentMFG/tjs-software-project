@@ -1198,12 +1198,14 @@ def _load_order_csvs():
                     print(f"[OrderProfit] Failed to parse {fp}: {e}")
 
     # Load from Supabase (persisted data — survives redeploys)
-    # Check each type independently so orders from disk + items from Supabase works
+    # Always check Supabase for each store that doesn't already have local data
     try:
         from supabase_loader import get_config_value
         import json
+        _local_order_stores = {df["_store"].iloc[0] for df in all_orders if len(df) > 0} if all_orders else set()
+        _local_item_stores = {df["_store"].iloc[0] for df in all_items if len(df) > 0} if all_items else set()
         for store in ("keycomponentmfg", "aurvio", "lunalinks"):
-            if not all_orders:
+            if store not in _local_order_stores:
                 key = f"order_csv_orders_{store}"
                 raw = get_config_value(key)
                 if raw:
@@ -1213,7 +1215,7 @@ def _load_order_csvs():
                         df["_store"] = store
                         all_orders.append(df)
                         print(f"[OrderProfit] Loaded {len(df)} orders for {store} from Supabase")
-            if not all_items:
+            if store not in _local_item_stores:
                 key = f"order_csv_items_{store}"
                 raw = get_config_value(key)
                 if raw:
