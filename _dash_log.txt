@@ -1,0 +1,168 @@
+Loaded data from Supabase
+Merged 3085 local + 3286 Supabase -> 3286 unique Etsy rows
+Using Supabase bank data (127 txns > 115 local)
+[Pipeline] Ingested: 3286 Etsy, 127 bank, 3 config entries
+[Pipeline] Etsy balance: $1233.45 (derived) - Etsy balance = total_etsy_net ($11156.53) - CSV_deposits ($9923.08) = $1233.45
+[Pipeline] Computed 67 metrics
+[Pipeline] CRITICAL PASS: etsy_net_parity - etsy_net_earned matches raw Net_Clean sum (diff=$0.00)
+[Pipeline] CRITICAL PASS: profit_chain - Profit chain valid: real_profit = cash + draws
+[Pipeline] CRITICAL PASS: no_nan - All metrics are finite numbers
+[Pipeline] HIGH PASS: balance_sanity - Etsy balance is reasonable ($1233.45)
+[Pipeline] HIGH FAIL: deposit_reconciliation - Deposit mismatch: Etsy says $9923.08, bank says $8981.09 (diff=$941.99)
+[Pipeline] Reconciliation: 12 matched, 7 Etsy-only, 0 bank-only
+[Pipeline] Expense completeness: 63 matched, 30 missing
+[Pipeline] Ledger: 67 metrics, 0 quarantined, 4 checks passed, 1 failed, built 00:14:49
+[compat] Published 64 metrics to __main__
+[Dashboard] Accounting pipeline active: Ledger: 67 metrics, 0 quarantined, 4 checks passed, 1 failed, built 00:14:49
+CEO Agent: 14/20 checks passed — 0 critical, 5 warnings
+
+==================================================
+  ETSY DASHBOARD v2 RUNNING
+  Open: http://127.0.0.1:8070
+==================================================
+
+Dash is running on http://0.0.0.0:8070/
+
+ * Serving Flask app 'etsy_dashboard'
+ * Debug mode: off
+WARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:8070
+ * Running on http://192.168.5.110:8070
+Press CTRL+C to quit
+127.0.0.1 - - [11/Mar/2026 00:15:22] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [11/Mar/2026 00:15:22] "GET /assets/custom.css?m=1772170793.60329 HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:22] "GET /assets/dark-dropdowns.css?m=1771818344.265457 HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:22] "GET /_dash-layout HTTP/1.1" 200 -
+127.0.0.1 - - [11/Mar/2026 00:15:22] "GET /_dash-dependencies HTTP/1.1" 200 -
+127.0.0.1 - - [11/Mar/2026 00:15:22] "GET /_favicon.ico?v=3.3.0 HTTP/1.1" 200 -
+127.0.0.1 - - [11/Mar/2026 00:15:23] "POST /_dash-update-component HTTP/1.1" 200 -
+127.0.0.1 - - [11/Mar/2026 00:15:23] "GET /_dash-component-suites/dash/dcc/async-graph.js HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:23] "GET /_dash-component-suites/plotly/package_data/plotly.min.js HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:26] "POST /_dash-update-component HTTP/1.1" 200 -
+127.0.0.1 - - [11/Mar/2026 00:15:26] "GET /_dash-component-suites/dash/dash_table/async-highlight.js HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:26] "GET /_dash-component-suites/dash/dash_table/async-table.js HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:26] "GET /_dash-component-suites/dash/dcc/async-upload.js HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:26] "GET /_dash-component-suites/dash/dcc/async-dropdown.js HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:26] "GET /api/receipt/keycomp/order-document%20(16).pdf HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:26] "GET /api/receipt/keycomp/order-document%20(14).pdf HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:26] "GET /api/receipt/keycomp/order-document%20(17).pdf HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:26] "GET /api/receipt/keycomp/order-document%20(15).pdf HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:26] "GET /api/receipt/keycomp/order-document%20(13).pdf HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:26] "GET /api/receipt/keycomp/order-document%20(10).pdf HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:26] "GET /api/receipt/keycomp/order-document%20(8).pdf HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:26] "GET /api/receipt/keycomp/order-document%20(1)%20-%20Copy.pdf HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:26] "GET /api/receipt/keycomp/order-document%20(7).pdf HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:26] "GET /api/receipt/keycomp/order-document%20(2).pdf HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:26] "GET /api/receipt/keycomp/order-document%20(6).pdf HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:26] "GET /api/receipt/keycomp/order-document%20(3).pdf HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:26] "GET /api/receipt/keycomp/order-document.pdf HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:26] "GET /api/receipt/keycomp/order-document%20(8).pdf HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:26] "GET /api/receipt/keycomp/order-document%20(10).pdf HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:26] "GET /api/receipt/keycomp/order-document%20(7).pdf HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:26] "GET /api/receipt/keycomp/order-document%20(1).pdf HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:26] "GET /api/receipt/keycomp/order-document%20(11).pdf HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:26] "GET /api/receipt/keycomp/order-document%20(12).pdf HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:26] "GET /api/receipt/keycomp/order-document%20(2).pdf HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:26] "GET /api/receipt/keycomp/order-document%20(13).pdf HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:26] "GET /api/receipt/keycomp/order-document%20(14).pdf HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:26] "GET /api/receipt/keycomp/order-document%20(6).pdf HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:26] "GET /api/receipt/keycomp/order-document%20(15).pdf HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:26] "GET /api/receipt/keycomp/order-document%20(3).pdf HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:26] "GET /api/receipt/keycomp/order-document%20(17).pdf HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:26] "GET /api/receipt/keycomp/order-document.pdf HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:26] "GET /api/receipt/keycomp/order-document%20(18).pdf HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:26] "GET /api/receipt/keycomp/order-document%20(16).pdf HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:26] "GET /api/receipt/keycomp/order-document%20(19).pdf HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:26] "GET /api/receipt/keycomp/order-document%20(20).pdf HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:26] "GET /api/receipt/keycomp/order-document%20(21).pdf HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:26] "GET /api/receipt/keycomp/order-document%20(23).pdf HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:26] "GET /api/receipt/keycomp/order-document%20(22).pdf HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:26] "GET /api/receipt/keycomp/order-document%20(24).pdf HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:26] "GET /api/receipt/keycomp/order-document%20(25).pdf HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:26] "GET /api/receipt/keycomp/order-document%20(26).pdf HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:26] "GET /api/receipt/keycomp/order-document%20(28).pdf HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:26] "GET /api/receipt/keycomp/order-document%20(27).pdf HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:26] "GET /api/receipt/keycomp/order-document%20(29).pdf HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:26] "GET /api/receipt/keycomp/order-document%20(30).pdf HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:26] "GET /api/receipt/keycomp/order-document%20(31).pdf HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:26] "GET /api/receipt/keycomp/order-document%20(32).pdf HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:26] "GET /api/receipt/keycomp/order-document%20(33).pdf HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:26] "GET /api/receipt/keycomp/order-document%20(34).pdf HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:26] "GET /api/receipt/keycomp/order-document%20(35).pdf HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:26] "GET /api/receipt/keycomp/order-document%20(37).pdf HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:26] "GET /api/receipt/keycomp/order-document%20(36).pdf HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:26] "GET /api/receipt/keycomp/order-document%20(38).pdf HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:26] "GET /api/receipt/keycomp/order-document%20(39).pdf HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:26] "GET /api/receipt/keycomp/order-document%20(40).pdf HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:26] "GET /api/receipt/keycomp/order-document%20(41).pdf HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:26] "GET /api/receipt/keycomp/order-document%20(42).pdf HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:26] "GET /api/receipt/keycomp/order-document%20(43).pdf HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:26] "GET /api/receipt/keycomp/order-document%20(44).pdf HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:26] "GET /api/receipt/keycomp/order-document%20(45).pdf HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:26] "GET /api/receipt/keycomp/order-document%20(46).pdf HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:26] "GET /api/receipt/keycomp/order-document%20(47).pdf HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:26] "GET /api/receipt/keycomp/order-document%20(48).pdf HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:26] "GET /api/receipt/keycomp/order-document%20(49).pdf HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:26] "GET /api/receipt/keycomp/order-document%20(50).pdf HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:26] "GET /api/receipt/keycomp/order-document%20(51).pdf HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:26] "GET /api/receipt/keycomp/order-document%20(53).pdf HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:26] "GET /api/receipt/keycomp/order-document%20(52).pdf HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:26] "GET /api/receipt/keycomp/order-document%20(54).pdf HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:26] "GET /api/receipt/keycomp/order-document%20(55).pdf HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:26] "GET /api/receipt/keycomp/order-document%20(56).pdf HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:26] "GET /api/receipt/keycomp/order-document%20(57).pdf HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:26] "GET /api/receipt/other_receipts/order_receipt_10028582812.pdf HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:26] "GET /api/receipt/other_receipts/Articles%20of%20Organization%20(Reciept).PDF HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:26] "GET /assets/product_images/beige_pla.jpg HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:26] "GET /assets/product_images/super_glue.jpg HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:26] "GET /assets/product_images/black_pla.jpg HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:27] "GET /assets/product_images/brown_pla.jpg HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:27] "GET /assets/product_images/cyan_pla.jpg HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:27] "GET /assets/product_images/maroon_pla.jpg HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:27] "GET /assets/product_images/gray_pla.jpg HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:27] "GET /assets/product_images/navy_pla.jpg HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:27] "GET /assets/product_images/olive_pla.jpg HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:27] "GET /assets/product_images/orange_pla.jpg HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:27] "GET /assets/product_images/purple_pla.jpg HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:27] "GET /assets/product_images/red_pla.jpg HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:27] "GET /assets/product_images/sage_pla.jpg HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:27] "GET /assets/product_images/silver_pla.jpg HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:27] "GET /assets/product_images/white_pla.jpg HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:27] "GET /assets/product_images/yellow_pla.jpg HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:27] "GET /assets/product_images/frame_hanger_hook_set.jpg HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:27] "GET /assets/product_images/cylinder_bulb.jpg HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:27] "GET /assets/product_images/hardwired_bulb_socket.jpg HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:27] "GET /assets/product_images/hardwired_pendant_light.jpg HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:27] "GET /assets/product_images/night_light_socket.jpg HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:27] "GET /assets/product_images/plug_in_bulb_socket.jpg HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:27] "GET /assets/product_images/round_bulb.jpg HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:27] "GET /assets/product_images/wireless_led_bar.jpg HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:27] "GET /assets/product_images/usb_led_puck.jpg HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:27] "GET /assets/product_images/wireless_led_sphere.jpg HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:27] "GET /assets/product_images/10_x_8_x_6_inches_shipping_boxes.jpg HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:27] "GET /assets/product_images/bubble_mailers_8_5_x_12.jpg HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:27] "GET /assets/product_images/fragile_sticker.jpg HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:27] "GET /assets/product_images/packing_paper_roll.jpg HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:27] "GET /assets/product_images/shipping_boxes_6_x_4_x_3.jpg HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:27] "GET /assets/product_images/shipping_labels_4x6.jpg HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:27] "GET /assets/product_images/label_printer.jpg HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:27] "GET /assets/product_images/3d_print_pen.jpg HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:27] "GET /assets/product_images/soldering_iron.jpg HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:27] "GET /assets/product_images/screw_set.jpg HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:27] "GET /assets/product_images/blue_pla.jpg HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:27] "GET /assets/product_images/transparent_blue_pla.jpg HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:27] "GET /assets/product_images/clock_box.jpg HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:27] "GET /assets/product_images/earring_box.jpg HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:27] "GET /assets/product_images/earring_hooks.jpg HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:27] "GET /assets/product_images/16_x_12_x_12_shipping_box.jpg HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:27] "GET /assets/product_images/bubble_wrap.jpg HTTP/1.1" 304 -
+127.0.0.1 - - [11/Mar/2026 00:15:27] "POST /_dash-update-component HTTP/1.1" 200 -
+127.0.0.1 - - [11/Mar/2026 00:16:06] "POST /_dash-update-component HTTP/1.1" 200 -
+127.0.0.1 - - [11/Mar/2026 00:19:20] "POST /_dash-update-component HTTP/1.1" 200 -
+127.0.0.1 - - [11/Mar/2026 00:21:39] "POST /_dash-update-component HTTP/1.1" 200 -
+127.0.0.1 - - [11/Mar/2026 00:23:14] "POST /_dash-update-component HTTP/1.1" 200 -
+127.0.0.1 - - [11/Mar/2026 00:30:22] "POST /_dash-update-component HTTP/1.1" 200 -
+127.0.0.1 - - [11/Mar/2026 00:34:20] "POST /_dash-update-component HTTP/1.1" 200 -
+127.0.0.1 - - [11/Mar/2026 00:45:22] "POST /_dash-update-component HTTP/1.1" 200 -
+127.0.0.1 - - [11/Mar/2026 00:49:20] "POST /_dash-update-component HTTP/1.1" 200 -

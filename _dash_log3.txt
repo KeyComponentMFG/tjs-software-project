@@ -1,0 +1,186 @@
+Loaded data from Supabase
+Merged 3324 local + 3324 Supabase -> 3324 unique Etsy rows
+Using local bank data (137 txns)
+[Pipeline] Ingested: 3324 Etsy, 137 bank, 3 config entries
+[Pipeline] Etsy balance: $21.36 (derived) - Etsy balance = total_etsy_net ($11158.55) - CSV_deposits ($11137.19) = $21.36
+[Pipeline] Computed 67 metrics
+[Pipeline] CRITICAL PASS: etsy_net_parity - etsy_net_earned matches raw Net_Clean sum (diff=$0.00)
+[Pipeline] CRITICAL PASS: profit_chain - Profit chain valid: real_profit = cash + draws
+[Pipeline] CRITICAL PASS: no_nan - All metrics are finite numbers
+[Pipeline] HIGH PASS: balance_sanity - Etsy balance is reasonable ($21.36)
+[Pipeline] HIGH PASS: deposit_reconciliation - Deposit totals reconcile within tolerance (diff=$941.99)
+[Pipeline] Reconciliation: 13 matched, 7 Etsy-only, 0 bank-only
+[Pipeline] Expense completeness: 79 matched, 22 missing
+[Pipeline] Ledger: 67 metrics, 0 quarantined, 5 checks passed, 0 failed, built 05:54:49
+[compat] Published 64 metrics to __main__
+[Dashboard] Accounting pipeline active: Ledger: 67 metrics, 0 quarantined, 5 checks passed, 0 failed, built 05:54:49
+CEO Agent: 19/20 checks passed — 0 critical, 0 warnings
+
+==================================================
+  ETSY DASHBOARD v2 RUNNING
+  Open: http://127.0.0.1:8070
+==================================================
+
+Dash is running on http://0.0.0.0:8070/
+
+ * Serving Flask app 'etsy_dashboard'
+ * Debug mode: off
+WARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:8070
+ * Running on http://192.168.5.110:8070
+Press CTRL+C to quit
+[2026-03-11 05:56:02,266] ERROR in app: Exception on /_dash-update-component [POST]
+Traceback (most recent call last):
+  File "C:\Users\mcnug\AppData\Roaming\Python\Python311\site-packages\flask\app.py", line 1511, in wsgi_app
+    response = self.full_dispatch_request()
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\mcnug\AppData\Roaming\Python\Python311\site-packages\flask\app.py", line 919, in full_dispatch_request
+    rv = self.handle_user_exception(e)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\mcnug\AppData\Roaming\Python\Python311\site-packages\flask\app.py", line 917, in full_dispatch_request
+    rv = self.dispatch_request()
+         ^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\mcnug\AppData\Roaming\Python\Python311\site-packages\flask\app.py", line 902, in dispatch_request
+    return self.ensure_sync(self.view_functions[rule.endpoint])(**view_args)  # type: ignore[no-any-return]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\mcnug\AppData\Roaming\Python\Python311\site-packages\dash\_get_app.py", line 17, in wrap
+    return ctx.run(func, self, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\mcnug\AppData\Roaming\Python\Python311\site-packages\dash\dash.py", line 1585, in dispatch
+    response_data = ctx.run(partial_func)
+                    ^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\mcnug\AppData\Roaming\Python\Python311\site-packages\dash\_callback.py", line 686, in add_context
+    ) = _initialize_context(
+        ^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\mcnug\AppData\Roaming\Python\Python311\site-packages\dash\_callback.py", line 347, in _initialize_context
+    func_args, func_kwargs = _validate.validate_and_group_input_args(
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\mcnug\AppData\Roaming\Python\Python311\site-packages\dash\_validate.py", line 144, in validate_and_group_input_args
+    raise exceptions.CallbackException("Inputs do not match callback definition")
+dash.exceptions.CallbackException: Inputs do not match callback definition
+127.0.0.1 - - [11/Mar/2026 05:56:02] "POST /_dash-update-component HTTP/1.1" 500 -
+127.0.0.1 - - [11/Mar/2026 06:04:42] "POST /_dash-update-component HTTP/1.1" 200 -
+[2026-03-11 06:11:02,283] ERROR in app: Exception on /_dash-update-component [POST]
+Traceback (most recent call last):
+  File "C:\Users\mcnug\AppData\Roaming\Python\Python311\site-packages\flask\app.py", line 1511, in wsgi_app
+    response = self.full_dispatch_request()
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\mcnug\AppData\Roaming\Python\Python311\site-packages\flask\app.py", line 919, in full_dispatch_request
+    rv = self.handle_user_exception(e)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\mcnug\AppData\Roaming\Python\Python311\site-packages\flask\app.py", line 917, in full_dispatch_request
+    rv = self.dispatch_request()
+         ^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\mcnug\AppData\Roaming\Python\Python311\site-packages\flask\app.py", line 902, in dispatch_request
+    return self.ensure_sync(self.view_functions[rule.endpoint])(**view_args)  # type: ignore[no-any-return]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\mcnug\AppData\Roaming\Python\Python311\site-packages\dash\_get_app.py", line 17, in wrap
+    return ctx.run(func, self, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\mcnug\AppData\Roaming\Python\Python311\site-packages\dash\dash.py", line 1585, in dispatch
+    response_data = ctx.run(partial_func)
+                    ^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\mcnug\AppData\Roaming\Python\Python311\site-packages\dash\_callback.py", line 686, in add_context
+    ) = _initialize_context(
+        ^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\mcnug\AppData\Roaming\Python\Python311\site-packages\dash\_callback.py", line 347, in _initialize_context
+    func_args, func_kwargs = _validate.validate_and_group_input_args(
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\mcnug\AppData\Roaming\Python\Python311\site-packages\dash\_validate.py", line 144, in validate_and_group_input_args
+    raise exceptions.CallbackException("Inputs do not match callback definition")
+dash.exceptions.CallbackException: Inputs do not match callback definition
+127.0.0.1 - - [11/Mar/2026 06:11:02] "POST /_dash-update-component HTTP/1.1" 500 -
+127.0.0.1 - - [11/Mar/2026 06:19:42] "POST /_dash-update-component HTTP/1.1" 200 -
+[2026-03-11 06:26:02,266] ERROR in app: Exception on /_dash-update-component [POST]
+Traceback (most recent call last):
+  File "C:\Users\mcnug\AppData\Roaming\Python\Python311\site-packages\flask\app.py", line 1511, in wsgi_app
+    response = self.full_dispatch_request()
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\mcnug\AppData\Roaming\Python\Python311\site-packages\flask\app.py", line 919, in full_dispatch_request
+    rv = self.handle_user_exception(e)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\mcnug\AppData\Roaming\Python\Python311\site-packages\flask\app.py", line 917, in full_dispatch_request
+    rv = self.dispatch_request()
+         ^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\mcnug\AppData\Roaming\Python\Python311\site-packages\flask\app.py", line 902, in dispatch_request
+    return self.ensure_sync(self.view_functions[rule.endpoint])(**view_args)  # type: ignore[no-any-return]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\mcnug\AppData\Roaming\Python\Python311\site-packages\dash\_get_app.py", line 17, in wrap
+    return ctx.run(func, self, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\mcnug\AppData\Roaming\Python\Python311\site-packages\dash\dash.py", line 1585, in dispatch
+    response_data = ctx.run(partial_func)
+                    ^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\mcnug\AppData\Roaming\Python\Python311\site-packages\dash\_callback.py", line 686, in add_context
+    ) = _initialize_context(
+        ^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\mcnug\AppData\Roaming\Python\Python311\site-packages\dash\_callback.py", line 347, in _initialize_context
+    func_args, func_kwargs = _validate.validate_and_group_input_args(
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\mcnug\AppData\Roaming\Python\Python311\site-packages\dash\_validate.py", line 144, in validate_and_group_input_args
+    raise exceptions.CallbackException("Inputs do not match callback definition")
+dash.exceptions.CallbackException: Inputs do not match callback definition
+127.0.0.1 - - [11/Mar/2026 06:26:02] "POST /_dash-update-component HTTP/1.1" 500 -
+127.0.0.1 - - [11/Mar/2026 06:34:42] "POST /_dash-update-component HTTP/1.1" 200 -
+[2026-03-11 06:41:02,294] ERROR in app: Exception on /_dash-update-component [POST]
+Traceback (most recent call last):
+  File "C:\Users\mcnug\AppData\Roaming\Python\Python311\site-packages\flask\app.py", line 1511, in wsgi_app
+    response = self.full_dispatch_request()
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\mcnug\AppData\Roaming\Python\Python311\site-packages\flask\app.py", line 919, in full_dispatch_request
+    rv = self.handle_user_exception(e)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\mcnug\AppData\Roaming\Python\Python311\site-packages\flask\app.py", line 917, in full_dispatch_request
+    rv = self.dispatch_request()
+         ^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\mcnug\AppData\Roaming\Python\Python311\site-packages\flask\app.py", line 902, in dispatch_request
+    return self.ensure_sync(self.view_functions[rule.endpoint])(**view_args)  # type: ignore[no-any-return]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\mcnug\AppData\Roaming\Python\Python311\site-packages\dash\_get_app.py", line 17, in wrap
+    return ctx.run(func, self, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\mcnug\AppData\Roaming\Python\Python311\site-packages\dash\dash.py", line 1585, in dispatch
+    response_data = ctx.run(partial_func)
+                    ^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\mcnug\AppData\Roaming\Python\Python311\site-packages\dash\_callback.py", line 686, in add_context
+    ) = _initialize_context(
+        ^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\mcnug\AppData\Roaming\Python\Python311\site-packages\dash\_callback.py", line 347, in _initialize_context
+    func_args, func_kwargs = _validate.validate_and_group_input_args(
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\mcnug\AppData\Roaming\Python\Python311\site-packages\dash\_validate.py", line 144, in validate_and_group_input_args
+    raise exceptions.CallbackException("Inputs do not match callback definition")
+dash.exceptions.CallbackException: Inputs do not match callback definition
+127.0.0.1 - - [11/Mar/2026 06:41:02] "POST /_dash-update-component HTTP/1.1" 500 -
+127.0.0.1 - - [11/Mar/2026 06:49:42] "POST /_dash-update-component HTTP/1.1" 200 -
+[2026-03-11 06:56:02,289] ERROR in app: Exception on /_dash-update-component [POST]
+Traceback (most recent call last):
+  File "C:\Users\mcnug\AppData\Roaming\Python\Python311\site-packages\flask\app.py", line 1511, in wsgi_app
+    response = self.full_dispatch_request()
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\mcnug\AppData\Roaming\Python\Python311\site-packages\flask\app.py", line 919, in full_dispatch_request
+    rv = self.handle_user_exception(e)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\mcnug\AppData\Roaming\Python\Python311\site-packages\flask\app.py", line 917, in full_dispatch_request
+    rv = self.dispatch_request()
+         ^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\mcnug\AppData\Roaming\Python\Python311\site-packages\flask\app.py", line 902, in dispatch_request
+    return self.ensure_sync(self.view_functions[rule.endpoint])(**view_args)  # type: ignore[no-any-return]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\mcnug\AppData\Roaming\Python\Python311\site-packages\dash\_get_app.py", line 17, in wrap
+    return ctx.run(func, self, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\mcnug\AppData\Roaming\Python\Python311\site-packages\dash\dash.py", line 1585, in dispatch
+    response_data = ctx.run(partial_func)
+                    ^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\mcnug\AppData\Roaming\Python\Python311\site-packages\dash\_callback.py", line 686, in add_context
+    ) = _initialize_context(
+        ^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\mcnug\AppData\Roaming\Python\Python311\site-packages\dash\_callback.py", line 347, in _initialize_context
+    func_args, func_kwargs = _validate.validate_and_group_input_args(
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\mcnug\AppData\Roaming\Python\Python311\site-packages\dash\_validate.py", line 144, in validate_and_group_input_args
+    raise exceptions.CallbackException("Inputs do not match callback definition")
+dash.exceptions.CallbackException: Inputs do not match callback definition
+127.0.0.1 - - [11/Mar/2026 06:56:02] "POST /_dash-update-component HTTP/1.1" 500 -
