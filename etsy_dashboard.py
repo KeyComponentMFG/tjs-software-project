@@ -15139,7 +15139,11 @@ def _build_per_order_profit_section():
         ], style=_kpi_style),
         html.Div([
             html.Div(f"{len(_filtered)}", style={"color": WHITE, "fontSize": "20px", "fontWeight": "bold", "fontFamily": "monospace"}),
-            html.Div("Orders", style={"color": GRAY, "fontSize": "11px", "marginTop": "4px"}),
+            html.Div("Shipped", style={"color": GRAY, "fontSize": "11px", "marginTop": "4px"}),
+        ], style=_kpi_style),
+        html.Div([
+            html.Div(f"{ORDER_PROFIT_SUMMARY.get('unshipped_orders', 0)}", style={"color": ORANGE, "fontSize": "20px", "fontWeight": "bold", "fontFamily": "monospace"}),
+            html.Div("Awaiting Shipment", style={"color": GRAY, "fontSize": "11px", "marginTop": "4px"}),
         ], style=_kpi_style),
     ], style={"display": "flex", "gap": "10px", "flexWrap": "wrap", "marginBottom": "16px"})
 
