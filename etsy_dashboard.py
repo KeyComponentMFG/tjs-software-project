@@ -1257,21 +1257,74 @@ def _compute_per_order_profit():
     ship_rows = _all_data[_all_data["Type"] == "Shipping"].copy()
     ship_rows["_date"] = pd.to_datetime(ship_rows["Date"], format="%B %d, %Y", errors="coerce")
 
-    # Build labels by (store, date) for matching
+    # Separate outbound labels from return labels, adjustments, credits, insurance
+    _return_keywords = ["return"]
+    _skip_keywords = ["adjustment", "credit", "insurance", "shipsurance"]
+
+    # Build OUTBOUND labels by (store, date) for order matching
     labels_by_store_date = {}
+    # Build RETURN labels separately for refund matching
+    _return_labels = []
+    # Track adjustments/credits/insurance as overhead
+    _label_adjustments_total = 0.0
+    _label_credits_total = 0.0
+    _label_insurance_total = 0.0
+
     for _, r in ship_rows.iterrows():
         store = r.get("Store", "keycomponentmfg")
         dt = r["_date"]
+        title = str(r.get("Title", "")).lower()
+        cost = abs(r["Net_Clean"])
+
         if pd.isna(dt):
             continue
         ds = dt.strftime("%Y-%m-%d")
-        key = (store, ds)
-        if key not in labels_by_store_date:
-            labels_by_store_date[key] = []
-        labels_by_store_date[key].append({
-            "cost": abs(r["Net_Clean"]),
-            "label": r.get("Info", ""),
-        })
+
+        # Categorize the shipping row
+        if any(k in title for k in _return_keywords):
+            _return_labels.append({"store": store, "date": ds, "cost": cost,
+                                    "label": r.get("Info", ""), "net": r["Net_Clean"]})
+        elif "adjustment" in title:
+            _label_adjustments_total += r["Net_Clean"]  # keep sign (negative = extra charge)
+        elif "credit" in title:
+            _label_credits_total += r["Net_Clean"]  # positive = money back
+        elif "insurance" in title or "shipsurance" in title:
+            _label_insurance_total += cost
+        else:
+            # Outbound label — available for order matching
+            key = (store, ds)
+            if key not in labels_by_store_date:
+                labels_by_store_date[key] = []
+            labels_by_store_date[key].append({
+                "cost": cost,
+                "label": r.get("Info", ""),
+            })
+
+    # Match return labels to refund orders by date proximity
+    refund_rows = _all_data[_all_data["Type"] == "Refund"].copy()
+    refund_rows["_date"] = pd.to_datetime(refund_rows["Date"], format="%B %d, %Y", errors="coerce")
+    _return_label_by_order = {}  # order_id -> return label cost
+    for rl in _return_labels:
+        rl_date = pd.to_datetime(rl["date"])
+        best_refund = None
+        best_gap = 999
+        # Filter refunds by store if possible
+        if "Store" in refund_rows.columns:
+            _rf_iter = refund_rows[refund_rows["Store"] == rl["store"]]
+        else:
+            _rf_iter = refund_rows
+        for _, rf in _rf_iter.iterrows():
+            rf_date = rf["_date"]
+            if pd.isna(rf_date):
+                continue
+            gap = abs((rl_date - rf_date).days)
+            if gap < best_gap:
+                _rkey = _extract_order_num(rf.get("Title", ""))
+                if _rkey:
+                    best_gap = gap
+                    best_refund = _rkey
+        if best_refund and best_gap <= 14:  # within 2 weeks
+            _return_label_by_order[best_refund] = _return_label_by_order.get(best_refund, 0) + rl["cost"]
 
     results = []
     _unshipped_count = 0
@@ -1336,8 +1389,12 @@ def _compute_per_order_profit():
             processing_fee = float(o.get("Card Processing Fees", 0))
         except (ValueError, TypeError):
             processing_fee = 0
-        shipping_pl = shipping_charged - label_cost
-        order_profit = order_net - label_cost
+        # Check if this order had a return label
+        _order_key = f"Order #{order_id}"
+        return_label_cost = _return_label_by_order.get(_order_key, 0)
+
+        shipping_pl = shipping_charged - label_cost - return_label_cost
+        order_profit = order_net - label_cost - return_label_cost
 
         results.append({
             "store": store,
@@ -1351,6 +1408,7 @@ def _compute_per_order_profit():
             "processing_fee": processing_fee,
             "order_net": order_net,
             "label_cost": label_cost,
+            "return_label_cost": return_label_cost,
             "label_info": label_info,
             "label_matched": matched,
             "shipping_pl": shipping_pl,
@@ -1359,6 +1417,7 @@ def _compute_per_order_profit():
             "ship_state": str(o.get("Ship State", "")),
             "ship_country": str(o.get("Ship Country", "")),
             "num_items": int(o.get("Number of Items", 1)),
+            "had_return": return_label_cost > 0,
         })
       except Exception as _row_err:
         _skipped_errors += 1
@@ -1383,19 +1442,27 @@ def _compute_per_order_profit():
             _unmatched_labels += len(_remaining)
             _unmatched_label_cost += sum(lb["cost"] for lb in _remaining)
 
+        total_return_labels = sum(r.get("return_label_cost", 0) for r in ORDER_PROFITS)
+        orders_with_returns = sum(1 for r in ORDER_PROFITS if r.get("had_return", False))
+
         ORDER_PROFIT_SUMMARY = {
             "total_orders": len(ORDER_PROFITS),
             "total_profit": total_profit,
             "avg_profit": total_profit / len(ORDER_PROFITS),
             "total_revenue": total_revenue,
             "total_label_cost": total_label,
+            "total_return_label_cost": total_return_labels,
             "total_ship_charged": total_ship_charged,
-            "shipping_pl": total_ship_charged - total_label,
+            "shipping_pl": total_ship_charged - total_label - total_return_labels,
             "matched_count": matched_count,
             "match_rate": matched_count / len(ORDER_PROFITS) * 100,
             "best_order": max(ORDER_PROFITS, key=lambda x: x["order_profit"]),
             "worst_order": min(ORDER_PROFITS, key=lambda x: x["order_profit"]),
             "unshipped_orders": _unshipped_count,
+            "orders_with_returns": orders_with_returns,
+            "label_adjustments": _label_adjustments_total,
+            "label_credits": _label_credits_total,
+            "label_insurance": _label_insurance_total,
             "unmatched_labels": _unmatched_labels,
             "unmatched_label_cost": _unmatched_label_cost,
         }
