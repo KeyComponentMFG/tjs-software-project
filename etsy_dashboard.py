@@ -2357,6 +2357,11 @@ def _cascade_reload(source="etsy"):
     _recompute_tax_years()
     _recompute_valuation()
     _rebuild_all_charts()
+    # Recompute per-order profit (loads order CSVs from Supabase if needed)
+    try:
+        _compute_per_order_profit()
+    except Exception as _e:
+        print(f"[cascade_reload] Per-order profit computation failed: {_e}")
     try:
         from agents.governance import run_governance_async
         run_governance_async()
