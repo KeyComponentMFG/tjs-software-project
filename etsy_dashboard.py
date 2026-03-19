@@ -1052,6 +1052,17 @@ try:
 except Exception:
     pass
 
+# Refund cost overrides — manual corrections for cancelled/refunded orders
+# Format: {"order_id": {"type": "refund"|"cancel", "outbound_label": float, "return_label": float}}
+_refund_cost_overrides = {}
+try:
+    from supabase_loader import get_config_value as _get_cfg3
+    _rco_raw = _get_cfg3("refund_cost_overrides", {})
+    if isinstance(_rco_raw, dict):
+        _refund_cost_overrides = _rco_raw
+except Exception:
+    pass
+
 # ── Expense completeness globals (defaults if pipeline didn't set them) ──
 try:
     expense_receipt_verified
@@ -1454,15 +1465,43 @@ def _compute_per_order_profit():
     if _skipped_errors:
         print(f"[OrderProfit] WARNING: {_skipped_errors} orders skipped due to errors")
 
+    # Apply manual overrides to existing results (for orders in CSV with wrong label data)
+    for _res in results:
+        _oid_str = str(_res["order_id"])
+        if _oid_str in _refund_cost_overrides:
+            _ovr = _refund_cost_overrides[_oid_str]
+            if "outbound_label" in _ovr:
+                _res["label_cost"] = float(_ovr["outbound_label"])
+            if "return_label" in _ovr:
+                _res["return_label_cost"] = float(_ovr["return_label"])
+                _res["had_return"] = float(_ovr["return_label"]) > 0
+            if _ovr.get("type") == "refund":
+                _res["was_refunded"] = True
+                _res["refund_amount"] = _res.get("refund_amount", 0) or abs(_res.get("order_net", 0))
+            # Recalculate P/L with overrides
+            _lc = _res["label_cost"]
+            _rlc = _res["return_label_cost"]
+            _res["shipping_pl"] = _res["shipping_charged"] - _lc - _rlc
+            if _res.get("was_refunded"):
+                _res["order_profit"] = -(_lc + _rlc)
+            else:
+                _res["order_profit"] = _res["order_net"] - _lc - _rlc
+
     # Add refunded orders that aren't in the order CSV (same-day cancels, missing exports)
     _existing_order_ids = {str(r["order_id"]) for r in results}
     _missing_refund_count = 0
     for _rf_oid, _rf_amt in _refund_by_order.items():
         if _rf_oid not in _existing_order_ids:
+            # Check for manual override
+            _ovr = _refund_cost_overrides.get(_rf_oid, {})
+            _ovr_type = _ovr.get("type", "cancel")
+            _ovr_outbound = float(_ovr.get("outbound_label", 0))
+            _ovr_return = float(_ovr.get("return_label", 0))
+
             # Find the refund row for date and store info
             _rf_date = ""
             _rf_store = "keycomponentmfg"
-            _rf_items = "Cancelled/Refunded Order"
+            _rf_items = f"{'Refunded' if _ovr_type == 'refund' else 'Cancelled'} Order"
             for _, _rfr in refund_rows.iterrows():
                 _rfr_key = _extract_order_num(_rfr.get("Title", ""))
                 if _rfr_key and _rfr_key.replace("Order #", "") == _rf_oid:
@@ -1475,8 +1514,10 @@ def _compute_per_order_profit():
                 _rf_items_df = items_df[items_df["Order ID"].astype(str) == _rf_oid]
                 if len(_rf_items_df) > 0:
                     _rf_items = ", ".join(_rf_items_df["Item Name"].tolist())[:120]
-            # Check for return label
-            _rf_return = _return_label_by_order.get(f"Order #{_rf_oid}", 0)
+            # Check for return label (auto-detected or manual override)
+            _rf_return = _ovr_return or _return_label_by_order.get(f"Order #{_rf_oid}", 0)
+            _rf_outbound = _ovr_outbound
+            _total_label_loss = _rf_outbound + _rf_return
             results.append({
                 "store": _rf_store,
                 "order_id": _rf_oid,
@@ -1488,12 +1529,12 @@ def _compute_per_order_profit():
                 "shipping_charged": 0,
                 "processing_fee": 0,
                 "order_net": 0,
-                "label_cost": 0,
+                "label_cost": _rf_outbound,
                 "return_label_cost": _rf_return,
-                "label_info": "N/A",
-                "label_matched": False,
-                "shipping_pl": -_rf_return,
-                "order_profit": -_rf_return,
+                "label_info": "Manual" if _ovr else "N/A",
+                "label_matched": bool(_ovr),
+                "shipping_pl": -_total_label_loss,
+                "order_profit": -_total_label_loss,
                 "buyer": "",
                 "ship_state": "",
                 "ship_country": "",
@@ -15401,6 +15442,80 @@ def _build_per_order_profit_section():
         },
     )
 
+    # Build refund cost editor for cancelled/refunded orders
+    _refund_editor_rows = []
+    _all_refund_orders = [r for r in _filtered if r.get("was_refunded") or r.get("items", "").startswith("Cancelled")]
+    for _ro in _all_refund_orders:
+        _oid = str(_ro["order_id"])
+        _ovr = _refund_cost_overrides.get(_oid, {})
+        _type_val = _ovr.get("type", "refund" if _ro.get("was_refunded") else "cancel")
+        _refund_editor_rows.append(html.Tr([
+            html.Td(_oid, style={"color": CYAN, "padding": "6px 8px", "fontSize": "12px", "fontFamily": "monospace"}),
+            html.Td(_ro.get("ship_date", ""), style={"color": WHITE, "padding": "6px 8px", "fontSize": "12px"}),
+            html.Td(_ro.get("items", "")[:40], style={"color": WHITE, "padding": "6px 8px", "fontSize": "12px"}),
+            html.Td(f"${_ro.get('refund_amount', 0):,.2f}", style={"color": RED, "padding": "6px 8px", "fontSize": "12px", "fontFamily": "monospace"}),
+            html.Td(
+                dcc.Dropdown(
+                    id={"type": "refund-type-dd", "order": _oid},
+                    options=[{"label": "Refund", "value": "refund"}, {"label": "Cancel", "value": "cancel"}],
+                    value=_type_val, clearable=False,
+                    style={"width": "100px", "fontSize": "11px", "backgroundColor": CARD},
+                ), style={"padding": "4px 8px"}
+            ),
+            html.Td(
+                dcc.Input(
+                    id={"type": "refund-outbound-input", "order": _oid},
+                    type="number", step=0.01, placeholder="0.00",
+                    value=_ro.get("label_cost", 0) if _ro.get("label_cost", 0) > 0 else (_ovr.get("outbound_label") or ""),
+                    style={"width": "80px", "fontSize": "11px", "backgroundColor": CARD, "color": WHITE,
+                           "border": f"1px solid {DARKGRAY}44", "borderRadius": "4px", "padding": "4px 6px"},
+                ), style={"padding": "4px 8px"}
+            ),
+            html.Td(
+                dcc.Input(
+                    id={"type": "refund-return-input", "order": _oid},
+                    type="number", step=0.01, placeholder="0.00",
+                    value=_ro.get("return_label_cost", 0) if _ro.get("return_label_cost", 0) > 0 else (_ovr.get("return_label") or ""),
+                    style={"width": "80px", "fontSize": "11px", "backgroundColor": CARD, "color": WHITE,
+                           "border": f"1px solid {DARKGRAY}44", "borderRadius": "4px", "padding": "4px 6px"},
+                ), style={"padding": "4px 8px"}
+            ),
+            html.Td(
+                html.Button("Save", id={"type": "refund-save-btn", "order": _oid}, n_clicks=0,
+                            style={"fontSize": "11px", "padding": "4px 10px", "backgroundColor": f"{GREEN}25",
+                                   "border": f"1px solid {GREEN}", "borderRadius": "4px", "color": GREEN,
+                                   "cursor": "pointer"}),
+                style={"padding": "4px 8px"}
+            ),
+        ]))
+
+    _refund_editor = html.Div()
+    if _refund_editor_rows:
+        _refund_editor = html.Details([
+            html.Summary(f"Refund/Cancel Cost Editor ({len(_refund_editor_rows)} orders)", style={
+                "color": RED, "fontSize": "13px", "fontWeight": "bold",
+                "cursor": "pointer", "padding": "8px 0",
+            }),
+            html.P("Set type (Refund vs Cancel) and enter actual outbound/return label costs for each order.",
+                   style={"color": GRAY, "fontSize": "11px", "margin": "6px 0"}),
+            html.Div(id="refund-editor-status", style={"minHeight": "20px", "marginBottom": "6px"}),
+            html.Div([
+                html.Table([
+                    html.Thead(html.Tr([
+                        html.Th("Order #", style={"color": GRAY, "padding": "6px 8px", "fontSize": "11px", "textAlign": "left"}),
+                        html.Th("Date", style={"color": GRAY, "padding": "6px 8px", "fontSize": "11px", "textAlign": "left"}),
+                        html.Th("Item", style={"color": GRAY, "padding": "6px 8px", "fontSize": "11px", "textAlign": "left"}),
+                        html.Th("Refund $", style={"color": GRAY, "padding": "6px 8px", "fontSize": "11px"}),
+                        html.Th("Type", style={"color": GRAY, "padding": "6px 8px", "fontSize": "11px"}),
+                        html.Th("Outbound Label", style={"color": GRAY, "padding": "6px 8px", "fontSize": "11px"}),
+                        html.Th("Return Label", style={"color": GRAY, "padding": "6px 8px", "fontSize": "11px"}),
+                        html.Th("", style={"padding": "6px 8px"}),
+                    ])),
+                    html.Tbody(_refund_editor_rows),
+                ], style={"width": "100%", "borderCollapse": "collapse"}),
+            ], style={"maxHeight": "400px", "overflowY": "auto"}),
+        ], style={"marginTop": "12px"})
+
     return html.Div([
         html.H3("\U0001f4b0 PER-ORDER PROFIT", style={
             "color": ORANGE, "margin": "30px 0 6px 0", "fontSize": "14px",
@@ -15417,7 +15532,78 @@ def _build_per_order_profit_section():
             }),
             _order_table,
         ], style={"marginTop": "8px"}),
+        _refund_editor,
     ])
+
+
+# ── Refund Cost Override Callback ────────────────────────────────────────────
+
+@app.callback(
+    Output("refund-editor-status", "children"),
+    Output("upload-reload-trigger", "data", allow_duplicate=True),
+    Input({"type": "refund-save-btn", "order": ALL}, "n_clicks"),
+    State({"type": "refund-type-dd", "order": ALL}, "value"),
+    State({"type": "refund-outbound-input", "order": ALL}, "value"),
+    State({"type": "refund-return-input", "order": ALL}, "value"),
+    prevent_initial_call=True,
+)
+def save_refund_cost_override(all_clicks, all_types, all_outbound, all_return):
+    """Save manual refund cost overrides to Supabase."""
+    global _refund_cost_overrides
+    ctx = callback_context
+    if not ctx.triggered:
+        raise dash.exceptions.PreventUpdate
+
+    trigger = ctx.triggered[0]
+    if not trigger["value"]:
+        raise dash.exceptions.PreventUpdate
+
+    try:
+        trigger_id = json.loads(trigger["prop_id"].split(".")[0])
+        order_id = trigger_id["order"]
+    except Exception:
+        raise dash.exceptions.PreventUpdate
+
+    # Find the index of the clicked button
+    idx = None
+    for i, inp in enumerate(ctx.inputs_list[0]):
+        if inp.get("id", {}).get("order") == order_id:
+            idx = i
+            break
+    if idx is None:
+        raise dash.exceptions.PreventUpdate
+
+    _type = all_types[idx] if idx < len(all_types) else "cancel"
+    _outbound = float(all_outbound[idx] or 0) if idx < len(all_outbound) else 0
+    _return = float(all_return[idx] or 0) if idx < len(all_return) else 0
+
+    # Save override
+    _refund_cost_overrides[order_id] = {
+        "type": _type,
+        "outbound_label": _outbound,
+        "return_label": _return,
+    }
+
+    # Persist to Supabase
+    try:
+        from supabase_loader import save_config_value
+        save_config_value("refund_cost_overrides", _refund_cost_overrides)
+    except Exception as e:
+        print(f"[RefundOverride] Supabase save failed: {e}")
+
+    # Recompute profits
+    try:
+        _compute_per_order_profit()
+    except Exception:
+        pass
+
+    import time
+    status = html.Div([
+        html.Span("\u2713 ", style={"color": GREEN, "fontWeight": "bold"}),
+        html.Span(f"Order #{order_id} saved: {_type}, outbound ${_outbound:.2f}, return ${_return:.2f}",
+                  style={"color": GREEN, "fontSize": "12px"}),
+    ])
+    return status, time.time()
 
 
 # ── Data Hub Tab ─────────────────────────────────────────────────────────────
