@@ -1412,12 +1412,13 @@ def _compute_per_order_profit():
         refund_amount = _refund_by_order.get(str(order_id), 0)
         was_refunded = refund_amount > 0
 
-        # True P/L: Order Net - labels - return label - refund amount
-        # If refunded: you lost the revenue (refund_amount) but still paid for labels
+        # True P/L calculation
         shipping_pl = shipping_charged - label_cost - return_label_cost
         if was_refunded:
-            # Refund means you gave back the money but still paid for shipping
-            order_profit = -refund_amount - label_cost - return_label_cost
+            # Refunded order: the customer's money came in and went back out — that's a wash.
+            # The real loss is only the sunk costs you can't recover:
+            # outbound label + return label + any Etsy fees they kept
+            order_profit = -(label_cost + return_label_cost)
         else:
             order_profit = order_net - label_cost - return_label_cost
 
