@@ -15422,7 +15422,7 @@ def _build_per_order_profit_section():
             "textAlign": "right",
         },
         style_cell_conditional=[
-            {"if": {"column_id": "Order #"}, "textAlign": "left", "color": CYAN, "width": "115px"},
+            {"if": {"column_id": "Order #"}, "textAlign": "left", "color": CYAN, "width": "115px", "cursor": "pointer"},
             {"if": {"column_id": "Date"}, "textAlign": "left", "width": "95px", "color": GRAY},
             {"if": {"column_id": "Store"}, "textAlign": "left", "width": "65px"},
             {"if": {"column_id": "Item"}, "textAlign": "left", "width": "200px",
