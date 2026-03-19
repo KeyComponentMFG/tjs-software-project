@@ -1102,12 +1102,26 @@ ORDER_PROFITS = []  # List of dicts with per-order profit data
 ORDER_PROFIT_SUMMARY = {}  # Summary stats
 
 
+def _save_order_csv_to_supabase(df, store, csv_type):
+    """Persist order CSV data to Supabase config table as JSON."""
+    try:
+        from supabase_loader import save_config_value
+        import json
+        key = f"order_csv_{csv_type}_{store}"
+        # Convert to records, handling NaN
+        records = json.loads(df.to_json(orient="records"))
+        save_config_value(key, json.dumps(records))
+        print(f"[OrderProfit] Saved {len(records)} {csv_type} rows for {store} to Supabase")
+    except Exception as e:
+        print(f"[OrderProfit] Supabase save failed: {e}")
+
+
 def _load_order_csvs():
-    """Load order CSVs from data/order_csvs/{store}/ and local UPLOAD_HERE folders."""
+    """Load order CSVs from local files and Supabase."""
     all_orders = []
     all_items = []
 
-    # Check data/order_csvs/{store}/
+    # Check data/order_csvs/{store}/ (local disk — works right after upload)
     for store in ("keycomponentmfg", "aurvio", "lunalinks"):
         order_dir = os.path.join(BASE_DIR, "data", "order_csvs", store)
         if os.path.isdir(order_dir):
@@ -1134,7 +1148,6 @@ def _load_order_csvs():
             _subpath = os.path.join(_upload_base, _subdir)
             if not os.path.isdir(_subpath):
                 continue
-            # Guess store from folder name
             _store_guess = "keycomponentmfg"
             for _key, _val in _store_map.items():
                 if _key.lower() in _subdir.lower():
@@ -1153,6 +1166,25 @@ def _load_order_csvs():
                         all_items.append(df)
                 except Exception as e:
                     print(f"[OrderProfit] Failed to parse {fp}: {e}")
+
+    # Load from Supabase (persisted data — survives redeploys)
+    if not all_orders and not all_items:
+        try:
+            from supabase_loader import get_config_value
+            import json
+            for store in ("keycomponentmfg", "aurvio", "lunalinks"):
+                for csv_type, target in [("orders", all_orders), ("items", all_items)]:
+                    key = f"order_csv_{csv_type}_{store}"
+                    raw = get_config_value(key)
+                    if raw:
+                        records = json.loads(raw) if isinstance(raw, str) else raw
+                        if records:
+                            df = pd.DataFrame(records)
+                            df["_store"] = store
+                            target.append(df)
+                            print(f"[OrderProfit] Loaded {len(df)} {csv_type} rows for {store} from Supabase")
+        except Exception as e:
+            print(f"[OrderProfit] Supabase load failed: {e}")
 
     orders_df = pd.concat(all_orders, ignore_index=True) if all_orders else pd.DataFrame()
     items_df = pd.concat(all_items, ignore_index=True) if all_items else pd.DataFrame()
@@ -18461,6 +18493,17 @@ def handle_datahub_upload(etsy_contents, receipt_contents, bank_contents, orders
 
             print(f"[UPLOAD] Order CSV for {_store_display}: {fname}, {_row_count} rows, columns: {_cols}")
 
+            # Persist to Supabase so data survives redeploys
+            _csv_type = "orders" if "Order Net" in _cols else "items"
+            import threading
+            _df_copy = _order_df.copy()
+            _store_copy = _upload_store
+            threading.Thread(
+                target=_save_order_csv_to_supabase,
+                args=(_df_copy, _store_copy, _csv_type),
+                daemon=True,
+            ).start()
+
             # Show column preview so we can see what data is available
             _col_preview = ", ".join(_cols[:15])
             if len(_cols) > 15:
@@ -18505,26 +18548,6 @@ def handle_datahub_upload(etsy_contents, receipt_contents, bank_contents, orders
                           style={"color": GREEN, "fontSize": "12px"}),
             ], style={"padding": "3px 0", "borderBottom": "1px solid #ffffff08"})] + (
                 new_log if isinstance(new_log, list) else [])
-
-            # Sync to Supabase if on Railway
-            if IS_RAILWAY:
-                try:
-                    from supabase_loader import get_client
-                    _sb = get_client()
-                    # Store order CSV data in a dedicated table
-                    _order_records = _order_df.to_dict("records")
-                    for _rec in _order_records:
-                        _rec["_store"] = _upload_store
-                    import threading
-                    def _sync_orders():
-                        try:
-                            _sb.table("order_csvs").upsert(_order_records).execute()
-                            print(f"[UPLOAD] Order CSV synced to Supabase: {len(_order_records)} rows")
-                        except Exception as _e:
-                            print(f"[UPLOAD] Order CSV Supabase sync failed: {_e}")
-                    threading.Thread(target=_sync_orders, daemon=True).start()
-                except Exception as _e:
-                    print(f"[UPLOAD] Order CSV Supabase setup failed: {_e}")
 
         except Exception as e:
             orders_status = html.Div([
