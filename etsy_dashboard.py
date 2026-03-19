@@ -1105,15 +1105,35 @@ ORDER_PROFIT_SUMMARY = {}  # Summary stats
 
 
 def _save_order_csv_to_supabase(df, store, csv_type):
-    """Persist order CSV data to Supabase config table as JSON."""
+    """Persist order CSV data to Supabase config table as JSON.
+    Merges with existing data (deduplicates by Order ID) so multiple
+    year uploads don't overwrite each other."""
     try:
-        from supabase_loader import save_config_value
+        from supabase_loader import save_config_value, get_config_value
         import json
         key = f"order_csv_{csv_type}_{store}"
-        # Convert to records, handling NaN
-        records = json.loads(df.to_json(orient="records"))
-        save_config_value(key, json.dumps(records))
-        print(f"[OrderProfit] Saved {len(records)} {csv_type} rows for {store} to Supabase")
+        # Load existing data
+        existing_raw = get_config_value(key)
+        existing_records = []
+        if existing_raw:
+            existing_records = json.loads(existing_raw) if isinstance(existing_raw, str) else existing_raw
+
+        # Convert new data to records
+        new_records = json.loads(df.to_json(orient="records"))
+
+        # Merge: use Order ID as dedup key
+        _id_col = "Order ID" if "Order ID" in df.columns else None
+        if _id_col and existing_records:
+            new_ids = {r.get(_id_col) for r in new_records if r.get(_id_col)}
+            # Keep existing records that aren't in the new upload
+            kept = [r for r in existing_records if r.get(_id_col) not in new_ids]
+            merged = kept + new_records
+            print(f"[OrderProfit] Merged: {len(existing_records)} existing + {len(new_records)} new - {len(existing_records) - len(kept)} replaced = {len(merged)} total")
+        else:
+            merged = new_records
+
+        save_config_value(key, json.dumps(merged))
+        print(f"[OrderProfit] Saved {len(merged)} {csv_type} rows for {store} to Supabase")
     except Exception as e:
         print(f"[OrderProfit] Supabase save failed: {e}")
 
