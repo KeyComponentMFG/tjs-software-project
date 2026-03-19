@@ -1335,19 +1335,35 @@ def _compute_per_order_profit():
             item_names = str(o.get("SKU", "?"))
 
         # Find matching label by date + closest shipping cost
-        # For free-shipping orders (Shipping=0), cheapest label is the best guess
-        available = labels_by_store_date.get((store, ds), [])
-        best_label = None
-        best_diff = 999
+        # Try exact date first, then expand to ±2 days if no match
         try:
             _ship_charged = float(o.get("Shipping", 0))
         except (ValueError, TypeError):
             _ship_charged = 0
-        for lb in available:
-            diff = abs(lb["cost"] - _ship_charged)
-            if diff < best_diff:
-                best_diff = diff
-                best_label = lb
+
+        best_label = None
+        best_diff = 999
+        best_date_key = None
+
+        # Search exact date first, then ±1 day, then ±2 days
+        from datetime import timedelta
+        _search_dates = [ds]
+        for _offset in (1, -1, 2, -2):
+            _adj = (ship_dt + timedelta(days=_offset)).strftime("%Y-%m-%d")
+            _search_dates.append(_adj)
+
+        for _search_ds in _search_dates:
+            _search_key = (store, _search_ds)
+            available = labels_by_store_date.get(_search_key, [])
+            for lb in available:
+                diff = abs(lb["cost"] - _ship_charged)
+                if diff < best_diff:
+                    best_diff = diff
+                    best_label = lb
+                    best_date_key = _search_key
+            # If we found an exact-date match, prefer it
+            if best_label and _search_ds == ds:
+                break
 
         label_cost = best_label["cost"] if best_label else 0
         label_info = best_label["label"] if best_label else "NO MATCH"
@@ -1357,8 +1373,10 @@ def _compute_per_order_profit():
             label_info = f"{best_label['label']} (WEAK MATCH)"
 
         # Remove used label so it's not double-matched
-        if best_label and best_label in available:
-            available.remove(best_label)
+        if best_label and best_date_key:
+            _avail = labels_by_store_date.get(best_date_key, [])
+            if best_label in _avail:
+                _avail.remove(best_label)
 
         try:
             order_net = float(o.get("Order Net", 0))
