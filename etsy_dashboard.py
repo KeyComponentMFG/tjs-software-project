@@ -14935,7 +14935,163 @@ def build_tab3_financials():
             ], style={"paddingTop": "10px"}),
         ], style={"marginBottom": "8px"}),
 
+        # ══ PER-ORDER PROFIT ══
+        _build_per_order_profit_section(),
+
     ], style={"padding": TAB_PADDING})
+
+
+def _build_per_order_profit_section():
+    """Build the per-order profit table for the Financials tab."""
+    if not ORDER_PROFITS:
+        return html.Div([
+            html.H3("\U0001f4b0 PER-ORDER PROFIT", style={
+                "color": ORANGE, "margin": "30px 0 6px 0", "fontSize": "14px",
+                "letterSpacing": "1.5px", "borderTop": f"2px solid {ORANGE}33", "paddingTop": "14px",
+            }),
+            html.P("Upload Etsy order CSVs in Data Hub to enable per-order profit tracking.",
+                   style={"color": GRAY, "fontSize": "12px"}),
+        ])
+
+    s = ORDER_PROFIT_SUMMARY
+    _store_filter = DATA["Store"].iloc[0] if "Store" in DATA.columns and _DATA_ALL is not None and len(DATA) < len(_DATA_ALL) else None
+
+    # Filter to current store if a store filter is active
+    if _store_filter:
+        _filtered = [r for r in ORDER_PROFITS if r["store"] == _store_filter]
+    else:
+        _filtered = ORDER_PROFITS
+
+    if not _filtered:
+        return html.Div([
+            html.H3("\U0001f4b0 PER-ORDER PROFIT", style={
+                "color": ORANGE, "margin": "30px 0 6px 0", "fontSize": "14px",
+                "letterSpacing": "1.5px", "borderTop": f"2px solid {ORANGE}33", "paddingTop": "14px",
+            }),
+            html.P("No order data for this store. Upload order CSVs in Data Hub.",
+                   style={"color": GRAY, "fontSize": "12px"}),
+        ])
+
+    _total_profit = sum(r["order_profit"] for r in _filtered)
+    _total_revenue = sum(r["order_value"] for r in _filtered)
+    _total_label = sum(r["label_cost"] for r in _filtered)
+    _total_ship_charged = sum(r["shipping_charged"] for r in _filtered)
+    _ship_pl = _total_ship_charged - _total_label
+    _avg_profit = _total_profit / len(_filtered) if _filtered else 0
+    _avg_margin = (_total_profit / _total_revenue * 100) if _total_revenue else 0
+
+    # Summary KPIs
+    _kpi_style = {
+        "backgroundColor": CARD, "borderRadius": "8px", "padding": "12px 16px",
+        "textAlign": "center", "flex": "1", "minWidth": "120px",
+    }
+    _kpi_row = html.Div([
+        html.Div([
+            html.Div(f"${_total_profit:,.2f}", style={"color": GREEN, "fontSize": "20px", "fontWeight": "bold", "fontFamily": "monospace"}),
+            html.Div("Total Profit", style={"color": GRAY, "fontSize": "11px", "marginTop": "4px"}),
+        ], style=_kpi_style),
+        html.Div([
+            html.Div(f"${_avg_profit:,.2f}", style={"color": CYAN, "fontSize": "20px", "fontWeight": "bold", "fontFamily": "monospace"}),
+            html.Div("Avg/Order", style={"color": GRAY, "fontSize": "11px", "marginTop": "4px"}),
+        ], style=_kpi_style),
+        html.Div([
+            html.Div(f"{_avg_margin:.1f}%", style={"color": ORANGE, "fontSize": "20px", "fontWeight": "bold", "fontFamily": "monospace"}),
+            html.Div("Margin", style={"color": GRAY, "fontSize": "11px", "marginTop": "4px"}),
+        ], style=_kpi_style),
+        html.Div([
+            html.Div(f"${_ship_pl:,.2f}", style={"color": GREEN if _ship_pl >= 0 else RED, "fontSize": "20px", "fontWeight": "bold", "fontFamily": "monospace"}),
+            html.Div("Shipping P/L", style={"color": GRAY, "fontSize": "11px", "marginTop": "4px"}),
+        ], style=_kpi_style),
+        html.Div([
+            html.Div(f"{len(_filtered)}", style={"color": WHITE, "fontSize": "20px", "fontWeight": "bold", "fontFamily": "monospace"}),
+            html.Div("Orders", style={"color": GRAY, "fontSize": "11px", "marginTop": "4px"}),
+        ], style=_kpi_style),
+    ], style={"display": "flex", "gap": "10px", "flexWrap": "wrap", "marginBottom": "16px"})
+
+    # Per-store summary if showing all stores
+    _store_summary = html.Div()
+    if not _store_filter:
+        _store_rows = []
+        for _sk, _sl in [("keycomponentmfg", "KeyComponentMFG"), ("aurvio", "Aurvio"), ("lunalinks", "Luna&Links")]:
+            _sp = [r for r in ORDER_PROFITS if r["store"] == _sk]
+            if _sp:
+                _sp_profit = sum(r["order_profit"] for r in _sp)
+                _sp_rev = sum(r["order_value"] for r in _sp)
+                _sp_margin = (_sp_profit / _sp_rev * 100) if _sp_rev else 0
+                _sc = STORE_COLORS.get(_sk, TEAL)
+                _store_rows.append(html.Tr([
+                    html.Td(_sl, style={"color": _sc, "fontWeight": "bold", "padding": "6px 12px", "fontSize": "12px"}),
+                    html.Td(f"{len(_sp)}", style={"color": WHITE, "padding": "6px 12px", "fontSize": "12px", "textAlign": "center"}),
+                    html.Td(f"${_sp_profit:,.2f}", style={"color": GREEN, "padding": "6px 12px", "fontSize": "12px", "fontFamily": "monospace", "textAlign": "right"}),
+                    html.Td(f"${_sp_profit/len(_sp):,.2f}", style={"color": CYAN, "padding": "6px 12px", "fontSize": "12px", "fontFamily": "monospace", "textAlign": "right"}),
+                    html.Td(f"{_sp_margin:.1f}%", style={"color": ORANGE, "padding": "6px 12px", "fontSize": "12px", "fontFamily": "monospace", "textAlign": "right"}),
+                ]))
+        if _store_rows:
+            _store_summary = html.Div([
+                html.Table([
+                    html.Thead(html.Tr([
+                        html.Th("Store", style={"color": GRAY, "padding": "6px 12px", "fontSize": "11px", "textAlign": "left"}),
+                        html.Th("Orders", style={"color": GRAY, "padding": "6px 12px", "fontSize": "11px", "textAlign": "center"}),
+                        html.Th("Profit", style={"color": GRAY, "padding": "6px 12px", "fontSize": "11px", "textAlign": "right"}),
+                        html.Th("Avg/Order", style={"color": GRAY, "padding": "6px 12px", "fontSize": "11px", "textAlign": "right"}),
+                        html.Th("Margin", style={"color": GRAY, "padding": "6px 12px", "fontSize": "11px", "textAlign": "right"}),
+                    ])),
+                    html.Tbody(_store_rows),
+                ], style={"width": "100%", "borderCollapse": "collapse"}),
+            ], style={"marginBottom": "16px"})
+
+    # Order detail table
+    _header = html.Thead(html.Tr([
+        html.Th("Date", style={"color": GRAY, "padding": "6px 8px", "fontSize": "11px", "textAlign": "left"}),
+        html.Th("Store", style={"color": GRAY, "padding": "6px 8px", "fontSize": "11px", "textAlign": "left"}),
+        html.Th("Item", style={"color": GRAY, "padding": "6px 8px", "fontSize": "11px", "textAlign": "left"}),
+        html.Th("Value", style={"color": GRAY, "padding": "6px 8px", "fontSize": "11px", "textAlign": "right"}),
+        html.Th("Buyer Ship", style={"color": GRAY, "padding": "6px 8px", "fontSize": "11px", "textAlign": "right"}),
+        html.Th("Label Cost", style={"color": GRAY, "padding": "6px 8px", "fontSize": "11px", "textAlign": "right"}),
+        html.Th("Ship P/L", style={"color": GRAY, "padding": "6px 8px", "fontSize": "11px", "textAlign": "right"}),
+        html.Th("Order Net", style={"color": GRAY, "padding": "6px 8px", "fontSize": "11px", "textAlign": "right"}),
+        html.Th("Profit", style={"color": GRAY, "padding": "6px 8px", "fontSize": "11px", "textAlign": "right"}),
+    ]))
+
+    _rows = []
+    for _op in _filtered:
+        _sc = STORE_COLORS.get(_op["store"], TEAL)
+        _store_short = {"keycomponentmfg": "KeyComp", "aurvio": "Aurvio", "lunalinks": "L&L"}.get(_op["store"], _op["store"])
+        _ship_color = GREEN if _op["shipping_pl"] >= 0 else RED
+        _profit_color = GREEN if _op["order_profit"] >= 0 else RED
+        _match_warn = "" if _op["label_matched"] else " *"
+        _rows.append(html.Tr([
+            html.Td(_op["ship_date"], style={"color": WHITE, "padding": "5px 8px", "fontSize": "11px"}),
+            html.Td(_store_short, style={"color": _sc, "padding": "5px 8px", "fontSize": "11px", "fontWeight": "bold"}),
+            html.Td(_op["items"][:50], style={"color": WHITE, "padding": "5px 8px", "fontSize": "11px", "maxWidth": "200px", "overflow": "hidden", "textOverflow": "ellipsis", "whiteSpace": "nowrap"}),
+            html.Td(f"${_op['order_value']:,.2f}", style={"color": WHITE, "padding": "5px 8px", "fontSize": "11px", "fontFamily": "monospace", "textAlign": "right"}),
+            html.Td(f"${_op['shipping_charged']:,.2f}", style={"color": WHITE, "padding": "5px 8px", "fontSize": "11px", "fontFamily": "monospace", "textAlign": "right"}),
+            html.Td(f"${_op['label_cost']:,.2f}{_match_warn}", style={"color": WHITE, "padding": "5px 8px", "fontSize": "11px", "fontFamily": "monospace", "textAlign": "right"}),
+            html.Td(f"${_op['shipping_pl']:,.2f}", style={"color": _ship_color, "padding": "5px 8px", "fontSize": "11px", "fontFamily": "monospace", "textAlign": "right"}),
+            html.Td(f"${_op['order_net']:,.2f}", style={"color": CYAN, "padding": "5px 8px", "fontSize": "11px", "fontFamily": "monospace", "textAlign": "right"}),
+            html.Td(f"${_op['order_profit']:,.2f}", style={"color": _profit_color, "padding": "5px 8px", "fontSize": "11px", "fontFamily": "monospace", "fontWeight": "bold", "textAlign": "right"}),
+        ], style={"borderBottom": "1px solid #ffffff08"}))
+
+    return html.Div([
+        html.H3("\U0001f4b0 PER-ORDER PROFIT", style={
+            "color": ORANGE, "margin": "30px 0 6px 0", "fontSize": "14px",
+            "letterSpacing": "1.5px", "borderTop": f"2px solid {ORANGE}33", "paddingTop": "14px",
+        }),
+        html.P("Profit after all Etsy fees + shipping labels. Does not include material/COGS costs.",
+               style={"color": GRAY, "margin": "0 0 14px 0", "fontSize": "12px"}),
+        _kpi_row,
+        _store_summary,
+        html.Details([
+            html.Summary(f"Order Detail ({len(_filtered)} orders)", style={
+                "color": ORANGE, "fontSize": "13px", "fontWeight": "bold",
+                "cursor": "pointer", "padding": "8px 0",
+            }),
+            html.Div([
+                html.Table([_header, html.Tbody(_rows)],
+                           style={"width": "100%", "borderCollapse": "collapse"}),
+            ], style={"maxHeight": "500px", "overflowY": "auto"}),
+        ], style={"marginTop": "8px"}),
+    ])
 
 
 # ── Data Hub Tab ─────────────────────────────────────────────────────────────
