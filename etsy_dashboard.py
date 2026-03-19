@@ -937,7 +937,9 @@ etsy_net_earned = (gross_sales - total_fees - total_shipping_cost - total_market
 etsy_net = etsy_net_earned
 etsy_net_margin = (etsy_net / gross_sales * 100) if gross_sales else 0
 # etsy_pre_capone_deposits and etsy_balance loaded from config.json above
-etsy_total_deposited = etsy_pre_capone_deposits + bank_total_deposits
+# Only count bank deposits that are actually from Etsy (not personal transfers etc.)
+_bank_etsy_deposits = sum(t["amount"] for t in bank_deposits if "etsy" in t.get("desc", "").lower())
+etsy_total_deposited = etsy_pre_capone_deposits + (_bank_etsy_deposits if _bank_etsy_deposits > 0 else bank_total_deposits)
 # Known non-Etsy adjustments that affect the Etsy Payments balance
 # $18.44 Amazon refund deposited to Etsy Payments — not from Etsy sales
 _known_non_etsy_adjustments = 18.44
@@ -1168,23 +1170,33 @@ def _load_order_csvs():
                     print(f"[OrderProfit] Failed to parse {fp}: {e}")
 
     # Load from Supabase (persisted data — survives redeploys)
-    if not all_orders and not all_items:
-        try:
-            from supabase_loader import get_config_value
-            import json
-            for store in ("keycomponentmfg", "aurvio", "lunalinks"):
-                for csv_type, target in [("orders", all_orders), ("items", all_items)]:
-                    key = f"order_csv_{csv_type}_{store}"
-                    raw = get_config_value(key)
-                    if raw:
-                        records = json.loads(raw) if isinstance(raw, str) else raw
-                        if records:
-                            df = pd.DataFrame(records)
-                            df["_store"] = store
-                            target.append(df)
-                            print(f"[OrderProfit] Loaded {len(df)} {csv_type} rows for {store} from Supabase")
-        except Exception as e:
-            print(f"[OrderProfit] Supabase load failed: {e}")
+    # Check each type independently so orders from disk + items from Supabase works
+    try:
+        from supabase_loader import get_config_value
+        import json
+        for store in ("keycomponentmfg", "aurvio", "lunalinks"):
+            if not all_orders:
+                key = f"order_csv_orders_{store}"
+                raw = get_config_value(key)
+                if raw:
+                    records = json.loads(raw) if isinstance(raw, str) else raw
+                    if records:
+                        df = pd.DataFrame(records)
+                        df["_store"] = store
+                        all_orders.append(df)
+                        print(f"[OrderProfit] Loaded {len(df)} orders for {store} from Supabase")
+            if not all_items:
+                key = f"order_csv_items_{store}"
+                raw = get_config_value(key)
+                if raw:
+                    records = json.loads(raw) if isinstance(raw, str) else raw
+                    if records:
+                        df = pd.DataFrame(records)
+                        df["_store"] = store
+                        all_items.append(df)
+                        print(f"[OrderProfit] Loaded {len(df)} items for {store} from Supabase")
+    except Exception as e:
+        print(f"[OrderProfit] Supabase load failed: {e}")
 
     orders_df = pd.concat(all_orders, ignore_index=True) if all_orders else pd.DataFrame()
     items_df = pd.concat(all_items, ignore_index=True) if all_items else pd.DataFrame()
@@ -1232,10 +1244,14 @@ def _compute_per_order_profit():
         })
 
     results = []
+    _unshipped_count = 0
+    _skipped_errors = 0
     for _, o in orders_df.iterrows():
+      try:
         store = o.get("_store", "keycomponentmfg")
         ship_dt = o["_ship_date"]
         if pd.isna(ship_dt):
+            _unshipped_count += 1
             continue
         ds = ship_dt.strftime("%Y-%m-%d")
 
@@ -1248,25 +1264,36 @@ def _compute_per_order_profit():
             item_names = str(o.get("SKU", "?"))
 
         # Find matching label by date + closest shipping cost
+        # For free-shipping orders (Shipping=0), cheapest label is the best guess
         available = labels_by_store_date.get((store, ds), [])
         best_label = None
         best_diff = 999
+        try:
+            _ship_charged = float(o.get("Shipping", 0))
+        except (ValueError, TypeError):
+            _ship_charged = 0
         for lb in available:
-            diff = abs(lb["cost"] - float(o.get("Shipping", 0)))
+            diff = abs(lb["cost"] - _ship_charged)
             if diff < best_diff:
                 best_diff = diff
                 best_label = lb
 
         label_cost = best_label["cost"] if best_label else 0
         label_info = best_label["label"] if best_label else "NO MATCH"
-        matched = best_label is not None
+        # Mark as weak match if cost difference is too large (>$15)
+        matched = best_label is not None and best_diff <= 15.0
+        if best_label and best_diff > 15.0:
+            label_info = f"{best_label['label']} (WEAK MATCH)"
 
         # Remove used label so it's not double-matched
         if best_label and best_label in available:
             available.remove(best_label)
 
-        order_net = float(o.get("Order Net", 0))
-        shipping_charged = float(o.get("Shipping", 0))
+        try:
+            order_net = float(o.get("Order Net", 0))
+        except (ValueError, TypeError):
+            order_net = 0
+        shipping_charged = _ship_charged
         order_value = float(o.get("Order Value", 0))
         discount = float(o.get("Discount Amount", 0))
         processing_fee = float(o.get("Card Processing Fees", 0))
@@ -1294,6 +1321,12 @@ def _compute_per_order_profit():
             "ship_country": str(o.get("Ship Country", "")),
             "num_items": int(o.get("Number of Items", 1)),
         })
+      except Exception as _row_err:
+        _skipped_errors += 1
+        print(f"[OrderProfit] Skipped order row: {_row_err}")
+
+    if _skipped_errors:
+        print(f"[OrderProfit] WARNING: {_skipped_errors} orders skipped due to errors")
 
     ORDER_PROFITS = sorted(results, key=lambda x: x["ship_date"], reverse=True)
 
@@ -1304,6 +1337,13 @@ def _compute_per_order_profit():
         total_label = sum(r["label_cost"] for r in ORDER_PROFITS)
         total_ship_charged = sum(r["shipping_charged"] for r in ORDER_PROFITS)
         matched_count = sum(1 for r in ORDER_PROFITS if r["label_matched"])
+        # Count unmatched labels (real costs not attributed to any order)
+        _unmatched_labels = 0
+        _unmatched_label_cost = 0.0
+        for _key, _remaining in labels_by_store_date.items():
+            _unmatched_labels += len(_remaining)
+            _unmatched_label_cost += sum(lb["cost"] for lb in _remaining)
+
         ORDER_PROFIT_SUMMARY = {
             "total_orders": len(ORDER_PROFITS),
             "total_profit": total_profit,
@@ -1316,6 +1356,9 @@ def _compute_per_order_profit():
             "match_rate": matched_count / len(ORDER_PROFITS) * 100,
             "best_order": max(ORDER_PROFITS, key=lambda x: x["order_profit"]),
             "worst_order": min(ORDER_PROFITS, key=lambda x: x["order_profit"]),
+            "unshipped_orders": _unshipped_count,
+            "unmatched_labels": _unmatched_labels,
+            "unmatched_label_cost": _unmatched_label_cost,
         }
         # Per-store breakdown
         for _s in ("keycomponentmfg", "aurvio", "lunalinks"):
@@ -1372,6 +1415,7 @@ def _rebuild_etsy_derived():
     global ship_credits, ship_credit_count, ship_insurance, ship_insurance_count
     global buyer_paid_shipping, shipping_profit, shipping_margin
     global paid_ship_count, free_ship_count, avg_outbound_label
+    global _etsy_deposit_total, _deposit_rows
 
     # Rebuild filtered DataFrames
     sales_df = DATA[DATA["Type"] == "Sale"]
@@ -1383,6 +1427,14 @@ def _rebuild_etsy_derived():
     deposit_df = DATA[DATA["Type"] == "Deposit"]
     buyer_fee_df = DATA[DATA["Type"] == "Buyer Fee"]
     payment_df = DATA[DATA["Type"] == "Payment"]
+
+    # Recalculate deposit totals from deposit row titles
+    _deposit_rows = deposit_df
+    _etsy_deposit_total = 0.0
+    for _, _dr in _deposit_rows.iterrows():
+        _m = _re_mod.search(r'([\d,]+\.\d+)', str(_dr.get("Title", "")))
+        if _m:
+            _etsy_deposit_total += float(_m.group(1).replace(",", ""))
 
     # Product performance — use actual sale amounts joined via order number
     _listing_aliases = CONFIG.get("listing_aliases", {})
@@ -3456,13 +3508,19 @@ def _build_chat_context():
     lines.append("=== VERIFIED METRICS (from source records — cite as facts) ===")
     lines.append("")
     # Revenue & Orders
-    lines.append("--- REVENUE & ORDERS ---")
-    lines.append(f"Gross Sales: ${gross_sales:,.2f}")
-    lines.append(f"Orders: {order_count} over {days_active} days ({order_count/days_active:.1f}/day)")
-    lines.append(f"Average Order Value: ${avg_order:,.2f}")
-    lines.append(f"After Etsy Fees (net from Etsy): ${etsy_net:,.2f}")
-    lines.append(f"Profit: ${profit:,.2f} ({profit_margin:.1f}% margin)")
-    lines.append(f"Profit/day: ${profit/days_active:,.2f}")
+    try:
+        lines.append("--- REVENUE & ORDERS ---")
+        lines.append(f"Gross Sales: ${gross_sales:,.2f}")
+        _da = days_active if days_active and days_active > 0 else 1
+        lines.append(f"Orders: {order_count} over {_da} days ({order_count/_da:.1f}/day)")
+        lines.append(f"Average Order Value: ${avg_order:,.2f}")
+        lines.append(f"After Etsy Fees (net from Etsy): ${etsy_net:,.2f}")
+        _pm = profit_margin if profit_margin is not None else 0
+        _pr = profit if profit is not None else 0
+        lines.append(f"Profit: ${_pr:,.2f} ({_pm:.1f}% margin)")
+        lines.append(f"Profit/day: ${_pr/_da:,.2f}")
+    except Exception as _e:
+        lines.append(f"Revenue data unavailable: {_e}")
 
     # Monthly Breakdown
     lines.append("\n=== MONTHLY BREAKDOWN ===")
@@ -3538,7 +3596,7 @@ def _build_chat_context():
         elif _rkey:
             _unassigned.append(_rkey)
     lines.append(f"Refund responsibility: TJ={_tj_count} refunds (${_tj_total:,.2f}), Braden={_br_count} refunds (${_br_total:,.2f}), Cancelled={_ca_count} (${_ca_total:,.2f})")
-    if _tj_count + _br_count > 0:
+    if _tj_count + _br_count > 0 and (_tj_total + _br_total) > 0:
         lines.append(f"Refund cost share: TJ={_tj_total / (_tj_total + _br_total) * 100:.0f}%, Braden={_br_total / (_tj_total + _br_total) * 100:.0f}% (excludes cancelled)")
     if _unassigned:
         lines.append(f"*** {len(_unassigned)} refund(s) UNASSIGNED — need TJ or Braden assigned: {', '.join(_unassigned[:5])}")
@@ -3664,13 +3722,15 @@ def _build_chat_context():
             for _s, _sl in [("keycomponentmfg", "KeyComp"), ("aurvio", "Aurvio"), ("lunalinks", "Luna&Links")]:
                 if f"{_s}_count" in s:
                     lines.append(f"  {_sl}: {s[f'{_s}_count']} orders, ${s[f'{_s}_profit']:,.2f} profit (avg ${s[f'{_s}_avg']:,.2f})")
-            lines.append("\nPer-order detail:")
-            for _op in ORDER_PROFITS:
+            lines.append(f"\nPer-order detail (showing up to 50 of {len(ORDER_PROFITS)}):")
+            for _op in ORDER_PROFITS[:50]:
                 _match_tag = "" if _op["label_matched"] else " [NO LABEL MATCH]"
                 lines.append(f"  #{_op['order_id']} | {_op['ship_date']} | {_op['items'][:60]} | "
                              f"Value=${_op['order_value']:,.2f} Ship=${_op['shipping_charged']:,.2f} "
                              f"Label=${_op['label_cost']:,.2f} Net=${_op['order_net']:,.2f} "
                              f"PROFIT=${_op['order_profit']:,.2f}{_match_tag}")
+            if len(ORDER_PROFITS) > 50:
+                lines.append(f"  ... and {len(ORDER_PROFITS) - 50} more orders (ask for specifics)")
         else:
             lines.append("No order CSVs uploaded yet. Upload Etsy order exports in Data Hub to enable per-order profit tracking.")
     except Exception:
@@ -3757,13 +3817,23 @@ def _build_chat_context():
     lines.append("\n=== BUSINESS RISKS ===")
     try:
         for _risk in val_risks:
-            lines.append(f"  [{_risk.get('severity', 'MED')}] {_risk.get('text', _risk) if isinstance(_risk, dict) else _risk}")
+            if isinstance(_risk, dict):
+                lines.append(f"  [{_risk.get('severity', 'MED')}] {_risk.get('text', str(_risk))}")
+            elif isinstance(_risk, (tuple, list)) and len(_risk) >= 3:
+                lines.append(f"  [{_risk[2]}] {_risk[0]}: {_risk[1]}")
+            else:
+                lines.append(f"  {_risk}")
     except Exception:
         pass
     lines.append("\n=== BUSINESS STRENGTHS ===")
     try:
         for _str in val_strengths:
-            lines.append(f"  {_str.get('text', _str) if isinstance(_str, dict) else _str}")
+            if isinstance(_str, dict):
+                lines.append(f"  {_str.get('text', str(_str))}")
+            elif isinstance(_str, (tuple, list)) and len(_str) >= 2:
+                lines.append(f"  {_str[0]}: {_str[1]}")
+            else:
+                lines.append(f"  {_str}")
     except Exception:
         pass
 
@@ -5221,8 +5291,8 @@ def _build_jarvis_auto_briefing():
         if months_sorted and len(months_sorted) >= 2:
             _last = months_sorted[-1]
             _prev = months_sorted[-2]
-            _last_rev = monthly_revenue.get(_last, 0)
-            _prev_rev = monthly_revenue.get(_prev, 0)
+            _last_rev = monthly_sales.get(_last, 0)
+            _prev_rev = monthly_sales.get(_prev, 0)
             _briefing_data.append(f"Latest month ({_last}): ${_last_rev:,.2f} revenue")
             _briefing_data.append(f"Previous month ({_prev}): ${_prev_rev:,.2f} revenue")
             if _prev_rev > 0:
@@ -14300,7 +14370,7 @@ def build_tab3_financials():
                             f"Best Buy CC ({money(bb_cc_available)} avail)",
                             f"Best Buy Citi CC for equipment. Charged: {money(bb_cc_total_charged)}. Paid: {money(bb_cc_total_paid)}. Balance: {money(bb_cc_balance)}. Limit: {money(bb_cc_limit)}. Asset value: {money(bb_cc_asset_value)}.", status="verified"),
             _build_kpi_pill("\U0001f4e5", "ETSY DEPOSITS", money(_etsy_deposit_total), ORANGE,
-                            "Total sent to your bank",
+                            "Total sent to your bank (all stores)",
                             f"Sum of all Etsy deposit transactions to your bank account ({len(_deposit_rows)} deposits). Remaining Etsy balance: {money(etsy_balance)}.", status="verified"),
             _build_kpi_pill("\U0001f4c9", "TOTAL FEES", money(net_fees_after_credits), RED,
                             _fee_pct,
@@ -14960,7 +15030,7 @@ def _build_per_order_profit_section():
         ])
 
     s = ORDER_PROFIT_SUMMARY
-    _store_filter = DATA["Store"].iloc[0] if "Store" in DATA.columns and _DATA_ALL is not None and len(DATA) < len(_DATA_ALL) else None
+    _store_filter = DATA["Store"].iloc[0] if "Store" in DATA.columns and _DATA_ALL is not None and len(DATA) > 0 and len(DATA) < len(_DATA_ALL) else None
 
     # Filter to current store if a store filter is active
     if _store_filter:
@@ -18362,6 +18432,7 @@ def handle_datahub_upload(etsy_contents, receipt_contents, bank_contents, orders
                 _replaced_count = len(_existing_store) - len(_keep_existing)
 
                 print(f"[UPLOAD] Syncing {len(_full_store_df)} rows for '{_upload_store}' to Supabase ({_replaced_count} replaced)...")
+                _sb_ok = False
                 try:
                     _sync_etsy_to_supabase(_full_store_df)
                     _sb_ok = True
@@ -18836,20 +18907,27 @@ def execute_delete(n_clicks, pending_action):
 
     if action == "delete_etsy_month":
         month = pending_action["month"]
-        # Delete from local DATA
+        # Determine active store filter (None = all stores)
+        _del_store = None
+        if "Store" in DATA.columns and _DATA_ALL is not None and len(DATA) > 0 and len(DATA) < len(_DATA_ALL):
+            _del_store = DATA["Store"].iloc[0]
+        # Delete from local DATA (only matching store if filtered)
         try:
             _dates = pd.to_datetime(DATA["Date"], format="%B %d, %Y", errors="coerce")
             _months = _dates.dt.to_period("M").astype(str)
             before = len(DATA)
-            DATA = DATA[_months != month].reset_index(drop=True)
+            _mask = _months == month
+            if _del_store and "Store" in DATA.columns:
+                _mask = _mask & (DATA["Store"] == _del_store)
+            DATA = DATA[~_mask].reset_index(drop=True)
             deleted_local = before - len(DATA)
         except Exception:
             deleted_local = 0
 
-        # Delete from Supabase in background
+        # Delete from Supabase in background — scoped to store
         import threading
         _y, _m = int(month.split("-")[0]), int(month.split("-")[1])
-        threading.Thread(target=_delete_etsy_by_month, args=(_y, _m), daemon=True).start()
+        threading.Thread(target=_delete_etsy_by_month, args=(_y, _m, _del_store), daemon=True).start()
 
         # Rebuild
         _rebuild_etsy_derived()

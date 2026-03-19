@@ -946,8 +946,8 @@ def append_bank_transactions(bank_txns: list[dict]) -> dict:
 
 # ── Delete Functions ────────────────────────────────────────────────────────
 
-def delete_etsy_by_month(year: int, month: int) -> dict:
-    """Delete all etsy_transactions for a specific month.
+def delete_etsy_by_month(year: int, month: int, store: str = None) -> dict:
+    """Delete etsy_transactions for a specific month, optionally filtered by store.
 
     Returns dict: {ok: bool, deleted: int}
     """
@@ -957,15 +957,17 @@ def delete_etsy_by_month(year: int, month: int) -> dict:
     try:
         month_prefix = f"{year}-{month:02d}"
         # Etsy dates are stored as "Month DD, YYYY" strings — but some may be YYYY-MM-DD
-        # Fetch all rows, filter by month, collect IDs to delete
+        # Fetch all rows, filter by month (and store if given), collect IDs to delete
         ids_to_delete = []
         _offset = 0
         while True:
-            batch = (client.table("etsy_transactions")
-                     .select("id,date")
+            _q = (client.table("etsy_transactions")
+                     .select("id,date,store")
                      .order("id")
-                     .range(_offset, _offset + 999)
-                     .execute())
+                     .range(_offset, _offset + 999))
+            if store:
+                _q = _q.eq("store", store)
+            batch = _q.execute()
             for r in batch.data:
                 d = r.get("date", "")
                 # Try parsing "Month DD, YYYY" format
