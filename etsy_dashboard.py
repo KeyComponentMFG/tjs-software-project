@@ -15277,6 +15277,7 @@ def _build_per_order_profit_section():
     # Order detail table
     _th = {"color": GRAY, "padding": "6px 8px", "fontSize": "11px", "textAlign": "right"}
     _header = html.Thead(html.Tr([
+        html.Th("Order #", style={**_th, "textAlign": "left"}),
         html.Th("Date", style={**_th, "textAlign": "left"}),
         html.Th("Store", style={**_th, "textAlign": "left"}),
         html.Th("Item", style={**_th, "textAlign": "left"}),
@@ -15303,7 +15304,17 @@ def _build_per_order_profit_section():
         _row_style = {"borderBottom": "1px solid #ffffff08"}
         if _was_refunded:
             _row_style["backgroundColor"] = f"{RED}10"
+        _oid = str(_op["order_id"])
         _rows.append(html.Tr([
+            html.Td(
+                html.Span([
+                    html.Span(_oid, style={"marginRight": "4px"}),
+                    html.Span("\U0001f4cb", title="Copy order #", style={
+                        "cursor": "pointer", "opacity": "0.5", "fontSize": "10px",
+                    }, **{"data-clipboard-text": _oid, "className": "copy-btn"}),
+                ]),
+                style={"color": CYAN, "padding": "5px 8px", "fontSize": "11px", "fontFamily": "monospace", "whiteSpace": "nowrap"},
+            ),
             html.Td(_op["ship_date"], style={"color": WHITE, "padding": "5px 8px", "fontSize": "11px"}),
             html.Td(_store_short, style={"color": _sc, "padding": "5px 8px", "fontSize": "11px", "fontWeight": "bold"}),
             html.Td(_op["items"][:50], style={"color": WHITE, "padding": "5px 8px", "fontSize": "11px", "maxWidth": "200px", "overflow": "hidden", "textOverflow": "ellipsis", "whiteSpace": "nowrap"}),
