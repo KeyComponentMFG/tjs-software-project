@@ -97,18 +97,6 @@ RAILWAY_URL = os.environ.get("RAILWAY_URL", "https://web-production-7f385.up.rai
 IS_RAILWAY = bool(os.environ.get("RAILWAY_ENVIRONMENT") or os.environ.get("RAILWAY_SERVICE_NAME"))
 
 
-def _notify_railway_reload():
-    """Ping Railway's /api/reload in background after syncing data to Supabase."""
-    import threading
-    import urllib.request
-    def _ping():
-        try:
-            urllib.request.urlopen(f"{RAILWAY_URL}/api/reload", timeout=30)
-        except Exception:
-            pass  # Railway might be down, not critical
-    threading.Thread(target=_ping, daemon=True).start()
-
-
 def item_thumbnail(image_url, size=40):
     """Return a thumbnail img element or gray placeholder."""
     if image_url:
@@ -14496,8 +14484,8 @@ def build_tab3_financials():
                             f"Best Buy CC ({money(bb_cc_available)} avail)",
                             f"Best Buy Citi CC for equipment. Charged: {money(bb_cc_total_charged)}. Paid: {money(bb_cc_total_paid)}. Balance: {money(bb_cc_balance)}. Limit: {money(bb_cc_limit)}. Asset value: {money(bb_cc_asset_value)}.", status="verified"),
             _build_kpi_pill("\U0001f4e5", "ETSY DEPOSITS", money(_etsy_deposit_total), ORANGE,
-                            "Total sent to your bank (all stores)",
-                            f"Sum of all Etsy deposit transactions to your bank account ({len(_deposit_rows)} deposits). Remaining Etsy balance: {money(etsy_balance)}.", status="verified"),
+                            f"Sent to bank ({len(_deposit_rows)} deposits)" if _DATA_ALL is None or len(DATA) == len(_DATA_ALL) else f"Sent to bank — {STORES.get(DATA['Store'].iloc[0], 'this store') if len(DATA) > 0 and 'Store' in DATA.columns else 'filtered'}",
+                            f"Sum of Etsy deposit transactions to your bank account ({len(_deposit_rows)} deposits). Remaining Etsy balance: {money(etsy_balance)}.", status="verified"),
             _build_kpi_pill("\U0001f4c9", "TOTAL FEES", money(net_fees_after_credits), RED,
                             _fee_pct,
                             f"Listing: {money(listing_fees)}. Transaction (product): {money(transaction_fees_product)}. Transaction (shipping): {money(transaction_fees_shipping)}. Processing: {money(processing_fees)}. Credits: {money(abs(total_credits) if total_credits is not None else None)}. Net: {money(net_fees_after_credits)}.", status="verified"),
@@ -15247,16 +15235,18 @@ def _build_per_order_profit_section():
             ], style={"marginBottom": "16px"})
 
     # Order detail table
+    _th = {"color": GRAY, "padding": "6px 8px", "fontSize": "11px", "textAlign": "right"}
     _header = html.Thead(html.Tr([
-        html.Th("Date", style={"color": GRAY, "padding": "6px 8px", "fontSize": "11px", "textAlign": "left"}),
-        html.Th("Store", style={"color": GRAY, "padding": "6px 8px", "fontSize": "11px", "textAlign": "left"}),
-        html.Th("Item", style={"color": GRAY, "padding": "6px 8px", "fontSize": "11px", "textAlign": "left"}),
-        html.Th("Value", style={"color": GRAY, "padding": "6px 8px", "fontSize": "11px", "textAlign": "right"}),
-        html.Th("Buyer Ship", style={"color": GRAY, "padding": "6px 8px", "fontSize": "11px", "textAlign": "right"}),
-        html.Th("Label Cost", style={"color": GRAY, "padding": "6px 8px", "fontSize": "11px", "textAlign": "right"}),
-        html.Th("Ship P/L", style={"color": GRAY, "padding": "6px 8px", "fontSize": "11px", "textAlign": "right"}),
-        html.Th("Order Net", style={"color": GRAY, "padding": "6px 8px", "fontSize": "11px", "textAlign": "right"}),
-        html.Th("Profit", style={"color": GRAY, "padding": "6px 8px", "fontSize": "11px", "textAlign": "right"}),
+        html.Th("Date", style={**_th, "textAlign": "left"}),
+        html.Th("Store", style={**_th, "textAlign": "left"}),
+        html.Th("Item", style={**_th, "textAlign": "left"}),
+        html.Th("Value", style=_th),
+        html.Th("Buyer Ship", style=_th),
+        html.Th("Label", style=_th),
+        html.Th("Return", style=_th),
+        html.Th("Ship P/L", style=_th),
+        html.Th("Order Net", style=_th),
+        html.Th("Profit", style=_th),
     ]))
 
     _rows = []
@@ -15266,16 +15256,19 @@ def _build_per_order_profit_section():
         _ship_color = GREEN if _op["shipping_pl"] >= 0 else RED
         _profit_color = GREEN if _op["order_profit"] >= 0 else RED
         _match_warn = "" if _op["label_matched"] else " *"
+        _return_cost = _op.get("return_label_cost", 0)
+        _td = {"color": WHITE, "padding": "5px 8px", "fontSize": "11px", "fontFamily": "monospace", "textAlign": "right"}
         _rows.append(html.Tr([
             html.Td(_op["ship_date"], style={"color": WHITE, "padding": "5px 8px", "fontSize": "11px"}),
             html.Td(_store_short, style={"color": _sc, "padding": "5px 8px", "fontSize": "11px", "fontWeight": "bold"}),
             html.Td(_op["items"][:50], style={"color": WHITE, "padding": "5px 8px", "fontSize": "11px", "maxWidth": "200px", "overflow": "hidden", "textOverflow": "ellipsis", "whiteSpace": "nowrap"}),
-            html.Td(f"${_op['order_value']:,.2f}", style={"color": WHITE, "padding": "5px 8px", "fontSize": "11px", "fontFamily": "monospace", "textAlign": "right"}),
-            html.Td(f"${_op['shipping_charged']:,.2f}", style={"color": WHITE, "padding": "5px 8px", "fontSize": "11px", "fontFamily": "monospace", "textAlign": "right"}),
-            html.Td(f"${_op['label_cost']:,.2f}{_match_warn}", style={"color": WHITE, "padding": "5px 8px", "fontSize": "11px", "fontFamily": "monospace", "textAlign": "right"}),
-            html.Td(f"${_op['shipping_pl']:,.2f}", style={"color": _ship_color, "padding": "5px 8px", "fontSize": "11px", "fontFamily": "monospace", "textAlign": "right"}),
-            html.Td(f"${_op['order_net']:,.2f}", style={"color": CYAN, "padding": "5px 8px", "fontSize": "11px", "fontFamily": "monospace", "textAlign": "right"}),
-            html.Td(f"${_op['order_profit']:,.2f}", style={"color": _profit_color, "padding": "5px 8px", "fontSize": "11px", "fontFamily": "monospace", "fontWeight": "bold", "textAlign": "right"}),
+            html.Td(f"${_op['order_value']:,.2f}", style=_td),
+            html.Td(f"${_op['shipping_charged']:,.2f}", style=_td),
+            html.Td(f"${_op['label_cost']:,.2f}{_match_warn}", style=_td),
+            html.Td(f"${_return_cost:,.2f}" if _return_cost > 0 else "—", style={**_td, "color": RED if _return_cost > 0 else DARKGRAY}),
+            html.Td(f"${_op['shipping_pl']:,.2f}", style={**_td, "color": _ship_color}),
+            html.Td(f"${_op['order_net']:,.2f}", style={**_td, "color": CYAN}),
+            html.Td(f"${_op['order_profit']:,.2f}", style={**_td, "color": _profit_color, "fontWeight": "bold"}),
         ], style={"borderBottom": "1px solid #ffffff08"}))
 
     return html.Div([
