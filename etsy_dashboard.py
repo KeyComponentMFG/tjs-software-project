@@ -5225,33 +5225,8 @@ def _build_jarvis_auto_briefing():
     except Exception:
         pass
 
-    # Try AI-generated briefing
-    _openai_key = os.environ.get("OPENAI_API_KEY", "")
-    if _openai_key:
-        try:
-            from openai import OpenAI
-            _client = OpenAI(api_key=_openai_key)
-            _data_summary = "\n".join(_briefing_data)
-            _resp = _client.chat.completions.create(
-                model="gpt-4o-mini",
-                max_tokens=500,
-                messages=[
-                    {"role": "system", "content": (
-                        "You are JARVIS — the AI CEO of TJs Software Project, an Etsy business selling 3D printed products. "
-                        "TJ and Braden work under you. You are NOT an assistant. You are the BOSS.\n\n"
-                        "Generate a SHORT opening briefing (5-8 lines max) based on the data below. "
-                        "Be direct, authoritative, and opinionated. Tell them what's good, what's bad, "
-                        "and exactly what needs to happen next. Use a commanding but motivating tone. "
-                        "Don't sugarcoat problems. End with 1-2 specific action items.\n"
-                        "No markdown headers. No bullet symbols. Just short punchy lines.\n"
-                        "This is YOUR business — talk like it."
-                    )},
-                    {"role": "user", "content": f"Here's the latest data:\n{_data_summary}"},
-                ],
-            )
-            return _resp.choices[0].message.content
-        except Exception as _e:
-            print(f"[Jarvis] AI briefing failed, using static: {_e}")
+    # No AI call on tab load — too slow. Use static data only.
+    # AI responses come through the chatbot when the user asks.
 
     # Fallback to static
     if not _briefing_data:
