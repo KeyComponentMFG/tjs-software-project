@@ -1096,6 +1096,209 @@ try:
 except NameError:
     ledger_ref = None
 
+# ── Per-Order Profit Tracking ────────────────────────────────────────────────
+
+ORDER_PROFITS = []  # List of dicts with per-order profit data
+ORDER_PROFIT_SUMMARY = {}  # Summary stats
+
+
+def _load_order_csvs():
+    """Load order CSVs from data/order_csvs/{store}/ and local UPLOAD_HERE folders."""
+    all_orders = []
+    all_items = []
+
+    # Check data/order_csvs/{store}/
+    for store in ("keycomponentmfg", "aurvio", "lunalinks"):
+        order_dir = os.path.join(BASE_DIR, "data", "order_csvs", store)
+        if os.path.isdir(order_dir):
+            for f in sorted(os.listdir(order_dir)):
+                fp = os.path.join(order_dir, f)
+                if not f.endswith(".csv"):
+                    continue
+                try:
+                    df = pd.read_csv(fp)
+                    df["_store"] = store
+                    if "Order ID" in df.columns and "Order Net" in df.columns:
+                        all_orders.append(df)
+                    elif "Item Name" in df.columns and "Order ID" in df.columns:
+                        all_items.append(df)
+                except Exception as e:
+                    print(f"[OrderProfit] Failed to parse {fp}: {e}")
+
+    # Check UPLOAD_HERE folders on local machine
+    _upload_base = os.path.join(os.path.dirname(BASE_DIR), "UPLOAD_HERE")
+    if os.path.isdir(_upload_base):
+        _store_map = {"L&L": "lunalinks", "luna": "lunalinks", "aurvio": "aurvio",
+                       "keycomp": "keycomponentmfg", "key": "keycomponentmfg"}
+        for _subdir in os.listdir(_upload_base):
+            _subpath = os.path.join(_upload_base, _subdir)
+            if not os.path.isdir(_subpath):
+                continue
+            # Guess store from folder name
+            _store_guess = "keycomponentmfg"
+            for _key, _val in _store_map.items():
+                if _key.lower() in _subdir.lower():
+                    _store_guess = _val
+                    break
+            for f in sorted(os.listdir(_subpath)):
+                if not f.endswith(".csv"):
+                    continue
+                fp = os.path.join(_subpath, f)
+                try:
+                    df = pd.read_csv(fp)
+                    df["_store"] = _store_guess
+                    if "Order ID" in df.columns and "Order Net" in df.columns:
+                        all_orders.append(df)
+                    elif "Item Name" in df.columns and "Order ID" in df.columns:
+                        all_items.append(df)
+                except Exception as e:
+                    print(f"[OrderProfit] Failed to parse {fp}: {e}")
+
+    orders_df = pd.concat(all_orders, ignore_index=True) if all_orders else pd.DataFrame()
+    items_df = pd.concat(all_items, ignore_index=True) if all_items else pd.DataFrame()
+    return orders_df, items_df
+
+
+def _compute_per_order_profit():
+    """Match shipping labels to orders by date and compute per-order profit."""
+    global ORDER_PROFITS, ORDER_PROFIT_SUMMARY
+
+    orders_df, items_df = _load_order_csvs()
+    if orders_df.empty:
+        ORDER_PROFITS = []
+        ORDER_PROFIT_SUMMARY = {}
+        return
+
+    # Parse order ship dates
+    orders_df["_ship_date"] = pd.to_datetime(orders_df["Date Shipped"], format="%m/%d/%y", errors="coerce")
+
+    # Get shipping labels from statement data
+    _all_data = _DATA_ALL if _DATA_ALL is not None else DATA
+    ship_rows = _all_data[_all_data["Type"] == "Shipping"].copy()
+    ship_rows["_date"] = pd.to_datetime(ship_rows["Date"], format="%B %d, %Y", errors="coerce")
+
+    # Build labels by (store, date) for matching
+    labels_by_store_date = {}
+    for _, r in ship_rows.iterrows():
+        store = r.get("Store", "keycomponentmfg")
+        dt = r["_date"]
+        if pd.isna(dt):
+            continue
+        ds = dt.strftime("%Y-%m-%d")
+        key = (store, ds)
+        if key not in labels_by_store_date:
+            labels_by_store_date[key] = []
+        labels_by_store_date[key].append({
+            "cost": abs(r["Net_Clean"]),
+            "label": r.get("Info", ""),
+        })
+
+    results = []
+    for _, o in orders_df.iterrows():
+        store = o.get("_store", "keycomponentmfg")
+        ship_dt = o["_ship_date"]
+        if pd.isna(ship_dt):
+            continue
+        ds = ship_dt.strftime("%Y-%m-%d")
+
+        # Get item names from items_df
+        order_id = o["Order ID"]
+        if not items_df.empty and "Order ID" in items_df.columns:
+            oi = items_df[items_df["Order ID"] == order_id]
+            item_names = ", ".join(oi["Item Name"].tolist()) if len(oi) > 0 else str(o.get("SKU", "?"))
+        else:
+            item_names = str(o.get("SKU", "?"))
+
+        # Find matching label by date + closest shipping cost
+        available = labels_by_store_date.get((store, ds), [])
+        best_label = None
+        best_diff = 999
+        for lb in available:
+            diff = abs(lb["cost"] - float(o.get("Shipping", 0)))
+            if diff < best_diff:
+                best_diff = diff
+                best_label = lb
+
+        label_cost = best_label["cost"] if best_label else 0
+        label_info = best_label["label"] if best_label else "NO MATCH"
+        matched = best_label is not None
+
+        # Remove used label so it's not double-matched
+        if best_label and best_label in available:
+            available.remove(best_label)
+
+        order_net = float(o.get("Order Net", 0))
+        shipping_charged = float(o.get("Shipping", 0))
+        order_value = float(o.get("Order Value", 0))
+        discount = float(o.get("Discount Amount", 0))
+        processing_fee = float(o.get("Card Processing Fees", 0))
+        shipping_pl = shipping_charged - label_cost
+        order_profit = order_net - label_cost
+
+        results.append({
+            "store": store,
+            "order_id": order_id,
+            "sale_date": str(o.get("Sale Date", "")),
+            "ship_date": ds,
+            "items": item_names[:120],
+            "order_value": order_value,
+            "discount": discount,
+            "shipping_charged": shipping_charged,
+            "processing_fee": processing_fee,
+            "order_net": order_net,
+            "label_cost": label_cost,
+            "label_info": label_info,
+            "label_matched": matched,
+            "shipping_pl": shipping_pl,
+            "order_profit": order_profit,
+            "buyer": str(o.get("Full Name", o.get("Buyer", ""))),
+            "ship_state": str(o.get("Ship State", "")),
+            "ship_country": str(o.get("Ship Country", "")),
+            "num_items": int(o.get("Number of Items", 1)),
+        })
+
+    ORDER_PROFITS = sorted(results, key=lambda x: x["ship_date"], reverse=True)
+
+    # Compute summary
+    if ORDER_PROFITS:
+        total_profit = sum(r["order_profit"] for r in ORDER_PROFITS)
+        total_revenue = sum(r["order_value"] for r in ORDER_PROFITS)
+        total_label = sum(r["label_cost"] for r in ORDER_PROFITS)
+        total_ship_charged = sum(r["shipping_charged"] for r in ORDER_PROFITS)
+        matched_count = sum(1 for r in ORDER_PROFITS if r["label_matched"])
+        ORDER_PROFIT_SUMMARY = {
+            "total_orders": len(ORDER_PROFITS),
+            "total_profit": total_profit,
+            "avg_profit": total_profit / len(ORDER_PROFITS),
+            "total_revenue": total_revenue,
+            "total_label_cost": total_label,
+            "total_ship_charged": total_ship_charged,
+            "shipping_pl": total_ship_charged - total_label,
+            "matched_count": matched_count,
+            "match_rate": matched_count / len(ORDER_PROFITS) * 100,
+            "best_order": max(ORDER_PROFITS, key=lambda x: x["order_profit"]),
+            "worst_order": min(ORDER_PROFITS, key=lambda x: x["order_profit"]),
+        }
+        # Per-store breakdown
+        for _s in ("keycomponentmfg", "aurvio", "lunalinks"):
+            _sp = [r for r in ORDER_PROFITS if r["store"] == _s]
+            if _sp:
+                ORDER_PROFIT_SUMMARY[f"{_s}_count"] = len(_sp)
+                ORDER_PROFIT_SUMMARY[f"{_s}_profit"] = sum(r["order_profit"] for r in _sp)
+                ORDER_PROFIT_SUMMARY[f"{_s}_avg"] = ORDER_PROFIT_SUMMARY[f"{_s}_profit"] / len(_sp)
+
+    print(f"[OrderProfit] Computed {len(ORDER_PROFITS)} orders, "
+          f"total profit: ${ORDER_PROFIT_SUMMARY.get('total_profit', 0):,.2f}, "
+          f"match rate: {ORDER_PROFIT_SUMMARY.get('match_rate', 0):.0f}%")
+
+
+# Run on startup
+try:
+    _compute_per_order_profit()
+except Exception as _e:
+    print(f"[OrderProfit] Startup computation failed: {_e}")
+
+
 # ── Hot-Reload Functions (Data Hub) ──────────────────────────────────────────
 
 _RECENT_UPLOADS: set = set()  # Order numbers uploaded this session via Data Hub
@@ -3408,6 +3611,32 @@ def _build_chat_context():
         _store_gross = _store_sales["Net_Clean"].sum() if len(_store_sales) > 0 else 0
         _store_orders = len(_store_sales)
         lines.append(f"{_store_label}: ${_store_gross:,.2f} gross, {_store_orders} orders")
+
+    # Per-Order Profit
+    lines.append("\n=== PER-ORDER PROFIT ===")
+    try:
+        if ORDER_PROFITS:
+            s = ORDER_PROFIT_SUMMARY
+            lines.append(f"Total orders tracked: {s['total_orders']}")
+            lines.append(f"Total profit: ${s['total_profit']:,.2f} (avg ${s['avg_profit']:,.2f}/order)")
+            lines.append(f"Shipping P/L: ${s['shipping_pl']:,.2f} (charged ${s['total_ship_charged']:,.2f}, labels ${s['total_label_cost']:,.2f})")
+            lines.append(f"Label match rate: {s['match_rate']:.0f}%")
+            lines.append(f"Best order: #{s['best_order']['order_id']} ${s['best_order']['order_profit']:,.2f} ({s['best_order']['items'][:60]})")
+            lines.append(f"Worst order: #{s['worst_order']['order_id']} ${s['worst_order']['order_profit']:,.2f} ({s['worst_order']['items'][:60]})")
+            for _s, _sl in [("keycomponentmfg", "KeyComp"), ("aurvio", "Aurvio"), ("lunalinks", "Luna&Links")]:
+                if f"{_s}_count" in s:
+                    lines.append(f"  {_sl}: {s[f'{_s}_count']} orders, ${s[f'{_s}_profit']:,.2f} profit (avg ${s[f'{_s}_avg']:,.2f})")
+            lines.append("\nPer-order detail:")
+            for _op in ORDER_PROFITS:
+                _match_tag = "" if _op["label_matched"] else " [NO LABEL MATCH]"
+                lines.append(f"  #{_op['order_id']} | {_op['ship_date']} | {_op['items'][:60]} | "
+                             f"Value=${_op['order_value']:,.2f} Ship=${_op['shipping_charged']:,.2f} "
+                             f"Label=${_op['label_cost']:,.2f} Net=${_op['order_net']:,.2f} "
+                             f"PROFIT=${_op['order_profit']:,.2f}{_match_tag}")
+        else:
+            lines.append("No order CSVs uploaded yet. Upload Etsy order exports in Data Hub to enable per-order profit tracking.")
+    except Exception:
+        lines.append("Per-order profit data not available.")
 
     # Missing Receipts Detail
     lines.append("\n=== MISSING RECEIPTS ===")
@@ -18237,9 +18466,20 @@ def handle_datahub_upload(etsy_contents, receipt_contents, bank_contents, orders
             if len(_cols) > 15:
                 _col_preview += f" ... (+{len(_cols) - 15} more)"
 
+            # Recompute per-order profit with new data
+            try:
+                _compute_per_order_profit()
+                _profit_msg = ""
+                if ORDER_PROFIT_SUMMARY:
+                    _profit_msg = (f" | Per-order profit: ${ORDER_PROFIT_SUMMARY['total_profit']:,.2f} "
+                                   f"(avg ${ORDER_PROFIT_SUMMARY['avg_profit']:,.2f})")
+            except Exception as _pe:
+                _profit_msg = ""
+                print(f"[UPLOAD] Order profit compute failed: {_pe}")
+
             orders_status = html.Div([
                 html.Span("\u2713 ", style={"color": GREEN, "fontWeight": "bold"}),
-                html.Span(f"[{_store_display}] Uploaded {fname} — {_row_count} orders",
+                html.Span(f"[{_store_display}] Uploaded {fname} — {_row_count} orders{_profit_msg}",
                           style={"color": GREEN, "fontSize": "13px"}),
                 html.Div(f"Columns: {_col_preview}",
                          style={"color": GRAY, "fontSize": "11px", "marginTop": "4px", "fontFamily": "monospace"}),
