@@ -713,35 +713,50 @@ def sync_bank_transactions(bank_txns: list[dict]) -> bool:
 
 
 def sync_etsy_transactions(data_df) -> bool:
-    """Push current Etsy transactions to Supabase (replaces all rows).
-    Called automatically after Etsy CSV uploads."""
+    """Push Etsy transactions to Supabase — only replaces rows for affected stores.
+    NEVER deletes data from stores not present in data_df."""
     client = _get_supabase_client()
     if client is None:
         return False
     try:
-        # Clear existing (paginated — Supabase limits deletes to ~1000 per call)
-        while True:
-            batch = client.table("etsy_transactions").select("id").limit(1000).execute()
-            if not batch.data:
-                break
-            ids = [r["id"] for r in batch.data]
-            for i in range(0, len(ids), 500):
-                chunk = ids[i:i+500]
-                client.table("etsy_transactions").delete().in_("id", chunk).execute()
-            print(f"  Deleted {len(ids)} rows from Supabase...")
-        # Detect if 'store' column exists in Supabase table
-        _has_store_col = True
-        try:
-            client.table("etsy_transactions").insert({
-                "date": "__col_test__", "type": "", "title": "", "info": "",
-                "currency": "", "amount": "", "fees_and_taxes": "", "net": "",
-                "tax_details": "", "store": "test",
-            }).execute()
-            client.table("etsy_transactions").delete().eq("date", "__col_test__").execute()
-        except Exception:
-            _has_store_col = False
+        # Determine which stores are in this sync
+        if "Store" in data_df.columns:
+            stores_to_sync = list(data_df["Store"].dropna().unique())
+        else:
+            stores_to_sync = ["keycomponentmfg"]
 
-        # Insert in batches
+        if not stores_to_sync:
+            print("WARNING: No stores found in data — skipping sync to prevent data loss")
+            return False
+
+        # Safety check: count existing rows before deleting
+        total_before = 0
+        for store in stores_to_sync:
+            count_resp = (client.table("etsy_transactions")
+                         .select("id", count="exact")
+                         .eq("store", store).execute())
+            store_count = count_resp.count if count_resp.count is not None else 0
+            total_before += store_count
+            print(f"  [{store}] {store_count} existing rows in Supabase")
+
+        # Only delete rows for the specific stores being synced
+        for store in stores_to_sync:
+            deleted = 0
+            while True:
+                batch = (client.table("etsy_transactions")
+                        .select("id").eq("store", store)
+                        .limit(1000).execute())
+                if not batch.data:
+                    break
+                ids = [r["id"] for r in batch.data]
+                for i in range(0, len(ids), 500):
+                    chunk = ids[i:i+500]
+                    client.table("etsy_transactions").delete().in_("id", chunk).execute()
+                deleted += len(ids)
+            if deleted:
+                print(f"  [{store}] Cleared {deleted} old rows")
+
+        # Insert new data in batches
         rows = []
         for _, r in data_df.iterrows():
             row = {
@@ -754,18 +769,29 @@ def sync_etsy_transactions(data_df) -> bool:
                 "fees_and_taxes": str(r.get("Fees & Taxes", "--")),
                 "net": str(r.get("Net", "--")),
                 "tax_details": str(r.get("Tax Details", "--")),
+                "store": str(r.get("Store", "keycomponentmfg")),
             }
-            if _has_store_col:
-                row["store"] = str(r.get("Store", "keycomponentmfg"))
             rows.append(row)
         for i in range(0, len(rows), 500):
             client.table("etsy_transactions").insert(rows[i:i+500]).execute()
-        # Row-count guard: verify Supabase has expected number of rows
+
+        # Verify: count ALL rows across ALL stores
         count_resp = client.table("etsy_transactions").select("id", count="exact").execute()
-        sb_count = count_resp.count if count_resp.count is not None else len(count_resp.data)
-        if sb_count != len(rows):
-            print(f"WARNING: Supabase has {sb_count} rows but expected {len(rows)}")
-        print(f"Synced {len(rows)} Etsy transactions to Supabase")
+        sb_total = count_resp.count if count_resp.count is not None else len(count_resp.data)
+
+        # Per-store verification
+        for store in stores_to_sync:
+            store_count = (client.table("etsy_transactions")
+                          .select("id", count="exact")
+                          .eq("store", store).execute())
+            sc = store_count.count if store_count.count is not None else 0
+            expected = len(data_df[data_df["Store"] == store]) if "Store" in data_df.columns else len(data_df)
+            if sc != expected:
+                print(f"WARNING: [{store}] Supabase has {sc} rows but expected {expected}")
+            else:
+                print(f"  [{store}] Verified: {sc} rows")
+
+        print(f"Synced {len(rows)} rows for {stores_to_sync}. Total in Supabase: {sb_total}")
         return True
     except Exception as e:
         print(f"Etsy sync to Supabase failed: {e}")

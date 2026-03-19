@@ -18371,9 +18371,10 @@ def handle_datahub_upload(etsy_contents, receipt_contents, bank_contents, orders
                     print(f"[UPLOAD] Stats: {stats}")
                     _cascade_reload("etsy")
                     print(f"[UPLOAD] cascade_reload done. gross_sales={gross_sales}, etsy_balance={etsy_balance}")
-                    # Sync to Supabase in background so callback returns fast
+                    # Sync ONLY this store's data to Supabase — never touch other stores
                     import threading
-                    _sync_df = DATA.copy()
+                    _sync_df = DATA[DATA["Store"] == _upload_store].copy()
+                    print(f"[UPLOAD] Syncing {len(_sync_df)} rows for store '{_upload_store}' to Supabase")
                     threading.Thread(target=_sync_etsy_to_supabase, args=(_sync_df,), daemon=True).start()
                     _sb_ok = True  # optimistic — sync runs in background
                     msg = f"{len(_new_df)} rows loaded ({_replaced_count} replaced, months: {stats['months']})"
@@ -18382,9 +18383,10 @@ def handle_datahub_upload(etsy_contents, receipt_contents, bank_contents, orders
                     stats["new_rows"] = len(df)
                     stats["replaced_rows"] = 0
                     _cascade_reload("etsy")
-                    # Sync to Supabase in background so callback returns fast
+                    # Sync ONLY this store's data to Supabase — never touch other stores
                     import threading
-                    _sync_df = DATA.copy()
+                    _sync_df = DATA[DATA["Store"] == _upload_store].copy()
+                    print(f"[UPLOAD] Syncing {len(_sync_df)} rows for store '{_upload_store}' to Supabase")
                     threading.Thread(target=_sync_etsy_to_supabase, args=(_sync_df,), daemon=True).start()
                     _sb_ok = True
             
