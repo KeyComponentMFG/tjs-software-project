@@ -1315,6 +1315,15 @@ def _compute_per_order_profit():
             _return_label_by_order[best_refund] = _return_label_by_order.get(best_refund, 0) + rl["cost"]
 
     results = []
+    # Build refund lookup: order_id -> refund amount
+    _refund_by_order = {}
+    for _, _rf in refund_rows.iterrows():
+        _rf_key = _extract_order_num(_rf.get("Title", ""))
+        if _rf_key:
+            # Extract just the number from "Order #1234567"
+            _rf_num = _rf_key.replace("Order #", "")
+            _refund_by_order[_rf_num] = _refund_by_order.get(_rf_num, 0) + abs(_rf["Net_Clean"])
+
     _unshipped_count = 0
     _skipped_errors = 0
     for _, o in orders_df.iterrows():
@@ -1399,8 +1408,18 @@ def _compute_per_order_profit():
         _order_key = f"Order #{order_id}"
         return_label_cost = _return_label_by_order.get(_order_key, 0)
 
+        # Check if this order was refunded
+        refund_amount = _refund_by_order.get(str(order_id), 0)
+        was_refunded = refund_amount > 0
+
+        # True P/L: Order Net - labels - return label - refund amount
+        # If refunded: you lost the revenue (refund_amount) but still paid for labels
         shipping_pl = shipping_charged - label_cost - return_label_cost
-        order_profit = order_net - label_cost - return_label_cost
+        if was_refunded:
+            # Refund means you gave back the money but still paid for shipping
+            order_profit = -refund_amount - label_cost - return_label_cost
+        else:
+            order_profit = order_net - label_cost - return_label_cost
 
         results.append({
             "store": store,
@@ -1424,6 +1443,8 @@ def _compute_per_order_profit():
             "ship_country": str(o.get("Ship Country", "")),
             "num_items": int(o.get("Number of Items", 1)),
             "had_return": return_label_cost > 0,
+            "refund_amount": refund_amount,
+            "was_refunded": was_refunded,
         })
       except Exception as _row_err:
         _skipped_errors += 1
@@ -15261,10 +15282,10 @@ def _build_per_order_profit_section():
         html.Th("Value", style=_th),
         html.Th("Buyer Ship", style=_th),
         html.Th("Label", style=_th),
-        html.Th("Return", style=_th),
+        html.Th("Return Label", style=_th),
+        html.Th("Refund", style=_th),
         html.Th("Ship P/L", style=_th),
-        html.Th("Order Net", style=_th),
-        html.Th("Profit", style=_th),
+        html.Th("True P/L", style=_th),
     ]))
 
     _rows = []
@@ -15275,7 +15296,12 @@ def _build_per_order_profit_section():
         _profit_color = GREEN if _op["order_profit"] >= 0 else RED
         _match_warn = "" if _op["label_matched"] else " *"
         _return_cost = _op.get("return_label_cost", 0)
+        _refund_amt = _op.get("refund_amount", 0)
+        _was_refunded = _op.get("was_refunded", False)
         _td = {"color": WHITE, "padding": "5px 8px", "fontSize": "11px", "fontFamily": "monospace", "textAlign": "right"}
+        _row_style = {"borderBottom": "1px solid #ffffff08"}
+        if _was_refunded:
+            _row_style["backgroundColor"] = f"{RED}10"
         _rows.append(html.Tr([
             html.Td(_op["ship_date"], style={"color": WHITE, "padding": "5px 8px", "fontSize": "11px"}),
             html.Td(_store_short, style={"color": _sc, "padding": "5px 8px", "fontSize": "11px", "fontWeight": "bold"}),
@@ -15284,10 +15310,10 @@ def _build_per_order_profit_section():
             html.Td(f"${_op['shipping_charged']:,.2f}", style=_td),
             html.Td(f"${_op['label_cost']:,.2f}{_match_warn}", style=_td),
             html.Td(f"${_return_cost:,.2f}" if _return_cost > 0 else "—", style={**_td, "color": RED if _return_cost > 0 else DARKGRAY}),
+            html.Td(f"-${_refund_amt:,.2f}" if _was_refunded else "—", style={**_td, "color": RED if _was_refunded else DARKGRAY}),
             html.Td(f"${_op['shipping_pl']:,.2f}", style={**_td, "color": _ship_color}),
-            html.Td(f"${_op['order_net']:,.2f}", style={**_td, "color": CYAN}),
             html.Td(f"${_op['order_profit']:,.2f}", style={**_td, "color": _profit_color, "fontWeight": "bold"}),
-        ], style={"borderBottom": "1px solid #ffffff08"}))
+        ], style=_row_style))
 
     return html.Div([
         html.H3("\U0001f4b0 PER-ORDER PROFIT", style={
