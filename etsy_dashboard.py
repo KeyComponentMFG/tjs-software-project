@@ -13622,33 +13622,11 @@ def build_tab2_deep_dive():
     # Strict mode banner for deep dive
     _strict_banner_dd = _strict_banner() if _sm else html.Div()
 
-    # Generate AI CEO briefing
-    _ceo_briefing = _build_jarvis_auto_briefing()
-
     return html.Div([
         _strict_banner_dd,
 
         # ══ JARVIS HEADER ══
         _build_jarvis_header(),
-
-        # ══ CEO BRIEFING — AI-generated opening statement ══
-        html.Div([
-            html.Div([
-                html.Div([
-                    html.Span("\U0001f4cb", style={"fontSize": "18px", "marginRight": "8px"}),
-                    html.Span("CEO BRIEFING", style={"color": CYAN, "fontSize": "14px",
-                                                       "fontWeight": "bold", "letterSpacing": "1.5px"}),
-                ], style={"marginBottom": "12px"}),
-                html.Div(_ceo_briefing, style={
-                    "color": WHITE, "fontSize": "14px", "lineHeight": "1.8",
-                    "whiteSpace": "pre-wrap", "fontFamily": "inherit",
-                }),
-            ], style={
-                "backgroundColor": f"{CYAN}10", "border": f"1px solid {CYAN}33",
-                "borderRadius": "12px", "padding": "20px 24px",
-                "boxShadow": "0 4px 20px rgba(0,212,255,0.08)",
-            }),
-        ], style={"marginBottom": "24px"}),
 
         # ══ HEALTH SCORE + DAILY BRIEFING (hidden in strict mode — composite estimate) ══
         _build_health_section(score, sub_scores, weights, briefing) if not _sm else html.Div(),
