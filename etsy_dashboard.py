@@ -15576,12 +15576,55 @@ def _build_store_etsy_tab(store_key, store_label, store_color):
         })
     else:
         # Per-store tab — has upload zone + stats + file list
+        # Pre-populate order CSV file list from disk + Supabase
+        _order_file_entries = []
+        _od = os.path.join(BASE_DIR, "data", "order_csvs", store_key)
+        if os.path.isdir(_od):
+            for _of in sorted(os.listdir(_od)):
+                if _of.endswith(".csv"):
+                    _order_file_entries.append(_of)
+        # Also check Supabase for persisted data
+        if not _order_file_entries:
+            try:
+                from supabase_loader import get_config_value
+                for _ct in ("orders", "items"):
+                    _val = get_config_value(f"order_csv_{_ct}_{store_key}")
+                    if _val:
+                        import json
+                        _records = json.loads(_val) if isinstance(_val, str) else _val
+                        if _records:
+                            _order_file_entries.append(f"EtsySold{'Orders' if _ct == 'orders' else 'OrderItems'} ({len(_records)} rows, saved)")
+            except Exception:
+                pass
+
+        # Build order profit summary for this store
+        _store_profit_info = ""
+        if ORDER_PROFITS:
+            _sp = [r for r in ORDER_PROFITS if r["store"] == store_key]
+            if _sp:
+                _sp_total = sum(r["order_profit"] for r in _sp)
+                _sp_avg = _sp_total / len(_sp)
+                _store_profit_info = f"{len(_sp)} orders tracked | Profit: ${_sp_total:,.2f} (avg ${_sp_avg:,.2f}/order)"
+
         return html.Div([
             html.Div([
                 _build_upload_zone("etsy", "\U0001f4ca", f"Etsy Statements — {store_label}", store_color, ".csv",
                                    f"Upload Etsy CSV for {store_label}. Rebuilds all sales, fees, and financial data."),
-                _build_upload_zone("orders", "\U0001f4e6", f"Order CSV — {store_label}", store_color, ".csv",
-                                   f"Upload Etsy order export CSV for {store_label}. Links shipping labels to orders for per-order profit tracking."),
+                html.Div([
+                    _build_upload_zone("orders", "\U0001f4e6", f"Order CSV — {store_label}", store_color, ".csv",
+                                       f"Upload Etsy order export CSV for {store_label}. Links shipping labels to orders for per-order profit tracking."),
+                    # Show existing order files
+                    html.Div([
+                        html.Div(f, style={"color": GRAY, "fontSize": "11px", "padding": "2px 0"})
+                        for f in _order_file_entries
+                    ] if _order_file_entries else [
+                        html.Div("No order CSVs uploaded yet", style={"color": DARKGRAY, "fontSize": "11px"})
+                    ], style={"marginTop": "4px"}),
+                    # Show profit summary if available
+                    html.Div(_store_profit_info, style={
+                        "color": GREEN, "fontSize": "12px", "fontFamily": "monospace", "marginTop": "6px",
+                    }) if _store_profit_info else html.Div(),
+                ]),
             ], style={"display": "flex", "gap": "16px", "flexWrap": "wrap"}),
         ], style={"marginBottom": "16px"})
 
