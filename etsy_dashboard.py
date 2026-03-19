@@ -18340,55 +18340,50 @@ def handle_datahub_upload(etsy_contents, receipt_contents, bank_contents, orders
                 with open(save_path, "wb") as f:
                     f.write(decoded)
 
-                if IS_RAILWAY:
-                    # On Railway, local disk only has the just-uploaded file.
-                    # Replace the month's data in existing DATA, then rebuild.
-                    _new_df = df.copy()
-                    _new_df["Amount_Clean"] = _new_df["Amount"].apply(parse_money)
-                    _new_df["Net_Clean"] = _new_df["Net"].apply(parse_money)
-                    _new_df["Fees_Clean"] = _new_df["Fees & Taxes"].apply(parse_money)
-                    _new_df["Date_Parsed"] = pd.to_datetime(_new_df["Date"], format="%B %d, %Y", errors="coerce")
-                    _new_df["Month"] = _new_df["Date_Parsed"].dt.to_period("M").astype(str)
-                    _new_df["Week"] = _new_df["Date_Parsed"].dt.to_period("W").apply(lambda p: p.start_time)
-                    # Remove old rows that fall within the new file's date range,
-                    # then append new data. This fully replaces the month.
-                    _new_months = set(_new_df["Month"].dropna().unique())
-                    _old = DATA.copy()
-                    if "Month" not in _old.columns:
-                        _old["Date_Parsed"] = pd.to_datetime(_old["Date"], format="%B %d, %Y", errors="coerce")
-                        _old["Month"] = _old["Date_Parsed"].dt.to_period("M").astype(str)
-                    # Only replace rows from the SAME store and same months
-                    _old_keep = _old[~((_old["Month"].isin(_new_months)) & (_old["Store"] == _upload_store))]
-                    _replaced_count = len(_old) - len(_old_keep)
-                    DATA = pd.concat([_old_keep, _new_df], ignore_index=True)
-                    print(f"[UPLOAD] Railway replace: {len(_old)} - {_replaced_count} old month rows + {len(_new_df)} new = {len(DATA)} total")
-                    _rebuild_etsy_derived()
-                    stats = {"transactions": len(DATA), "orders": len(sales_df),
-                             "gross_sales": sales_df["Net_Clean"].sum()}
-                    stats["new_rows"] = len(_new_df)
-                    stats["replaced_rows"] = _replaced_count
-                    stats["months"] = ", ".join(sorted(_new_months))
-                    print(f"[UPLOAD] Stats: {stats}")
-                    _cascade_reload("etsy")
-                    print(f"[UPLOAD] cascade_reload done. gross_sales={gross_sales}, etsy_balance={etsy_balance}")
-                    # Sync ONLY this store's data to Supabase — never touch other stores
-                    import threading
-                    _sync_df = DATA[DATA["Store"] == _upload_store].copy()
-                    print(f"[UPLOAD] Syncing {len(_sync_df)} rows for store '{_upload_store}' to Supabase")
-                    threading.Thread(target=_sync_etsy_to_supabase, args=(_sync_df,), daemon=True).start()
-                    _sb_ok = True  # optimistic — sync runs in background
-                    msg = f"{len(_new_df)} rows loaded ({_replaced_count} replaced, months: {stats['months']})"
-                else:
-                    stats = _reload_etsy_data()
-                    stats["new_rows"] = len(df)
-                    stats["replaced_rows"] = 0
-                    _cascade_reload("etsy")
-                    # Sync ONLY this store's data to Supabase — never touch other stores
-                    import threading
-                    _sync_df = DATA[DATA["Store"] == _upload_store].copy()
-                    print(f"[UPLOAD] Syncing {len(_sync_df)} rows for store '{_upload_store}' to Supabase")
-                    threading.Thread(target=_sync_etsy_to_supabase, args=(_sync_df,), daemon=True).start()
+                # Step 1: Parse the uploaded CSV and tag with store
+                _new_df = df.copy()
+                _new_df["Store"] = _upload_store
+                _new_df["Amount_Clean"] = _new_df["Amount"].apply(parse_money)
+                _new_df["Net_Clean"] = _new_df["Net"].apply(parse_money)
+                _new_df["Fees_Clean"] = _new_df["Fees & Taxes"].apply(parse_money)
+                _new_df["Date_Parsed"] = pd.to_datetime(_new_df["Date"], format="%B %d, %Y", errors="coerce")
+                _new_df["Month"] = _new_df["Date_Parsed"].dt.to_period("M").astype(str)
+                _new_months = set(_new_df["Month"].dropna().unique())
+
+                # Step 2: Sync this store's data to Supabase FIRST (synchronous — must complete before reload)
+                # Build the full store DataFrame: existing non-overlapping months + new months
+                _existing_store = DATA[DATA["Store"] == _upload_store].copy() if "Store" in DATA.columns else pd.DataFrame()
+                if "Month" not in _existing_store.columns and len(_existing_store) > 0:
+                    _existing_store["Date_Parsed"] = pd.to_datetime(_existing_store["Date"], format="%B %d, %Y", errors="coerce")
+                    _existing_store["Month"] = _existing_store["Date_Parsed"].dt.to_period("M").astype(str)
+                _keep_existing = _existing_store[~_existing_store["Month"].isin(_new_months)] if len(_existing_store) > 0 else pd.DataFrame()
+                _full_store_df = pd.concat([_keep_existing, _new_df], ignore_index=True)
+                _full_store_df["Store"] = _upload_store
+                _replaced_count = len(_existing_store) - len(_keep_existing)
+
+                print(f"[UPLOAD] Syncing {len(_full_store_df)} rows for '{_upload_store}' to Supabase ({_replaced_count} replaced)...")
+                try:
+                    _sync_etsy_to_supabase(_full_store_df)
                     _sb_ok = True
+                except Exception as _se:
+                    print(f"[UPLOAD] Supabase sync failed: {_se}")
+
+                # Step 3: Reload ALL data from Supabase to get a clean, complete state
+                print(f"[UPLOAD] Reloading all data from Supabase...")
+                _sb_data = _load_data()
+                DATA = _sb_data["DATA"]
+                print(f"[UPLOAD] Loaded {len(DATA)} total rows from Supabase")
+
+                # Step 4: Rebuild everything from the clean data
+                _rebuild_etsy_derived()
+                stats = {"transactions": len(DATA), "orders": len(sales_df),
+                         "gross_sales": sales_df["Net_Clean"].sum()}
+                stats["new_rows"] = len(_new_df)
+                stats["replaced_rows"] = _replaced_count
+                stats["months"] = ", ".join(sorted(_new_months))
+                _cascade_reload("etsy")
+                print(f"[UPLOAD] Complete: {len(DATA)} rows, gross=${gross_sales:.2f}")
+                msg = f"{len(_new_df)} rows loaded ({_replaced_count} replaced, months: {stats['months']})"
             
 
                 if not _sb_ok:
