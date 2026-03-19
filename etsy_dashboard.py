@@ -1118,8 +1118,16 @@ def _save_order_csv_to_supabase(df, store, csv_type):
         if existing_raw:
             existing_records = json.loads(existing_raw) if isinstance(existing_raw, str) else existing_raw
 
-        # Convert new data to records
-        new_records = json.loads(df.to_json(orient="records"))
+        # Keep only essential columns to reduce payload size
+        _essential_cols = ['Sale Date', 'Order ID', 'Number of Items', 'Date Shipped',
+                           'Order Value', 'Discount Amount', 'Shipping', 'Sales Tax',
+                           'Order Total', 'Card Processing Fees', 'Order Net',
+                           'Ship State', 'Ship Country', 'Buyer', 'SKU', 'Status',
+                           'Item Name', 'Quantity', 'Price', 'Transaction ID', 'Listing ID',
+                           'Variations', 'Coupon Code']
+        _keep = [c for c in _essential_cols if c in df.columns]
+        _slim_df = df[_keep] if _keep else df
+        new_records = json.loads(_slim_df.to_json(orient="records"))
 
         # Merge: use Order ID as dedup key
         _id_col = "Order ID" if "Order ID" in df.columns else None
