@@ -18717,7 +18717,7 @@ def handle_datahub_upload(etsy_contents, receipt_contents, bank_contents, orders
 
     # If any upload succeeded, trigger a page reload after a short delay
     # so ALL tabs (not just Data Hub) show fresh data.
-    if any(x is not nu for x in [etsy_status, rcpt_status, bank_status]):
+    if any(x is not nu for x in [etsy_status, rcpt_status, bank_status, orders_status]):
         import time
         reload_trigger = time.time()  # unique value triggers clientside reload
 
