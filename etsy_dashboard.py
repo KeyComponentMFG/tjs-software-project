@@ -1294,9 +1294,18 @@ def _compute_per_order_profit():
         except (ValueError, TypeError):
             order_net = 0
         shipping_charged = _ship_charged
-        order_value = float(o.get("Order Value", 0))
-        discount = float(o.get("Discount Amount", 0))
-        processing_fee = float(o.get("Card Processing Fees", 0))
+        try:
+            order_value = float(o.get("Order Value", 0))
+        except (ValueError, TypeError):
+            order_value = 0
+        try:
+            discount = float(o.get("Discount Amount", 0))
+        except (ValueError, TypeError):
+            discount = 0
+        try:
+            processing_fee = float(o.get("Card Processing Fees", 0))
+        except (ValueError, TypeError):
+            processing_fee = 0
         shipping_pl = shipping_charged - label_cost
         order_profit = order_net - label_cost
 
@@ -2368,24 +2377,32 @@ def _check_etsy_csv_overlap(new_df, new_filename):
     if pd.isna(new_min) or pd.isna(new_max):
         return False, None, ""
 
-    for fn in os.listdir(etsy_dir):
-        if not fn.lower().endswith(".csv"):
-            continue
-        # Exact filename match
-        if fn == new_filename:
-            return True, fn, f"Replacing existing file {fn}"
-        # Date range overlap check
-        try:
-            existing_df = pd.read_csv(os.path.join(etsy_dir, fn))
-            ex_dates = pd.to_datetime(existing_df["Date"], format="%B %d, %Y", errors="coerce")
-            ex_min, ex_max = ex_dates.min(), ex_dates.max()
-            if pd.isna(ex_min) or pd.isna(ex_max):
+    # Check both root dir and store subdirectories
+    _store = new_df["Store"].iloc[0] if "Store" in new_df.columns and len(new_df) > 0 else None
+    _dirs_to_check = [etsy_dir]
+    if _store:
+        _store_dir = os.path.join(etsy_dir, _store)
+        if os.path.isdir(_store_dir):
+            _dirs_to_check.append(_store_dir)
+
+    for _check_dir in _dirs_to_check:
+        for fn in os.listdir(_check_dir):
+            if not fn.lower().endswith(".csv"):
                 continue
-            # Ranges overlap if one starts before the other ends
-            if new_min <= ex_max and ex_min <= new_max:
-                return True, fn, f"Date range overlaps with {fn} ({ex_min.strftime('%b %Y')}–{ex_max.strftime('%b %Y')})"
-        except Exception:
-            continue
+            # Exact filename match
+            if fn == new_filename:
+                return True, fn, f"Replacing existing file {fn}"
+            # Date range overlap check
+            try:
+                existing_df = pd.read_csv(os.path.join(_check_dir, fn))
+                ex_dates = pd.to_datetime(existing_df["Date"], format="%B %d, %Y", errors="coerce")
+                ex_min, ex_max = ex_dates.min(), ex_dates.max()
+                if pd.isna(ex_min) or pd.isna(ex_max):
+                    continue
+                if new_min <= ex_max and ex_min <= new_max:
+                    return True, fn, f"Date range overlaps with {fn} ({ex_min.strftime('%b %Y')}–{ex_max.strftime('%b %Y')})"
+            except Exception:
+                continue
     return False, None, ""
 
 
@@ -4070,6 +4087,8 @@ def _chatbot_answer_openai(question, history, api_key):
         messages=messages,
     )
 
+    if not response.choices:
+        raise ValueError("OpenAI returned empty response")
     return response.choices[0].message.content
 
 
@@ -4157,7 +4176,7 @@ def _chatbot_answer_inner(question):
             f"**Average Order Value (AOV):** ${avg_order:,.2f}\n\n"
             f"**Monthly AOV trend:**\n" +
             "\n".join(f"- {m}: ${monthly_aov.get(m, 0):,.2f}" for m in months_sorted) +
-            f"\n\n**Weekly AOV** ranges from ${weekly_aov['aov'].min():,.2f} to ${weekly_aov['aov'].max():,.2f}."
+            (f"\n\n**Weekly AOV** ranges from ${weekly_aov['aov'].min():,.2f} to ${weekly_aov['aov'].max():,.2f}." if len(weekly_aov) > 0 else "")
         )
 
     # ── Monthly questions ──
@@ -5237,13 +5256,18 @@ def _build_jarvis_auto_briefing():
     _briefing_data = []
 
     # CEO findings
-    if _ceo_health:
-        for alert in _ceo_health.critical_alerts:
-            _briefing_data.append(f"CRITICAL: {alert.message}")
-        for alert in _ceo_health.warning_alerts[:3]:
-            _briefing_data.append(f"WARNING: {alert.message}")
-        if not _ceo_health.critical_alerts and not _ceo_health.warning_alerts:
-            _briefing_data.append("All validation checks passing.")
+    try:
+        if _ceo_health:
+            _crits = getattr(_ceo_health, 'critical_alerts', [])
+            _warns = getattr(_ceo_health, 'warning_alerts', [])
+            for alert in _crits:
+                _briefing_data.append(f"CRITICAL: {getattr(alert, 'message', str(alert))}")
+            for alert in _warns[:3]:
+                _briefing_data.append(f"WARNING: {getattr(alert, 'message', str(alert))}")
+            if not _crits and not _warns:
+                _briefing_data.append("All validation checks passing.")
+    except Exception:
+        pass
 
     # Missing receipts
     try:
@@ -18064,13 +18088,16 @@ def handle_delete_quick_add(all_clicks):
 # ── Chatbot Callback ─────────────────────────────────────────────────────────
 
 def _parse_nav_tag(text):
-    """Extract [NAV:tab-name] from Jarvis response. Returns (clean_text, tab_name or None)."""
+    """Extract [NAV:tab-name] from Jarvis response. Returns (clean_text, first tab_name or None).
+    Removes ALL nav tags from text but only returns the first one for navigation."""
     import re as _re
-    m = _re.search(r'\[NAV:(tab-[\w-]+)\]', text)
-    if m:
-        clean = text[:m.start()].rstrip() + text[m.end():]
-        return clean.strip(), m.group(1)
-    return text, None
+    matches = list(_re.finditer(r'\[NAV:(tab-[\w-]+)\]', text))
+    if not matches:
+        return text, None
+    first_tab = matches[0].group(1)
+    # Remove all nav tags from displayed text
+    clean = _re.sub(r'\s*\[NAV:tab-[\w-]+\]', '', text).strip()
+    return clean, first_tab
 
 
 _TAB_LABELS = {
@@ -18163,7 +18190,7 @@ def handle_chat(n_clicks, n_submit, quick_clicks, nav_clicks, user_input, histor
         ], style={"display": "flex", "justifyContent": "flex-start", "marginBottom": "10px"}),
     ]
 
-    for entry in history_data:
+    for _entry_idx, entry in enumerate(history_data):
         # User message
         children.append(html.Div([
             html.Div(entry["q"], style={
@@ -18190,7 +18217,7 @@ def handle_chat(n_clicks, n_submit, quick_clicks, nav_clicks, user_input, histor
             _response_content.append(
                 html.Button(
                     f"\u27a4  Go to {_TAB_LABELS[_nav_tab]}",
-                    id={"type": "jarvis-nav", "tab": _nav_tab},
+                    id={"type": "jarvis-nav", "tab": _nav_tab, "idx": _entry_idx},
                     n_clicks=0,
                     style={
                         "marginTop": "10px", "padding": "8px 16px",
