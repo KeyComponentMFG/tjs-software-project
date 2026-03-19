@@ -1454,6 +1454,58 @@ def _compute_per_order_profit():
     if _skipped_errors:
         print(f"[OrderProfit] WARNING: {_skipped_errors} orders skipped due to errors")
 
+    # Add refunded orders that aren't in the order CSV (same-day cancels, missing exports)
+    _existing_order_ids = {str(r["order_id"]) for r in results}
+    _missing_refund_count = 0
+    for _rf_oid, _rf_amt in _refund_by_order.items():
+        if _rf_oid not in _existing_order_ids:
+            # Find the refund row for date and store info
+            _rf_date = ""
+            _rf_store = "keycomponentmfg"
+            _rf_items = "Cancelled/Refunded Order"
+            for _, _rfr in refund_rows.iterrows():
+                _rfr_key = _extract_order_num(_rfr.get("Title", ""))
+                if _rfr_key and _rfr_key.replace("Order #", "") == _rf_oid:
+                    _rf_dt = _rfr.get("_date", pd.NaT)
+                    _rf_date = _rf_dt.strftime("%Y-%m-%d") if pd.notna(_rf_dt) else ""
+                    _rf_store = _rfr.get("Store", "keycomponentmfg")
+                    break
+            # Look up item name from items_df
+            if not items_df.empty and "Order ID" in items_df.columns:
+                _rf_items_df = items_df[items_df["Order ID"].astype(str) == _rf_oid]
+                if len(_rf_items_df) > 0:
+                    _rf_items = ", ".join(_rf_items_df["Item Name"].tolist())[:120]
+            # Check for return label
+            _rf_return = _return_label_by_order.get(f"Order #{_rf_oid}", 0)
+            results.append({
+                "store": _rf_store,
+                "order_id": _rf_oid,
+                "sale_date": _rf_date,
+                "ship_date": _rf_date,
+                "items": _rf_items,
+                "order_value": 0,
+                "discount": 0,
+                "shipping_charged": 0,
+                "processing_fee": 0,
+                "order_net": 0,
+                "label_cost": 0,
+                "return_label_cost": _rf_return,
+                "label_info": "N/A",
+                "label_matched": False,
+                "shipping_pl": -_rf_return,
+                "order_profit": -_rf_return,
+                "buyer": "",
+                "ship_state": "",
+                "ship_country": "",
+                "num_items": 0,
+                "had_return": _rf_return > 0,
+                "refund_amount": _rf_amt,
+                "was_refunded": True,
+            })
+            _missing_refund_count += 1
+    if _missing_refund_count:
+        print(f"[OrderProfit] Added {_missing_refund_count} refunded orders not in order CSV")
+
     ORDER_PROFITS = sorted(results, key=lambda x: x["ship_date"], reverse=True)
 
     # Compute summary
