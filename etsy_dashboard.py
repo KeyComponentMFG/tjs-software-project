@@ -9897,19 +9897,19 @@ def _build_product_library():
         _printers = _prod.get("printers", {})  # {"P1S": {"time": 120, "grams": 45}, ...}
 
         # Status
-        _has_stl = bool(_stl)
+        _has_any_stl = any(_printers.get(m, {}).get("stl") for m in _PRINTER_MODELS)
         _has_any_printer = any(_printers.get(m, {}).get("time") and _printers.get(m, {}).get("grams") for m in _PRINTER_MODELS)
-        if _has_stl and _has_any_printer:
+        if _has_any_stl and _has_any_printer:
             _status_color = GREEN
             _status_text = "Complete"
-        elif _has_stl or _has_any_printer or _category:
+        elif _has_any_stl or _has_any_printer or _category:
             _status_color = ORANGE
             _status_text = "Partial"
         else:
             _status_color = RED
             _status_text = "Needs Setup"
 
-        # Per-printer input rows
+        # Per-printer input rows (each has its own STL, time, grams)
         _printer_rows = []
         for _model in _PRINTER_MODELS:
             _pd = _printers.get(_model, {})
@@ -9917,17 +9917,23 @@ def _build_product_library():
                 html.Span(_model, style={"color": CYAN, "fontSize": "10px", "fontWeight": "bold",
                                           "width": "30px", "flexShrink": "0", "fontFamily": "monospace"}),
                 dcc.Input(
+                    id={"type": "pl-stl", "listing": _title, "printer": _model},
+                    type="text", placeholder="filename.stl",
+                    value=_pd.get("stl", ""),
+                    style={**_input_style, "width": "120px"},
+                ),
+                dcc.Input(
                     id={"type": "pl-time", "listing": _title, "printer": _model},
                     type="number", placeholder="min",
                     value=_pd.get("time", ""),
-                    style={**_input_style, "width": "70px"},
+                    style={**_input_style, "width": "65px"},
                 ),
-                html.Span("min", style={"color": DARKGRAY, "fontSize": "9px", "marginRight": "4px"}),
+                html.Span("min", style={"color": DARKGRAY, "fontSize": "9px"}),
                 dcc.Input(
                     id={"type": "pl-grams", "listing": _title, "printer": _model},
                     type="number", placeholder="g",
                     value=_pd.get("grams", ""),
-                    style={**_input_style, "width": "60px"},
+                    style={**_input_style, "width": "55px"},
                 ),
                 html.Span("g", style={"color": DARKGRAY, "fontSize": "9px"}),
             ], style={"display": "flex", "alignItems": "center", "gap": "4px", "marginBottom": "3px"}))
@@ -9960,35 +9966,30 @@ def _build_product_library():
                 ], style={"flex": "1", "minWidth": "0"}),
             ], style={"display": "flex", "alignItems": "center", "marginBottom": "8px"}),
 
-            # Bottom row: STL + Category + Printers + Save
+            # Bottom row: Category + Printers (STL + Time + Grams each) + Save
             html.Div([
-                # Left: STL + Category
+                # Left: Category only
                 html.Div([
-                    html.Div([
-                        html.Label("STL File", style=_label_style),
-                        dcc.Input(
-                            id={"type": "pl-stl", "listing": _title},
-                            type="text", placeholder="filename.stl",
-                            value=_stl,
-                            style={**_input_style},
-                        ),
-                    ], style={"marginBottom": "4px"}),
-                    html.Div([
-                        html.Label("Category", style=_label_style),
-                        dcc.Input(
-                            id={"type": "pl-category", "listing": _title},
-                            type="text", placeholder="Lights, Clocks, etc.",
-                            value=_category,
-                            style={**_input_style},
-                        ),
-                    ]),
-                ], style={"flex": "1", "minWidth": "120px", "marginRight": "12px"}),
+                    html.Label("Category", style=_label_style),
+                    dcc.Input(
+                        id={"type": "pl-category", "listing": _title},
+                        type="text", placeholder="Lights, Clocks, etc.",
+                        value=_category,
+                        style={**_input_style},
+                    ),
+                ], style={"minWidth": "100px", "marginRight": "12px"}),
 
-                # Center: Per-printer time + grams
+                # Center: Per-printer STL + time + grams
                 html.Div([
-                    html.Label("Print Time & Filament per Printer", style={**_label_style, "marginBottom": "3px"}),
+                    html.Div([
+                        html.Span("", style={"width": "30px", "flexShrink": "0"}),
+                        html.Span("STL File", style={"width": "120px", "color": GRAY, "fontSize": "9px"}),
+                        html.Span("Time", style={"width": "65px", "color": GRAY, "fontSize": "9px"}),
+                        html.Span("", style={"width": "20px"}),
+                        html.Span("Filament", style={"width": "55px", "color": GRAY, "fontSize": "9px"}),
+                    ], style={"display": "flex", "gap": "4px", "marginBottom": "2px"}),
                     *_printer_rows,
-                ], style={"flex": "1", "minWidth": "200px", "marginRight": "12px"}),
+                ], style={"flex": "1", "minWidth": "300px", "marginRight": "12px"}),
 
                 # Right: Save
                 html.Div([
@@ -10007,7 +10008,8 @@ def _build_product_library():
 
     # Summary
     _total = len(all_listings)
-    _complete = sum(1 for l in all_listings if PRODUCT_LIBRARY.get(l["title"], {}).get("stl_name") and
+    _complete = sum(1 for l in all_listings if
+                    any(PRODUCT_LIBRARY.get(l["title"], {}).get("printers", {}).get(m, {}).get("stl") for m in _PRINTER_MODELS) and
                     any(PRODUCT_LIBRARY.get(l["title"], {}).get("printers", {}).get(m, {}).get("time") for m in _PRINTER_MODELS))
     _needs = _total - _complete
 
@@ -15901,7 +15903,7 @@ def save_refund_cost_override(all_clicks, all_types, all_outbound, all_return):
 @app.callback(
     Output("product-library-status", "children"),
     Input({"type": "pl-save", "listing": ALL}, "n_clicks"),
-    State({"type": "pl-stl", "listing": ALL}, "value"),
+    State({"type": "pl-stl", "listing": ALL, "printer": ALL}, "value"),
     State({"type": "pl-time", "listing": ALL, "printer": ALL}, "value"),
     State({"type": "pl-grams", "listing": ALL, "printer": ALL}, "value"),
     State({"type": "pl-category", "listing": ALL}, "value"),
@@ -15924,20 +15926,25 @@ def save_product_library_entry(all_clicks, all_stls, all_times, all_grams, all_c
     except Exception:
         raise dash.exceptions.PreventUpdate
 
-    # Find STL and category by matching listing title in the inputs
-    _stl = ""
+    # Find category by matching listing title
     _category = ""
-    for i, inp in enumerate(ctx.states_list[0]):
-        if inp.get("id", {}).get("listing") == listing_title:
-            _stl = all_stls[i] if i < len(all_stls) else ""
-            break
     for i, inp in enumerate(ctx.states_list[3]):
         if inp.get("id", {}).get("listing") == listing_title:
             _category = all_categories[i] if i < len(all_categories) else ""
             break
 
-    # Build per-printer data from time and grams inputs
+    # Build per-printer data from STL, time, and grams inputs
     _printers = {}
+    # STLs (states_list[0])
+    for i, inp in enumerate(ctx.states_list[0]):
+        _id = inp.get("id", {})
+        if _id.get("listing") == listing_title:
+            _model = _id.get("printer", "")
+            _stl_val = all_stls[i] if i < len(all_stls) else ""
+            if _model not in _printers:
+                _printers[_model] = {}
+            _printers[_model]["stl"] = _stl_val or ""
+    # Times (states_list[1])
     for i, inp in enumerate(ctx.states_list[1]):
         _id = inp.get("id", {})
         if _id.get("listing") == listing_title:
@@ -15946,6 +15953,7 @@ def save_product_library_entry(all_clicks, all_stls, all_times, all_grams, all_c
             if _model not in _printers:
                 _printers[_model] = {}
             _printers[_model]["time"] = float(_time_val) if _time_val else None
+    # Grams (states_list[2])
     for i, inp in enumerate(ctx.states_list[2]):
         _id = inp.get("id", {})
         if _id.get("listing") == listing_title:
@@ -15959,7 +15967,6 @@ def save_product_library_entry(all_clicks, all_stls, all_times, all_grams, all_c
     if listing_title not in PRODUCT_LIBRARY:
         PRODUCT_LIBRARY[listing_title] = {}
 
-    PRODUCT_LIBRARY[listing_title]["stl_name"] = _stl or ""
     PRODUCT_LIBRARY[listing_title]["category"] = _category or "Uncategorized"
     PRODUCT_LIBRARY[listing_title]["printers"] = _printers
     PRODUCT_LIBRARY[listing_title]["linked_listings"] = PRODUCT_LIBRARY[listing_title].get("linked_listings", [listing_title])
@@ -15974,13 +15981,11 @@ def save_product_library_entry(all_clicks, all_stls, all_times, all_grams, all_c
         print(f"[ProductLibrary] Supabase save failed: {e}")
 
     _parts = []
-    if _stl:
-        _parts.append(f"STL: {_stl}")
     if _category:
         _parts.append(f"Cat: {_category}")
     for _m, _pd in _printers.items():
-        if _pd.get("time") or _pd.get("grams"):
-            _parts.append(f"{_m}: {_pd.get('time', '?')}min/{_pd.get('grams', '?')}g")
+        if _pd.get("stl") or _pd.get("time") or _pd.get("grams"):
+            _parts.append(f"{_m}: {_pd.get('stl', '?')} {_pd.get('time', '?')}min/{_pd.get('grams', '?')}g")
 
     return html.Div([
         html.Span("\u2713 ", style={"color": GREEN, "fontWeight": "bold"}),
