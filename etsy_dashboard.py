@@ -9979,7 +9979,36 @@ def _build_product_library():
                           style={**_inp, "width": "180px", "fontSize": "10px", "opacity": "0.6"}),
             ], style={"marginTop": "2px"}))
 
+            # Product details data
+            _details = _prod.get("details", {})
+            _filament_color = _details.get("filament_color", "")
+            _print_location = _details.get("print_location", "Both")
+            _success_rate = _details.get("success_rate", "")
+            _finished_weight = _details.get("finished_weight_oz", "")
+            _box_size = _details.get("box_size", "")
+            _notes = _details.get("notes", "")
+            _has_variations = _details.get("has_variations", False)
+            _variation_prices = _details.get("variation_prices", [])  # [{"name": "Large", "price": 64.99}, ...]
+            _components = _details.get("components", [])  # [{"item": "LED Kit", "qty": 1}, ...]
+
+            # Build variation price rows
+            _var_price_rows = []
+            for _vp in _variation_prices:
+                _var_price_rows.append(html.Div([
+                    html.Span(_vp.get("name", ""), style={"color": WHITE, "fontSize": "10px", "width": "80px"}),
+                    html.Span(f"${_vp.get('price', 0)}", style={"color": GREEN, "fontSize": "10px", "fontFamily": "monospace"}),
+                ], style={"display": "flex", "gap": "4px"}))
+
+            # Build component rows
+            _comp_rows = []
+            for _cp in _components:
+                _comp_rows.append(html.Div([
+                    html.Span(f"{_cp.get('qty', 1)}x", style={"color": CYAN, "fontSize": "10px", "width": "25px"}),
+                    html.Span(_cp.get("item", ""), style={"color": WHITE, "fontSize": "10px"}),
+                ], style={"display": "flex", "gap": "4px"}))
+
             _card = html.Div([
+                # Top: Image + Title + Price + Store + STL rows
                 html.Div([
                     html.Img(src=listing["image"], style={
                         "width": "44px", "height": "44px", "borderRadius": "6px",
@@ -9987,15 +10016,16 @@ def _build_product_library():
                     }) if listing["image"] else html.Div(style={"width": "44px", "height": "44px", "marginRight": "8px"}),
                     html.Div([
                         html.Span(_title[:48], style={"color": WHITE, "fontSize": "11px", "fontWeight": "bold"}),
-                        html.Span(f" ${listing['price']}", style={"color": GREEN, "fontSize": "10px", "fontFamily": "monospace", "marginLeft": "4px"}),
+                        html.Span(f" from ${listing['price']}", style={"color": GREEN, "fontSize": "10px", "fontFamily": "monospace", "marginLeft": "4px"}),
                         html.Div([
                             html.Span(listing["store_label"], style={
                                 "color": _sc, "fontSize": "9px", "backgroundColor": f"{_sc}15",
                                 "padding": "0px 4px", "borderRadius": "2px", "marginRight": "4px"}),
                             html.Span(_st, style={"color": _st_color, "fontSize": "9px"}) if _st else html.Span(),
+                            html.Span(f" {_print_location}", style={"color": DARKGRAY, "fontSize": "9px", "marginLeft": "4px"}) if _print_location and _print_location != "Both" else html.Span(),
                         ], style={"marginTop": "2px"}),
                     ], style={"flex": "1", "minWidth": "0"}),
-                    # Printer inputs (with sizes)
+                    # Printer STL/time/grams
                     html.Div([
                         html.Div([
                             html.Span("", style={"width": "28px"}),
@@ -10006,7 +10036,86 @@ def _build_product_library():
                         *_all_size_rows,
                     ], style={"marginLeft": "auto"}),
                 ], style={"display": "flex", "alignItems": "flex-start", "gap": "8px"}),
-                # Hidden category input (pre-filled, user doesn't need to see it)
+
+                # Expandable: Product Details
+                html.Details([
+                    html.Summary("Details", style={"color": CYAN, "fontSize": "10px", "cursor": "pointer",
+                                                     "padding": "4px 0", "opacity": "0.7"}),
+                    html.Div([
+                        html.Div([
+                            # Row 1: Filament, Location, Success Rate
+                            html.Div([
+                                html.Div([
+                                    html.Label("Filament Color/Type", style={"color": GRAY, "fontSize": "9px", "display": "block"}),
+                                    dcc.Input(id={"type": "pl-filament", "listing": _title},
+                                              type="text", placeholder="e.g. White PLA, Silk Gold",
+                                              value=_filament_color,
+                                              style={**_inp, "width": "140px"}),
+                                ], style={"marginRight": "8px"}),
+                                html.Div([
+                                    html.Label("Printed At", style={"color": GRAY, "fontSize": "9px", "display": "block"}),
+                                    dcc.Dropdown(id={"type": "pl-location", "listing": _title},
+                                                 options=[{"label": "Both", "value": "Both"},
+                                                          {"label": "Tulsa Only", "value": "Tulsa"},
+                                                          {"label": "Texas Only", "value": "Texas"}],
+                                                 value=_print_location or "Both",
+                                                 clearable=False,
+                                                 style={"width": "110px", "fontSize": "10px", "backgroundColor": BG}),
+                                ], style={"marginRight": "8px"}),
+                                html.Div([
+                                    html.Label("Success Rate %", style={"color": GRAY, "fontSize": "9px", "display": "block"}),
+                                    dcc.Input(id={"type": "pl-success", "listing": _title},
+                                              type="number", placeholder="95",
+                                              value=_success_rate,
+                                              style={**_inp, "width": "55px"}),
+                                ], style={"marginRight": "8px"}),
+                                html.Div([
+                                    html.Label("Weight (oz)", style={"color": GRAY, "fontSize": "9px", "display": "block"}),
+                                    dcc.Input(id={"type": "pl-weight", "listing": _title},
+                                              type="number", placeholder="oz",
+                                              value=_finished_weight,
+                                              style={**_inp, "width": "55px"}),
+                                ], style={"marginRight": "8px"}),
+                                html.Div([
+                                    html.Label("Box Size", style={"color": GRAY, "fontSize": "9px", "display": "block"}),
+                                    dcc.Input(id={"type": "pl-box", "listing": _title},
+                                              type="text", placeholder="8x6x6",
+                                              value=_box_size,
+                                              style={**_inp, "width": "70px"}),
+                                ]),
+                            ], style={"display": "flex", "flexWrap": "wrap", "gap": "4px", "marginBottom": "6px"}),
+
+                            # Row 2: Variation prices
+                            html.Div([
+                                html.Label("Variation Prices", style={"color": GRAY, "fontSize": "9px", "display": "block", "marginBottom": "2px"}),
+                                dcc.Textarea(id={"type": "pl-variations", "listing": _title},
+                                             placeholder="One per line: Large=64.99, Small=44.99, Plug-in=49.99",
+                                             value="\n".join(f"{v['name']}={v['price']}" for v in _variation_prices) if _variation_prices else "",
+                                             style={**_inp, "width": "280px", "height": "40px", "resize": "vertical"}),
+                            ], style={"marginBottom": "6px"}),
+
+                            # Row 3: Components
+                            html.Div([
+                                html.Label("Components (from inventory)", style={"color": GRAY, "fontSize": "9px", "display": "block", "marginBottom": "2px"}),
+                                dcc.Textarea(id={"type": "pl-components", "listing": _title},
+                                             placeholder="One per line: 1x LED Kit, 1x 8x6x6 Box, 2x M5 Screw",
+                                             value="\n".join(f"{c['qty']}x {c['item']}" for c in _components) if _components else "",
+                                             style={**_inp, "width": "280px", "height": "40px", "resize": "vertical"}),
+                            ], style={"marginBottom": "6px"}),
+
+                            # Row 4: Notes
+                            html.Div([
+                                html.Label("Notes", style={"color": GRAY, "fontSize": "9px", "display": "block", "marginBottom": "2px"}),
+                                dcc.Input(id={"type": "pl-notes", "listing": _title},
+                                          type="text", placeholder="Any special instructions, issues, etc.",
+                                          value=_notes,
+                                          style={**_inp, "width": "280px"}),
+                            ]),
+                        ], style={"padding": "6px 0"}),
+                    ]),
+                ], style={"marginTop": "4px"}),
+
+                # Hidden inputs
                 dcc.Input(id={"type": "pl-category", "listing": _title},
                           type="hidden", value=_prod.get("category", _cat)),
             ], style={
@@ -15932,9 +16041,18 @@ def save_refund_cost_override(all_clicks, all_types, all_outbound, all_return):
     State({"type": "pl-grams", "listing": ALL, "printer": ALL, "size": ALL}, "value"),
     State({"type": "pl-category", "listing": ALL}, "value"),
     State({"type": "pl-new-size", "listing": ALL}, "value"),
+    State({"type": "pl-filament", "listing": ALL}, "value"),
+    State({"type": "pl-location", "listing": ALL}, "value"),
+    State({"type": "pl-success", "listing": ALL}, "value"),
+    State({"type": "pl-weight", "listing": ALL}, "value"),
+    State({"type": "pl-box", "listing": ALL}, "value"),
+    State({"type": "pl-variations", "listing": ALL}, "value"),
+    State({"type": "pl-components", "listing": ALL}, "value"),
+    State({"type": "pl-notes", "listing": ALL}, "value"),
     prevent_initial_call=True,
 )
-def save_product_library(save_all_clicks, per_save_clicks, all_stls, all_times, all_grams, all_categories, all_new_sizes):
+def save_product_library(save_all_clicks, per_save_clicks, all_stls, all_times, all_grams, all_categories, all_new_sizes,
+                          all_filaments, all_locations, all_success, all_weights, all_boxes, all_variations, all_components, all_notes):
     """Save all product library entries to Supabase at once."""
     global PRODUCT_LIBRARY
     ctx = callback_context
@@ -16039,6 +16157,62 @@ def save_product_library(save_all_clicks, per_save_clicks, all_stls, all_times, 
         # Keep printers for backward compat
         PRODUCT_LIBRARY[_listing]["printers"] = existing_sizes.get("default", {})
 
+        # Save detail fields
+        _detail_fields = {"filament": all_filaments, "location": all_locations, "success": all_success,
+                          "weight": all_weights, "box": all_boxes, "variations": all_variations,
+                          "components": all_components, "notes": all_notes}
+        _details = PRODUCT_LIBRARY[_listing].get("details", {})
+
+        # Find values by matching listing in states_list indices 5-12
+        for _di, (_fname, _fvals) in enumerate(_detail_fields.items()):
+            _state_idx = 5 + _di
+            if _state_idx < len(ctx.states_list):
+                for _si, _sinp in enumerate(ctx.states_list[_state_idx]):
+                    if _sinp.get("id", {}).get("listing") == _listing and _si < len(_fvals):
+                        _fval = _fvals[_si]
+                        if _fval is not None and _fval != "":
+                            if _fname == "filament":
+                                _details["filament_color"] = str(_fval)
+                            elif _fname == "location":
+                                _details["print_location"] = str(_fval)
+                            elif _fname == "success":
+                                _details["success_rate"] = float(_fval) if _fval else None
+                            elif _fname == "weight":
+                                _details["finished_weight_oz"] = float(_fval) if _fval else None
+                            elif _fname == "box":
+                                _details["box_size"] = str(_fval)
+                            elif _fname == "notes":
+                                _details["notes"] = str(_fval)
+                            elif _fname == "variations":
+                                # Parse "Large=64.99\nSmall=44.99" format
+                                _vps = []
+                                for _line in str(_fval).strip().split("\n"):
+                                    if "=" in _line:
+                                        _parts = _line.split("=", 1)
+                                        try:
+                                            _vps.append({"name": _parts[0].strip(), "price": float(_parts[1].strip())})
+                                        except (ValueError, IndexError):
+                                            pass
+                                if _vps:
+                                    _details["variation_prices"] = _vps
+                                    _details["has_variations"] = True
+                            elif _fname == "components":
+                                # Parse "1x LED Kit\n2x M5 Screw" format
+                                _cps = []
+                                for _line in str(_fval).strip().split("\n"):
+                                    _line = _line.strip()
+                                    if _line:
+                                        import re as _re_cp
+                                        _m = _re_cp.match(r"(\d+)x\s+(.+)", _line)
+                                        if _m:
+                                            _cps.append({"qty": int(_m.group(1)), "item": _m.group(2).strip()})
+                                        else:
+                                            _cps.append({"qty": 1, "item": _line})
+                                if _cps:
+                                    _details["components"] = _cps
+                        break
+
+        PRODUCT_LIBRARY[_listing]["details"] = _details
         PRODUCT_LIBRARY[_listing]["linked_listings"] = PRODUCT_LIBRARY[_listing].get("linked_listings", [_listing])
         if _listing not in PRODUCT_LIBRARY[_listing]["linked_listings"]:
             PRODUCT_LIBRARY[_listing]["linked_listings"].append(_listing)
