@@ -10027,6 +10027,13 @@ def _build_product_library():
             html.Span(f"{_needs} need setup", style={"color": RED, "fontSize": "12px"}),
         ], style={"marginBottom": "12px", "padding": "8px 12px", "backgroundColor": f"{CARD}cc",
                   "borderRadius": "6px", "border": f"1px solid {DARKGRAY}22"}),
+        html.Div([
+            html.Button("\U0001f4be  Save All Products", id="pl-save-all", n_clicks=0,
+                        style={"fontSize": "13px", "padding": "8px 20px", "backgroundColor": f"{GREEN}25",
+                               "border": f"1px solid {GREEN}", "borderRadius": "6px", "color": GREEN,
+                               "cursor": "pointer", "fontWeight": "bold", "marginRight": "12px"}),
+            html.Span("Fill in your data, then click Save All once.", style={"color": GRAY, "fontSize": "11px"}),
+        ], style={"marginBottom": "12px"}),
         html.Div(id="product-library-status", style={"minHeight": "20px", "marginBottom": "8px"}),
         html.Div(_cards, style={"maxHeight": "800px", "overflowY": "auto"}),
     ])
@@ -15902,6 +15909,8 @@ def save_refund_cost_override(all_clicks, all_types, all_outbound, all_return):
 
 @app.callback(
     Output("product-library-status", "children"),
+    Output("upload-reload-trigger", "data", allow_duplicate=True),
+    Input("pl-save-all", "n_clicks"),
     Input({"type": "pl-save", "listing": ALL}, "n_clicks"),
     State({"type": "pl-stl", "listing": ALL, "printer": ALL}, "value"),
     State({"type": "pl-time", "listing": ALL, "printer": ALL}, "value"),
@@ -15909,8 +15918,8 @@ def save_refund_cost_override(all_clicks, all_types, all_outbound, all_return):
     State({"type": "pl-category", "listing": ALL}, "value"),
     prevent_initial_call=True,
 )
-def save_product_library_entry(all_clicks, all_stls, all_times, all_grams, all_categories):
-    """Save a product library entry with per-printer data to Supabase."""
+def save_product_library(save_all_clicks, per_save_clicks, all_stls, all_times, all_grams, all_categories):
+    """Save all product library entries to Supabase at once."""
     global PRODUCT_LIBRARY
     ctx = callback_context
     if not ctx.triggered:
@@ -15920,78 +15929,118 @@ def save_product_library_entry(all_clicks, all_stls, all_times, all_grams, all_c
     if not trigger["value"]:
         raise dash.exceptions.PreventUpdate
 
-    try:
-        trigger_id = json.loads(trigger["prop_id"].split(".")[0])
-        listing_title = trigger_id["listing"]
-    except Exception:
-        raise dash.exceptions.PreventUpdate
+    trigger_id_raw = trigger["prop_id"]
 
-    # Find category by matching listing title
-    _category = ""
+    # Determine if saving one product or all
+    _single_listing = None
+    if "pl-save-all" not in trigger_id_raw:
+        try:
+            _tid = json.loads(trigger_id_raw.split(".")[0])
+            _single_listing = _tid.get("listing")
+        except Exception:
+            raise dash.exceptions.PreventUpdate
+
+    # Build a map of listing -> {category, printers: {model: {stl, time, grams}}}
+    # From category inputs
+    _cat_map = {}
     for i, inp in enumerate(ctx.states_list[3]):
-        if inp.get("id", {}).get("listing") == listing_title:
-            _category = all_categories[i] if i < len(all_categories) else ""
-            break
+        _listing = inp.get("id", {}).get("listing", "")
+        if _listing and i < len(all_categories):
+            _cat_map[_listing] = all_categories[i] or ""
 
-    # Build per-printer data from STL, time, and grams inputs
-    _printers = {}
-    # STLs (states_list[0])
+    # From STL/time/grams inputs (per printer)
+    _printer_map = {}  # listing -> {model -> {stl, time, grams}}
     for i, inp in enumerate(ctx.states_list[0]):
         _id = inp.get("id", {})
-        if _id.get("listing") == listing_title:
-            _model = _id.get("printer", "")
-            _stl_val = all_stls[i] if i < len(all_stls) else ""
-            if _model not in _printers:
-                _printers[_model] = {}
-            _printers[_model]["stl"] = _stl_val or ""
-    # Times (states_list[1])
+        _listing = _id.get("listing", "")
+        _model = _id.get("printer", "")
+        if _listing and _model:
+            if _listing not in _printer_map:
+                _printer_map[_listing] = {}
+            if _model not in _printer_map[_listing]:
+                _printer_map[_listing][_model] = {}
+            _printer_map[_listing][_model]["stl"] = all_stls[i] if i < len(all_stls) else ""
+
     for i, inp in enumerate(ctx.states_list[1]):
         _id = inp.get("id", {})
-        if _id.get("listing") == listing_title:
-            _model = _id.get("printer", "")
-            _time_val = all_times[i] if i < len(all_times) else None
-            if _model not in _printers:
-                _printers[_model] = {}
-            _printers[_model]["time"] = float(_time_val) if _time_val else None
-    # Grams (states_list[2])
+        _listing = _id.get("listing", "")
+        _model = _id.get("printer", "")
+        if _listing and _model:
+            if _listing not in _printer_map:
+                _printer_map[_listing] = {}
+            if _model not in _printer_map[_listing]:
+                _printer_map[_listing][_model] = {}
+            _val = all_times[i] if i < len(all_times) else None
+            _printer_map[_listing][_model]["time"] = float(_val) if _val else None
+
     for i, inp in enumerate(ctx.states_list[2]):
         _id = inp.get("id", {})
-        if _id.get("listing") == listing_title:
-            _model = _id.get("printer", "")
-            _grams_val = all_grams[i] if i < len(all_grams) else None
-            if _model not in _printers:
-                _printers[_model] = {}
-            _printers[_model]["grams"] = float(_grams_val) if _grams_val else None
+        _listing = _id.get("listing", "")
+        _model = _id.get("printer", "")
+        if _listing and _model:
+            if _listing not in _printer_map:
+                _printer_map[_listing] = {}
+            if _model not in _printer_map[_listing]:
+                _printer_map[_listing][_model] = {}
+            _val = all_grams[i] if i < len(all_grams) else None
+            _printer_map[_listing][_model]["grams"] = float(_val) if _val else None
 
-    # Save
-    if listing_title not in PRODUCT_LIBRARY:
-        PRODUCT_LIBRARY[listing_title] = {}
+    # Save — either single product or all
+    _listings_to_save = [_single_listing] if _single_listing else list(set(list(_cat_map.keys()) + list(_printer_map.keys())))
+    _saved_count = 0
 
-    PRODUCT_LIBRARY[listing_title]["category"] = _category or "Uncategorized"
-    PRODUCT_LIBRARY[listing_title]["printers"] = _printers
-    PRODUCT_LIBRARY[listing_title]["linked_listings"] = PRODUCT_LIBRARY[listing_title].get("linked_listings", [listing_title])
-    if listing_title not in PRODUCT_LIBRARY[listing_title]["linked_listings"]:
-        PRODUCT_LIBRARY[listing_title]["linked_listings"].append(listing_title)
+    for _listing in _listings_to_save:
+        _cat = _cat_map.get(_listing, "")
+        _printers = _printer_map.get(_listing, {})
 
-    # Persist
+        # Only save if there's any data
+        if not _cat and not any(_printers.get(m, {}).get("stl") or _printers.get(m, {}).get("time") or _printers.get(m, {}).get("grams") for m in _printers):
+            continue
+
+        if _listing not in PRODUCT_LIBRARY:
+            PRODUCT_LIBRARY[_listing] = {}
+
+        if _cat:
+            PRODUCT_LIBRARY[_listing]["category"] = _cat
+        if _printers:
+            # Merge with existing printer data
+            existing_printers = PRODUCT_LIBRARY[_listing].get("printers", {})
+            for _m, _pd in _printers.items():
+                if _m not in existing_printers:
+                    existing_printers[_m] = {}
+                for _k, _v in _pd.items():
+                    if _v is not None and _v != "":
+                        existing_printers[_m][_k] = _v
+            PRODUCT_LIBRARY[_listing]["printers"] = existing_printers
+
+        PRODUCT_LIBRARY[_listing]["linked_listings"] = PRODUCT_LIBRARY[_listing].get("linked_listings", [_listing])
+        if _listing not in PRODUCT_LIBRARY[_listing]["linked_listings"]:
+            PRODUCT_LIBRARY[_listing]["linked_listings"].append(_listing)
+        _saved_count += 1
+
+    # Persist to Supabase
     try:
         from supabase_loader import save_config_value
         save_config_value("product_library", json.dumps(PRODUCT_LIBRARY))
+        print(f"[ProductLibrary] Saved {_saved_count} products to Supabase")
     except Exception as e:
         print(f"[ProductLibrary] Supabase save failed: {e}")
 
-    _parts = []
-    if _category:
-        _parts.append(f"Cat: {_category}")
-    for _m, _pd in _printers.items():
-        if _pd.get("stl") or _pd.get("time") or _pd.get("grams"):
-            _parts.append(f"{_m}: {_pd.get('stl', '?')} {_pd.get('time', '?')}min/{_pd.get('grams', '?')}g")
+    # Count categories
+    _cat_counts = {}
+    for _p in PRODUCT_LIBRARY.values():
+        _c = _p.get("category", "Uncategorized")
+        if _c:
+            _cat_counts[_c] = _cat_counts.get(_c, 0) + 1
 
+    _cat_summary = ", ".join(f"{c}: {n}" for c, n in sorted(_cat_counts.items())) if _cat_counts else "none"
+
+    import time
     return html.Div([
         html.Span("\u2713 ", style={"color": GREEN, "fontWeight": "bold"}),
-        html.Span(f"Saved: {listing_title[:35]}... — {', '.join(_parts)}",
+        html.Span(f"Saved {_saved_count} products — Categories: {_cat_summary}",
                   style={"color": GREEN, "fontSize": "12px"}),
-    ])
+    ]), time.time()
 
 
 # ── Label Assignment Callback ────────────────────────────────────────────────
