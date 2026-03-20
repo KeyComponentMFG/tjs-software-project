@@ -9855,9 +9855,10 @@ def build_tab4_inventory():
 
 
 _PRINTER_MODELS = ["P1S", "A1", "P2S"]
+_PRINTER_LOCATIONS = {"P1S": "Tulsa", "A1": "Texas", "P2S": "Both"}
 
 def _build_product_library():
-    """Build the Product Library section — listings linked to STL files with per-printer stats."""
+    """Build the Product Library — grouped by category, per-printer STL/time/grams."""
     import json as _json_pl2
 
     # Load all listings from Supabase
@@ -9870,11 +9871,9 @@ def _build_product_library():
                 records = _json_pl2.loads(raw) if isinstance(raw, str) else raw
                 for r in records:
                     all_listings.append({
-                        "store": store,
-                        "store_label": label,
+                        "store": store, "store_label": label,
                         "title": r.get("TITLE", "?"),
                         "price": r.get("PRICE", 0),
-                        "qty": r.get("QUANTITY", 0),
                         "image": r.get("IMAGE1", ""),
                     })
         except Exception:
@@ -9890,165 +9889,140 @@ def _build_product_library():
                    style={"color": GRAY, "fontSize": "12px"}),
         ])
 
-    _store_colors = {"keycomponentmfg": CYAN, "aurvio": "#9b59b6", "lunalinks": "#e91e63"}
-    _input_style = {"width": "100%", "fontSize": "11px", "backgroundColor": BG, "color": WHITE,
-                    "border": f"1px solid {DARKGRAY}44", "borderRadius": "4px", "padding": "4px 6px"}
-    _label_style = {"color": GRAY, "fontSize": "9px", "display": "block", "marginBottom": "1px", "letterSpacing": "0.5px"}
+    _sc_map = {"keycomponentmfg": CYAN, "aurvio": "#9b59b6", "lunalinks": "#e91e63"}
+    _inp = {"fontSize": "11px", "backgroundColor": BG, "color": WHITE,
+            "border": f"1px solid {DARKGRAY}44", "borderRadius": "4px", "padding": "4px 6px"}
 
-    _cards = []
-    for listing in sorted(all_listings, key=lambda x: x["title"]):
-        _title = listing["title"]
-        _store = listing["store"]
-        _sc = _store_colors.get(_store, TEAL)
-        _price = listing["price"]
-        _img = listing["image"]
+    # Group listings by category
+    _by_cat = {}
+    for listing in all_listings:
+        _prod = PRODUCT_LIBRARY.get(listing["title"], {})
+        _cat = _prod.get("category", "Uncategorized")
+        if _cat not in _by_cat:
+            _by_cat[_cat] = []
+        _by_cat[_cat].append(listing)
 
-        # Look up product data
-        _prod = PRODUCT_LIBRARY.get(_title, {})
-        _stl = _prod.get("stl_name", "")
-        _category = _prod.get("category", "")
-        _printers = _prod.get("printers", {})  # {"P1S": {"time": 120, "grams": 45}, ...}
-
-        # Status
-        _has_any_stl = any(_printers.get(m, {}).get("stl") for m in _PRINTER_MODELS)
-        _has_any_printer = any(_printers.get(m, {}).get("time") and _printers.get(m, {}).get("grams") for m in _PRINTER_MODELS)
-        if _has_any_stl and _has_any_printer:
-            _status_color = GREEN
-            _status_text = "Complete"
-        elif _has_any_stl or _has_any_printer or _category:
-            _status_color = ORANGE
-            _status_text = "Partial"
-        else:
-            _status_color = RED
-            _status_text = "Needs Setup"
-
-        # Per-printer input rows (each has its own STL, time, grams)
-        _printer_rows = []
-        for _model in _PRINTER_MODELS:
-            _pd = _printers.get(_model, {})
-            _printer_rows.append(html.Div([
-                html.Span(_model, style={"color": CYAN, "fontSize": "10px", "fontWeight": "bold",
-                                          "width": "30px", "flexShrink": "0", "fontFamily": "monospace"}),
-                dcc.Input(
-                    id={"type": "pl-stl", "listing": _title, "printer": _model},
-                    type="text", placeholder="filename.stl",
-                    value=_pd.get("stl", ""),
-                    style={**_input_style, "width": "120px"},
-                ),
-                dcc.Input(
-                    id={"type": "pl-time", "listing": _title, "printer": _model},
-                    type="number", placeholder="min",
-                    value=_pd.get("time", ""),
-                    style={**_input_style, "width": "65px"},
-                ),
-                html.Span("min", style={"color": DARKGRAY, "fontSize": "9px"}),
-                dcc.Input(
-                    id={"type": "pl-grams", "listing": _title, "printer": _model},
-                    type="number", placeholder="g",
-                    value=_pd.get("grams", ""),
-                    style={**_input_style, "width": "55px"},
-                ),
-                html.Span("g", style={"color": DARKGRAY, "fontSize": "9px"}),
-            ], style={"display": "flex", "alignItems": "center", "gap": "4px", "marginBottom": "3px"}))
-
-        _card = html.Div([
-            # Top row: image + title + store + status
-            html.Div([
-                html.Img(src=_img, style={
-                    "width": "50px", "height": "50px", "borderRadius": "6px",
-                    "objectFit": "cover", "marginRight": "10px", "flexShrink": "0",
-                }) if _img else html.Div(style={"width": "50px", "height": "50px", "marginRight": "10px"}),
-                html.Div([
-                    html.Div([
-                        html.Span(_title[:50], style={"color": WHITE, "fontSize": "12px", "fontWeight": "bold"}),
-                        html.Span(f" ${_price}", style={"color": GREEN, "fontSize": "11px", "fontFamily": "monospace", "marginLeft": "6px"}),
-                    ]),
-                    html.Div([
-                        html.Span(listing["store_label"], style={
-                            "color": _sc, "fontSize": "9px", "fontWeight": "bold",
-                            "backgroundColor": f"{_sc}15", "padding": "1px 5px",
-                            "borderRadius": "3px", "marginRight": "4px",
-                        }),
-                        html.Span(_status_text, style={
-                            "color": _status_color, "fontSize": "9px",
-                            "backgroundColor": f"{_status_color}15", "padding": "1px 5px",
-                            "borderRadius": "3px",
-                        }),
-                        html.Span(f" {_category}", style={"color": ORANGE, "fontSize": "9px", "marginLeft": "4px"}) if _category else html.Span(),
-                    ], style={"marginTop": "3px"}),
-                ], style={"flex": "1", "minWidth": "0"}),
-            ], style={"display": "flex", "alignItems": "center", "marginBottom": "8px"}),
-
-            # Bottom row: Category + Printers (STL + Time + Grams each) + Save
-            html.Div([
-                # Left: Category only
-                html.Div([
-                    html.Label("Category", style=_label_style),
-                    dcc.Input(
-                        id={"type": "pl-category", "listing": _title},
-                        type="text", placeholder="Lights, Clocks, etc.",
-                        value=_category,
-                        style={**_input_style},
-                    ),
-                ], style={"minWidth": "100px", "marginRight": "12px"}),
-
-                # Center: Per-printer STL + time + grams
-                html.Div([
-                    html.Div([
-                        html.Span("", style={"width": "30px", "flexShrink": "0"}),
-                        html.Span("STL File", style={"width": "120px", "color": GRAY, "fontSize": "9px"}),
-                        html.Span("Time", style={"width": "65px", "color": GRAY, "fontSize": "9px"}),
-                        html.Span("", style={"width": "20px"}),
-                        html.Span("Filament", style={"width": "55px", "color": GRAY, "fontSize": "9px"}),
-                    ], style={"display": "flex", "gap": "4px", "marginBottom": "2px"}),
-                    *_printer_rows,
-                ], style={"flex": "1", "minWidth": "300px", "marginRight": "12px"}),
-
-                # Right: Save
-                html.Div([
-                    html.Button("Save", id={"type": "pl-save", "listing": _title}, n_clicks=0,
-                                style={"fontSize": "11px", "padding": "6px 16px", "backgroundColor": f"{GREEN}25",
-                                       "border": f"1px solid {GREEN}", "borderRadius": "4px", "color": GREEN,
-                                       "cursor": "pointer"}),
-                ], style={"display": "flex", "alignItems": "flex-end", "paddingBottom": "4px"}),
-            ], style={"display": "flex", "flexWrap": "wrap", "gap": "8px"}),
-        ], style={
-            "backgroundColor": CARD, "borderRadius": "8px", "padding": "12px",
-            "marginBottom": "6px", "border": f"1px solid {DARKGRAY}22",
-            "borderLeft": f"3px solid {_status_color}",
-        })
-        _cards.append(_card)
-
-    # Summary
+    # Build category sections
+    _cat_sections = []
     _total = len(all_listings)
-    _complete = sum(1 for l in all_listings if
-                    any(PRODUCT_LIBRARY.get(l["title"], {}).get("printers", {}).get(m, {}).get("stl") for m in _PRINTER_MODELS) and
-                    any(PRODUCT_LIBRARY.get(l["title"], {}).get("printers", {}).get(m, {}).get("time") for m in _PRINTER_MODELS))
-    _needs = _total - _complete
+    _complete = 0
+
+    # Category order: defined categories first, Uncategorized last
+    _cat_order = sorted([c for c in _by_cat if c != "Uncategorized"]) + (["Uncategorized"] if "Uncategorized" in _by_cat else [])
+
+    for _cat in _cat_order:
+        _cat_listings = sorted(_by_cat[_cat], key=lambda x: x["title"])
+        _cat_complete = 0
+
+        _cards = []
+        for listing in _cat_listings:
+            _title = listing["title"]
+            _sc = _sc_map.get(listing["store"], TEAL)
+            _prod = PRODUCT_LIBRARY.get(_title, {})
+            _printers = _prod.get("printers", {})
+
+            # Status
+            _has_stl = any(_printers.get(m, {}).get("stl") for m in _PRINTER_MODELS)
+            _has_data = any(_printers.get(m, {}).get("time") and _printers.get(m, {}).get("grams") for m in _PRINTER_MODELS)
+            if _has_stl and _has_data:
+                _st_color, _st = GREEN, "Done"
+                _cat_complete += 1
+                _complete += 1
+            elif _has_stl or _has_data:
+                _st_color, _st = ORANGE, "Partial"
+            else:
+                _st_color, _st = DARKGRAY, ""
+
+            # Printer rows
+            _rows = []
+            for _m in _PRINTER_MODELS:
+                _pd = _printers.get(_m, {})
+                _rows.append(html.Div([
+                    html.Span(_m, style={"color": CYAN, "fontSize": "10px", "fontWeight": "bold",
+                                          "width": "28px", "flexShrink": "0", "fontFamily": "monospace"}),
+                    dcc.Input(id={"type": "pl-stl", "listing": _title, "printer": _m},
+                              type="text", placeholder="file.stl", value=_pd.get("stl", ""),
+                              style={**_inp, "width": "110px"}),
+                    dcc.Input(id={"type": "pl-time", "listing": _title, "printer": _m},
+                              type="number", placeholder="min", value=_pd.get("time", ""),
+                              style={**_inp, "width": "55px"}),
+                    dcc.Input(id={"type": "pl-grams", "listing": _title, "printer": _m},
+                              type="number", placeholder="g", value=_pd.get("grams", ""),
+                              style={**_inp, "width": "50px"}),
+                ], style={"display": "flex", "alignItems": "center", "gap": "3px", "marginBottom": "2px"}))
+
+            _card = html.Div([
+                html.Div([
+                    html.Img(src=listing["image"], style={
+                        "width": "44px", "height": "44px", "borderRadius": "6px",
+                        "objectFit": "cover", "marginRight": "8px", "flexShrink": "0",
+                    }) if listing["image"] else html.Div(style={"width": "44px", "height": "44px", "marginRight": "8px"}),
+                    html.Div([
+                        html.Span(_title[:48], style={"color": WHITE, "fontSize": "11px", "fontWeight": "bold"}),
+                        html.Span(f" ${listing['price']}", style={"color": GREEN, "fontSize": "10px", "fontFamily": "monospace", "marginLeft": "4px"}),
+                        html.Div([
+                            html.Span(listing["store_label"], style={
+                                "color": _sc, "fontSize": "9px", "backgroundColor": f"{_sc}15",
+                                "padding": "0px 4px", "borderRadius": "2px", "marginRight": "4px"}),
+                            html.Span(_st, style={"color": _st_color, "fontSize": "9px"}) if _st else html.Span(),
+                        ], style={"marginTop": "2px"}),
+                    ], style={"flex": "1", "minWidth": "0"}),
+                    # Printer inputs
+                    html.Div([
+                        html.Div([
+                            html.Span("", style={"width": "28px"}),
+                            html.Span("STL", style={"width": "110px", "color": DARKGRAY, "fontSize": "8px"}),
+                            html.Span("Min", style={"width": "55px", "color": DARKGRAY, "fontSize": "8px"}),
+                            html.Span("Grams", style={"width": "50px", "color": DARKGRAY, "fontSize": "8px"}),
+                        ], style={"display": "flex", "gap": "3px", "marginBottom": "1px"}),
+                        *_rows,
+                    ], style={"marginLeft": "auto"}),
+                ], style={"display": "flex", "alignItems": "flex-start", "gap": "8px"}),
+                # Hidden category input (pre-filled, user doesn't need to see it)
+                dcc.Input(id={"type": "pl-category", "listing": _title},
+                          type="hidden", value=_prod.get("category", _cat)),
+            ], style={
+                "backgroundColor": CARD, "borderRadius": "6px", "padding": "8px 10px",
+                "marginBottom": "4px", "borderLeft": f"3px solid {_st_color}",
+            })
+            _cards.append(_card)
+
+        # Category header
+        _cat_section = html.Details([
+            html.Summary([
+                html.Span(f"{_cat}", style={"color": ORANGE, "fontSize": "14px", "fontWeight": "bold",
+                                             "letterSpacing": "1px", "marginRight": "8px"}),
+                html.Span(f"{len(_cat_listings)} products", style={"color": GRAY, "fontSize": "11px", "marginRight": "8px"}),
+                html.Span(f"{_cat_complete} done", style={"color": GREEN, "fontSize": "11px"}) if _cat_complete else html.Span(),
+            ], style={"cursor": "pointer", "padding": "8px 0", "borderBottom": f"1px solid {ORANGE}22"}),
+            html.Div(_cards, style={"paddingTop": "6px"}),
+        ], open=False, style={"marginBottom": "8px"})
+        _cat_sections.append(_cat_section)
 
     return html.Div([
         html.H3("\U0001f4e6 PRODUCT LIBRARY", style={
             "color": CYAN, "margin": "30px 0 6px 0", "fontSize": "16px",
             "letterSpacing": "1.5px", "borderTop": f"2px solid {CYAN}33", "paddingTop": "14px",
         }),
-        html.P("Link each listing to its STL file. Enter print time and filament usage per printer model (P1S, A1, P2S). "
-               "This connects to inventory costs for true COGS tracking.",
+        html.P("Each product has per-printer rows (P1S, A1, P2S) for STL file, print time, and filament. "
+               "Fill in what you know, then Save All.",
                style={"color": GRAY, "margin": "0 0 8px 0", "fontSize": "12px"}),
         html.Div([
-            html.Span(f"{_total} listings", style={"color": WHITE, "fontSize": "12px", "marginRight": "12px"}),
+            html.Span(f"{_total} products", style={"color": WHITE, "fontSize": "12px", "marginRight": "12px"}),
             html.Span(f"{_complete} complete", style={"color": GREEN, "fontSize": "12px", "marginRight": "12px"}),
-            html.Span(f"{_needs} need setup", style={"color": RED, "fontSize": "12px"}),
-        ], style={"marginBottom": "12px", "padding": "8px 12px", "backgroundColor": f"{CARD}cc",
+            html.Span(f"{_total - _complete} remaining", style={"color": ORANGE, "fontSize": "12px", "marginRight": "20px"}),
+            html.Span(f"{len(_cat_order)} categories", style={"color": CYAN, "fontSize": "12px"}),
+        ], style={"marginBottom": "10px", "padding": "8px 12px", "backgroundColor": f"{CARD}cc",
                   "borderRadius": "6px", "border": f"1px solid {DARKGRAY}22"}),
         html.Div([
-            html.Button("\U0001f4be  Save All Products", id="pl-save-all", n_clicks=0,
-                        style={"fontSize": "13px", "padding": "8px 20px", "backgroundColor": f"{GREEN}25",
+            html.Button("\U0001f4be  Save All", id="pl-save-all", n_clicks=0,
+                        style={"fontSize": "13px", "padding": "8px 24px", "backgroundColor": f"{GREEN}25",
                                "border": f"1px solid {GREEN}", "borderRadius": "6px", "color": GREEN,
                                "cursor": "pointer", "fontWeight": "bold", "marginRight": "12px"}),
-            html.Span("Fill in your data, then click Save All once.", style={"color": GRAY, "fontSize": "11px"}),
-        ], style={"marginBottom": "12px"}),
+            html.Span("Open a category, fill in data, click Save All when done.", style={"color": GRAY, "fontSize": "11px"}),
+        ], style={"marginBottom": "10px"}),
         html.Div(id="product-library-status", style={"minHeight": "20px", "marginBottom": "8px"}),
-        html.Div(_cards, style={"maxHeight": "800px", "overflowY": "auto"}),
+        html.Div(_cat_sections),
     ])
 
 
