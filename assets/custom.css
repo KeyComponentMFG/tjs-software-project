@@ -200,6 +200,16 @@ a:hover { color: #33ddff; text-decoration: underline; }
 }
 
 /* ── Agreement Tab Styling ──────────────────────────────────────────── */
+.toc-item:hover {
+    background-color: #00d4ff10 !important;
+    border-radius: 4px;
+    padding-left: 8px !important;
+    transition: all 0.2s ease;
+}
+.toc-item:hover span:first-child {
+    color: #00d4ff !important;
+}
+
 .agreement-content h1 {
     color: #00d4ff !important;
     font-size: 22px !important;
