@@ -1073,6 +1073,19 @@ try:
 except Exception:
     pass
 
+# Product Library — links listings to STL files and inventory items for COGS
+PRODUCT_LIBRARY = {}  # {product_id: {name, stl_files, print_time, filament_grams, category, linked_listings, linked_inventory, ...}}
+try:
+    from supabase_loader import get_config_value as _get_cfg5
+    _pl_raw = _get_cfg5("product_library", {})
+    if isinstance(_pl_raw, dict):
+        PRODUCT_LIBRARY = _pl_raw
+    elif isinstance(_pl_raw, str):
+        import json as _json_pl
+        PRODUCT_LIBRARY = _json_pl.loads(_pl_raw)
+except Exception:
+    pass
+
 # ── Expense completeness globals (defaults if pipeline didn't set them) ──
 try:
     expense_receipt_verified
@@ -9820,7 +9833,213 @@ def build_tab4_inventory():
         # ══════════════════════════════════════════════════════════════════════
         _build_receipt_gallery(),
 
+        # ══════════════════════════════════════════════════════════════════════
+        # PRODUCT LIBRARY
+        # ══════════════════════════════════════════════════════════════════════
+        _build_product_library(),
+
     ], style={"padding": TAB_PADDING})
+
+
+def _build_product_library():
+    """Build the Product Library section — links listings to STL files and costs."""
+    import json as _json_pl2
+
+    # Load all listings from Supabase
+    all_listings = []
+    for store, label in [("keycomponentmfg", "KeyComp"), ("aurvio", "Aurvio"), ("lunalinks", "L&L")]:
+        try:
+            from supabase_loader import get_config_value as _gcv_pl
+            raw = _gcv_pl(f"listings_csv_{store}")
+            if raw:
+                records = _json_pl2.loads(raw) if isinstance(raw, str) else raw
+                for r in records:
+                    all_listings.append({
+                        "store": store,
+                        "store_label": label,
+                        "title": r.get("TITLE", "?"),
+                        "price": r.get("PRICE", 0),
+                        "qty": r.get("QUANTITY", 0),
+                        "image": r.get("IMAGE1", ""),
+                    })
+        except Exception:
+            pass
+
+    if not all_listings:
+        return html.Div([
+            html.H3("\U0001f4e6 PRODUCT LIBRARY", style={
+                "color": CYAN, "margin": "30px 0 6px 0", "fontSize": "16px",
+                "letterSpacing": "1.5px", "borderTop": f"2px solid {CYAN}33", "paddingTop": "14px",
+            }),
+            html.P("Upload active listings CSVs in Data Hub to build your Product Library.",
+                   style={"color": GRAY, "fontSize": "12px"}),
+        ])
+
+    # Category filter options
+    _categories = sorted(set(p.get("category", "Uncategorized") for p in PRODUCT_LIBRARY.values())) if PRODUCT_LIBRARY else []
+    if "Uncategorized" not in _categories:
+        _categories = ["All", "Uncategorized"] + _categories
+    else:
+        _categories = ["All"] + _categories
+
+    # Build product cards
+    _cards = []
+    _store_colors = {"keycomponentmfg": CYAN, "aurvio": "#9b59b6", "lunalinks": "#e91e63"}
+
+    for listing in sorted(all_listings, key=lambda x: x["title"]):
+        _title = listing["title"]
+        _store = listing["store"]
+        _sc = _store_colors.get(_store, TEAL)
+        _price = listing["price"]
+        _img = listing["image"]
+
+        # Check if this listing has a product entry
+        _prod_id = None
+        _prod = None
+        for pid, pdata in PRODUCT_LIBRARY.items():
+            if _title in pdata.get("linked_listings", []):
+                _prod_id = pid
+                _prod = pdata
+                break
+
+        _has_data = _prod is not None
+        _stl = _prod.get("stl_name", "") if _prod else ""
+        _print_time = _prod.get("print_time_min", "") if _prod else ""
+        _filament_g = _prod.get("filament_grams", "") if _prod else ""
+        _category = _prod.get("category", "Uncategorized") if _prod else "Uncategorized"
+
+        # Status indicator
+        if _has_data and _stl and _print_time and _filament_g:
+            _status_color = GREEN
+            _status_text = "Complete"
+        elif _has_data:
+            _status_color = ORANGE
+            _status_text = "Partial"
+        else:
+            _status_color = RED
+            _status_text = "Needs Setup"
+
+        _card = html.Div([
+            # Image + Info row
+            html.Div([
+                # Product image
+                html.Img(src=_img, style={
+                    "width": "60px", "height": "60px", "borderRadius": "8px",
+                    "objectFit": "cover", "marginRight": "12px", "flexShrink": "0",
+                }) if _img else html.Div(style={"width": "60px", "height": "60px", "marginRight": "12px"}),
+
+                # Product info
+                html.Div([
+                    html.Div([
+                        html.Span(_title[:55], style={"color": WHITE, "fontSize": "12px", "fontWeight": "bold"}),
+                        html.Span(f" ${_price}", style={"color": GREEN, "fontSize": "11px", "fontFamily": "monospace", "marginLeft": "8px"}),
+                    ]),
+                    html.Div([
+                        html.Span(listing["store_label"], style={
+                            "color": _sc, "fontSize": "10px", "fontWeight": "bold",
+                            "backgroundColor": f"{_sc}15", "padding": "1px 6px",
+                            "borderRadius": "3px", "marginRight": "6px",
+                        }),
+                        html.Span(_status_text, style={
+                            "color": _status_color, "fontSize": "10px",
+                            "backgroundColor": f"{_status_color}15", "padding": "1px 6px",
+                            "borderRadius": "3px",
+                        }),
+                        html.Span(f" | {_category}", style={"color": DARKGRAY, "fontSize": "10px", "marginLeft": "6px"}) if _category != "Uncategorized" else html.Span(),
+                    ], style={"marginTop": "4px"}),
+                ], style={"flex": "1", "minWidth": "0"}),
+            ], style={"display": "flex", "alignItems": "center", "marginBottom": "8px"}),
+
+            # Input fields (collapsible)
+            html.Div([
+                html.Div([
+                    html.Div([
+                        html.Label("STL File", style={"color": GRAY, "fontSize": "10px", "display": "block", "marginBottom": "2px"}),
+                        dcc.Input(
+                            id={"type": "pl-stl", "listing": _title},
+                            type="text", placeholder="filename.stl",
+                            value=_stl,
+                            style={"width": "100%", "fontSize": "11px", "backgroundColor": BG, "color": WHITE,
+                                   "border": f"1px solid {DARKGRAY}44", "borderRadius": "4px", "padding": "4px 6px"},
+                        ),
+                    ], style={"flex": "1", "minWidth": "100px"}),
+                    html.Div([
+                        html.Label("Print Time (min)", style={"color": GRAY, "fontSize": "10px", "display": "block", "marginBottom": "2px"}),
+                        dcc.Input(
+                            id={"type": "pl-time", "listing": _title},
+                            type="number", placeholder="0",
+                            value=_print_time,
+                            style={"width": "100%", "fontSize": "11px", "backgroundColor": BG, "color": WHITE,
+                                   "border": f"1px solid {DARKGRAY}44", "borderRadius": "4px", "padding": "4px 6px"},
+                        ),
+                    ], style={"flex": "1", "minWidth": "80px"}),
+                    html.Div([
+                        html.Label("Filament (g)", style={"color": GRAY, "fontSize": "10px", "display": "block", "marginBottom": "2px"}),
+                        dcc.Input(
+                            id={"type": "pl-grams", "listing": _title},
+                            type="number", placeholder="0",
+                            value=_filament_g,
+                            style={"width": "100%", "fontSize": "11px", "backgroundColor": BG, "color": WHITE,
+                                   "border": f"1px solid {DARKGRAY}44", "borderRadius": "4px", "padding": "4px 6px"},
+                        ),
+                    ], style={"flex": "1", "minWidth": "80px"}),
+                    html.Div([
+                        html.Label("Category", style={"color": GRAY, "fontSize": "10px", "display": "block", "marginBottom": "2px"}),
+                        dcc.Input(
+                            id={"type": "pl-category", "listing": _title},
+                            type="text", placeholder="e.g. Lights",
+                            value=_category if _category != "Uncategorized" else "",
+                            style={"width": "100%", "fontSize": "11px", "backgroundColor": BG, "color": WHITE,
+                                   "border": f"1px solid {DARKGRAY}44", "borderRadius": "4px", "padding": "4px 6px"},
+                        ),
+                    ], style={"flex": "1", "minWidth": "80px"}),
+                    html.Div([
+                        html.Label("\u00A0", style={"color": GRAY, "fontSize": "10px", "display": "block", "marginBottom": "2px"}),
+                        html.Button("Save", id={"type": "pl-save", "listing": _title}, n_clicks=0,
+                                    style={"fontSize": "11px", "padding": "4px 12px", "backgroundColor": f"{GREEN}25",
+                                           "border": f"1px solid {GREEN}", "borderRadius": "4px", "color": GREEN,
+                                           "cursor": "pointer", "width": "100%"}),
+                    ], style={"minWidth": "55px"}),
+                ], style={"display": "flex", "gap": "8px", "flexWrap": "wrap"}),
+            ]),
+        ], style={
+            "backgroundColor": CARD, "borderRadius": "8px", "padding": "12px",
+            "marginBottom": "6px", "border": f"1px solid {DARKGRAY}22",
+            "borderLeft": f"3px solid {_status_color}",
+        })
+
+        _cards.append(_card)
+
+    # Summary stats
+    _total = len(all_listings)
+    _complete = sum(1 for l in all_listings for pid, p in PRODUCT_LIBRARY.items()
+                    if l["title"] in p.get("linked_listings", []) and p.get("stl_name") and p.get("print_time_min") and p.get("filament_grams"))
+    _partial = sum(1 for l in all_listings for pid, p in PRODUCT_LIBRARY.items()
+                   if l["title"] in p.get("linked_listings", []) and not (p.get("stl_name") and p.get("print_time_min") and p.get("filament_grams")))
+
+    return html.Div([
+        html.H3("\U0001f4e6 PRODUCT LIBRARY", style={
+            "color": CYAN, "margin": "30px 0 6px 0", "fontSize": "16px",
+            "letterSpacing": "1.5px", "borderTop": f"2px solid {CYAN}33", "paddingTop": "14px",
+        }),
+        html.P("Link each listing to its STL file, print time, filament usage, and category. "
+               "This data connects to inventory costs for true per-order COGS tracking.",
+               style={"color": GRAY, "margin": "0 0 8px 0", "fontSize": "12px"}),
+
+        # Status bar
+        html.Div([
+            html.Span(f"{_total} listings", style={"color": WHITE, "fontSize": "12px", "marginRight": "12px"}),
+            html.Span(f"{_complete} complete", style={"color": GREEN, "fontSize": "12px", "marginRight": "12px"}),
+            html.Span(f"{_total - _complete - _partial} need setup", style={"color": RED, "fontSize": "12px"}),
+        ], style={"marginBottom": "12px", "padding": "8px 12px", "backgroundColor": f"{CARD}cc",
+                  "borderRadius": "6px", "border": f"1px solid {DARKGRAY}22"}),
+
+        # Save status
+        html.Div(id="product-library-status", style={"minHeight": "20px", "marginBottom": "8px"}),
+
+        # Product cards
+        html.Div(_cards, style={"maxHeight": "800px", "overflowY": "auto"}),
+    ])
 
 
 def _build_completed_receipts():
@@ -15687,6 +15906,85 @@ def save_refund_cost_override(all_clicks, all_types, all_outbound, all_return):
                   style={"color": GREEN, "fontSize": "12px"}),
     ])
     return status, time.time()
+
+
+# ── Product Library Save Callback ─────────────────────────────────────────────
+
+@app.callback(
+    Output("product-library-status", "children"),
+    Input({"type": "pl-save", "listing": ALL}, "n_clicks"),
+    State({"type": "pl-stl", "listing": ALL}, "value"),
+    State({"type": "pl-time", "listing": ALL}, "value"),
+    State({"type": "pl-grams", "listing": ALL}, "value"),
+    State({"type": "pl-category", "listing": ALL}, "value"),
+    prevent_initial_call=True,
+)
+def save_product_library_entry(all_clicks, all_stls, all_times, all_grams, all_categories):
+    """Save a product library entry to Supabase."""
+    global PRODUCT_LIBRARY
+    ctx = callback_context
+    if not ctx.triggered:
+        raise dash.exceptions.PreventUpdate
+
+    trigger = ctx.triggered[0]
+    if not trigger["value"]:
+        raise dash.exceptions.PreventUpdate
+
+    try:
+        trigger_id = json.loads(trigger["prop_id"].split(".")[0])
+        listing_title = trigger_id["listing"]
+    except Exception:
+        raise dash.exceptions.PreventUpdate
+
+    # Find the index of the clicked button
+    idx = None
+    for i, inp in enumerate(ctx.inputs_list[0]):
+        if inp.get("id", {}).get("listing") == listing_title:
+            idx = i
+            break
+    if idx is None:
+        raise dash.exceptions.PreventUpdate
+
+    _stl = all_stls[idx] if idx < len(all_stls) else ""
+    _time = all_times[idx] if idx < len(all_times) else None
+    _grams = all_grams[idx] if idx < len(all_grams) else None
+    _category = all_categories[idx] if idx < len(all_categories) else ""
+
+    # Create or update product entry
+    # Use listing title as product ID (simple approach)
+    _prod_id = listing_title
+    if _prod_id not in PRODUCT_LIBRARY:
+        PRODUCT_LIBRARY[_prod_id] = {"linked_listings": [listing_title]}
+
+    PRODUCT_LIBRARY[_prod_id]["stl_name"] = _stl or ""
+    PRODUCT_LIBRARY[_prod_id]["print_time_min"] = float(_time) if _time else None
+    PRODUCT_LIBRARY[_prod_id]["filament_grams"] = float(_grams) if _grams else None
+    PRODUCT_LIBRARY[_prod_id]["category"] = _category or "Uncategorized"
+    if listing_title not in PRODUCT_LIBRARY[_prod_id].get("linked_listings", []):
+        PRODUCT_LIBRARY[_prod_id]["linked_listings"].append(listing_title)
+
+    # Persist to Supabase
+    try:
+        from supabase_loader import save_config_value
+        save_config_value("product_library", json.dumps(PRODUCT_LIBRARY))
+    except Exception as e:
+        print(f"[ProductLibrary] Supabase save failed: {e}")
+
+    _status_parts = []
+    if _stl:
+        _status_parts.append(f"STL: {_stl}")
+    if _time:
+        _status_parts.append(f"Time: {_time}min")
+    if _grams:
+        _status_parts.append(f"Filament: {_grams}g")
+    if _category:
+        _status_parts.append(f"Category: {_category}")
+
+    return html.Div([
+        html.Span("\u2713 ", style={"color": GREEN, "fontWeight": "bold"}),
+        html.Span(f"Saved: {listing_title[:40]}... — {', '.join(_status_parts)}",
+                  style={"color": GREEN, "fontSize": "12px"}),
+    ])
 
 
 # ── Label Assignment Callback ────────────────────────────────────────────────
