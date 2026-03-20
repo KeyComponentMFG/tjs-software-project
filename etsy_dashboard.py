@@ -2600,6 +2600,19 @@ def _cascade_reload(source="etsy"):
         _compute_per_order_profit()
     except Exception as _e:
         print(f"[cascade_reload] Per-order profit computation failed: {_e}")
+    # Reload product library from Supabase
+    global PRODUCT_LIBRARY
+    try:
+        from supabase_loader import get_config_value as _gcv_pl_reload
+        import json as _json_pl_reload
+        _pl_raw = _gcv_pl_reload("product_library", {})
+        if isinstance(_pl_raw, str):
+            PRODUCT_LIBRARY = _json_pl_reload.loads(_pl_raw)
+        elif isinstance(_pl_raw, dict):
+            PRODUCT_LIBRARY = _pl_raw
+        print(f"[cascade_reload] Product library loaded: {len(PRODUCT_LIBRARY)} products")
+    except Exception as _e:
+        print(f"[cascade_reload] Product library reload failed: {_e}")
     try:
         from agents.governance import run_governance_async
         run_governance_async()
