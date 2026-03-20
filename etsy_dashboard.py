@@ -9933,23 +9933,51 @@ def _build_product_library():
             else:
                 _st_color, _st = DARKGRAY, ""
 
-            # Printer rows
-            _rows = []
-            for _m in _PRINTER_MODELS:
-                _pd = _printers.get(_m, {})
-                _rows.append(html.Div([
-                    html.Span(_m, style={"color": CYAN, "fontSize": "10px", "fontWeight": "bold",
-                                          "width": "28px", "flexShrink": "0", "fontFamily": "monospace"}),
-                    dcc.Input(id={"type": "pl-stl", "listing": _title, "printer": _m},
-                              type="text", placeholder="file.stl", value=_pd.get("stl", ""),
-                              style={**_inp, "width": "110px"}),
-                    dcc.Input(id={"type": "pl-time", "listing": _title, "printer": _m},
-                              type="number", placeholder="min", value=_pd.get("time", ""),
-                              style={**_inp, "width": "55px"}),
-                    dcc.Input(id={"type": "pl-grams", "listing": _title, "printer": _m},
-                              type="number", placeholder="g", value=_pd.get("grams", ""),
-                              style={**_inp, "width": "50px"}),
-                ], style={"display": "flex", "alignItems": "center", "gap": "3px", "marginBottom": "2px"}))
+            # Build sizes — migrate old format (printers at top level) to sizes format
+            _sizes = _prod.get("sizes", {})
+            if not _sizes and _printers:
+                # Old format: printers at top level = "default" size
+                _sizes = {"default": _printers}
+
+            if not _sizes:
+                _sizes = {"default": {}}
+
+            # Build printer rows for each size
+            _all_size_rows = []
+            for _size_idx, (_size_name, _size_printers) in enumerate(sorted(_sizes.items())):
+                _size_label = _size_name if _size_name != "default" else ""
+
+                _rows = []
+                for _m in _PRINTER_MODELS:
+                    _pd = _size_printers.get(_m, {})
+                    _size_key = f"{_size_name}"
+                    _rows.append(html.Div([
+                        html.Span(_m, style={"color": CYAN, "fontSize": "10px", "fontWeight": "bold",
+                                              "width": "28px", "flexShrink": "0", "fontFamily": "monospace"}),
+                        dcc.Input(id={"type": "pl-stl", "listing": _title, "printer": _m, "size": _size_key},
+                                  type="text", placeholder="file.stl", value=_pd.get("stl", ""),
+                                  style={**_inp, "width": "110px"}),
+                        dcc.Input(id={"type": "pl-time", "listing": _title, "printer": _m, "size": _size_key},
+                                  type="number", placeholder="min", value=_pd.get("time", ""),
+                                  style={**_inp, "width": "55px"}),
+                        dcc.Input(id={"type": "pl-grams", "listing": _title, "printer": _m, "size": _size_key},
+                                  type="number", placeholder="g", value=_pd.get("grams", ""),
+                                  style={**_inp, "width": "50px"}),
+                    ], style={"display": "flex", "alignItems": "center", "gap": "3px", "marginBottom": "2px"}))
+
+                _size_block = html.Div([
+                    html.Span(_size_label, style={"color": ORANGE, "fontSize": "9px", "fontWeight": "bold",
+                                                   "letterSpacing": "0.5px"}) if _size_label else html.Span(),
+                    *_rows,
+                ], style={"marginBottom": "4px" if len(_sizes) > 1 else "0px"})
+                _all_size_rows.append(_size_block)
+
+            # "Add Size" input — always present, user types a size name and it gets added on save
+            _all_size_rows.append(html.Div([
+                dcc.Input(id={"type": "pl-new-size", "listing": _title},
+                          type="text", placeholder="+ Add size (e.g. Large, Small)",
+                          style={**_inp, "width": "180px", "fontSize": "10px", "opacity": "0.6"}),
+            ], style={"marginTop": "2px"}))
 
             _card = html.Div([
                 html.Div([
@@ -9967,7 +9995,7 @@ def _build_product_library():
                             html.Span(_st, style={"color": _st_color, "fontSize": "9px"}) if _st else html.Span(),
                         ], style={"marginTop": "2px"}),
                     ], style={"flex": "1", "minWidth": "0"}),
-                    # Printer inputs
+                    # Printer inputs (with sizes)
                     html.Div([
                         html.Div([
                             html.Span("", style={"width": "28px"}),
@@ -9975,7 +10003,7 @@ def _build_product_library():
                             html.Span("Min", style={"width": "55px", "color": DARKGRAY, "fontSize": "8px"}),
                             html.Span("Grams", style={"width": "50px", "color": DARKGRAY, "fontSize": "8px"}),
                         ], style={"display": "flex", "gap": "3px", "marginBottom": "1px"}),
-                        *_rows,
+                        *_all_size_rows,
                     ], style={"marginLeft": "auto"}),
                 ], style={"display": "flex", "alignItems": "flex-start", "gap": "8px"}),
                 # Hidden category input (pre-filled, user doesn't need to see it)
@@ -15899,13 +15927,14 @@ def save_refund_cost_override(all_clicks, all_types, all_outbound, all_return):
     Output("upload-reload-trigger", "data", allow_duplicate=True),
     Input("pl-save-all", "n_clicks"),
     Input({"type": "pl-save", "listing": ALL}, "n_clicks"),
-    State({"type": "pl-stl", "listing": ALL, "printer": ALL}, "value"),
-    State({"type": "pl-time", "listing": ALL, "printer": ALL}, "value"),
-    State({"type": "pl-grams", "listing": ALL, "printer": ALL}, "value"),
+    State({"type": "pl-stl", "listing": ALL, "printer": ALL, "size": ALL}, "value"),
+    State({"type": "pl-time", "listing": ALL, "printer": ALL, "size": ALL}, "value"),
+    State({"type": "pl-grams", "listing": ALL, "printer": ALL, "size": ALL}, "value"),
     State({"type": "pl-category", "listing": ALL}, "value"),
+    State({"type": "pl-new-size", "listing": ALL}, "value"),
     prevent_initial_call=True,
 )
-def save_product_library(save_all_clicks, per_save_clicks, all_stls, all_times, all_grams, all_categories):
+def save_product_library(save_all_clicks, per_save_clicks, all_stls, all_times, all_grams, all_categories, all_new_sizes):
     """Save all product library entries to Supabase at once."""
     global PRODUCT_LIBRARY
     ctx = callback_context
@@ -15927,61 +15956,55 @@ def save_product_library(save_all_clicks, per_save_clicks, all_stls, all_times, 
         except Exception:
             raise dash.exceptions.PreventUpdate
 
-    # Build a map of listing -> {category, printers: {model: {stl, time, grams}}}
-    # From category inputs
+    # Build maps from inputs
     _cat_map = {}
     for i, inp in enumerate(ctx.states_list[3]):
         _listing = inp.get("id", {}).get("listing", "")
         if _listing and i < len(all_categories):
             _cat_map[_listing] = all_categories[i] or ""
 
-    # From STL/time/grams inputs (per printer)
-    _printer_map = {}  # listing -> {model -> {stl, time, grams}}
-    for i, inp in enumerate(ctx.states_list[0]):
-        _id = inp.get("id", {})
-        _listing = _id.get("listing", "")
-        _model = _id.get("printer", "")
-        if _listing and _model:
-            if _listing not in _printer_map:
-                _printer_map[_listing] = {}
-            if _model not in _printer_map[_listing]:
-                _printer_map[_listing][_model] = {}
-            _printer_map[_listing][_model]["stl"] = all_stls[i] if i < len(all_stls) else ""
+    # New sizes requested
+    _new_size_map = {}
+    for i, inp in enumerate(ctx.states_list[4]):
+        _listing = inp.get("id", {}).get("listing", "")
+        if _listing and i < len(all_new_sizes) and all_new_sizes[i]:
+            _new_size_map[_listing] = str(all_new_sizes[i]).strip()
 
-    for i, inp in enumerate(ctx.states_list[1]):
-        _id = inp.get("id", {})
-        _listing = _id.get("listing", "")
-        _model = _id.get("printer", "")
-        if _listing and _model:
-            if _listing not in _printer_map:
-                _printer_map[_listing] = {}
-            if _model not in _printer_map[_listing]:
-                _printer_map[_listing][_model] = {}
-            _val = all_times[i] if i < len(all_times) else None
-            _printer_map[_listing][_model]["time"] = float(_val) if _val else None
+    # Build sizes structure: listing -> {size_name -> {printer -> {stl, time, grams}}}
+    _sizes_map = {}
+    for state_idx, field_name, values in [(0, "stl", all_stls), (1, "time", all_times), (2, "grams", all_grams)]:
+        for i, inp in enumerate(ctx.states_list[state_idx]):
+            _id = inp.get("id", {})
+            _listing = _id.get("listing", "")
+            _model = _id.get("printer", "")
+            _size = _id.get("size", "default")
+            if _listing and _model:
+                if _listing not in _sizes_map:
+                    _sizes_map[_listing] = {}
+                if _size not in _sizes_map[_listing]:
+                    _sizes_map[_listing][_size] = {}
+                if _model not in _sizes_map[_listing][_size]:
+                    _sizes_map[_listing][_size][_model] = {}
+                _val = values[i] if i < len(values) else None
+                if field_name == "stl":
+                    _sizes_map[_listing][_size][_model]["stl"] = _val or ""
+                else:
+                    _sizes_map[_listing][_size][_model][field_name] = float(_val) if _val else None
 
-    for i, inp in enumerate(ctx.states_list[2]):
-        _id = inp.get("id", {})
-        _listing = _id.get("listing", "")
-        _model = _id.get("printer", "")
-        if _listing and _model:
-            if _listing not in _printer_map:
-                _printer_map[_listing] = {}
-            if _model not in _printer_map[_listing]:
-                _printer_map[_listing][_model] = {}
-            _val = all_grams[i] if i < len(all_grams) else None
-            _printer_map[_listing][_model]["grams"] = float(_val) if _val else None
-
-    # Save — either single product or all
-    _listings_to_save = [_single_listing] if _single_listing else list(set(list(_cat_map.keys()) + list(_printer_map.keys())))
+    # Save
+    _listings_to_save = [_single_listing] if _single_listing else list(set(list(_cat_map.keys()) + list(_sizes_map.keys()) + list(_new_size_map.keys())))
     _saved_count = 0
 
     for _listing in _listings_to_save:
         _cat = _cat_map.get(_listing, "")
-        _printers = _printer_map.get(_listing, {})
+        _sizes = _sizes_map.get(_listing, {})
 
-        # Only save if there's any data
-        if not _cat and not any(_printers.get(m, {}).get("stl") or _printers.get(m, {}).get("time") or _printers.get(m, {}).get("grams") for m in _printers):
+        # Check if any data exists
+        _has_any = bool(_cat) or any(
+            _sizes.get(s, {}).get(m, {}).get("stl") or _sizes.get(s, {}).get(m, {}).get("time") or _sizes.get(s, {}).get(m, {}).get("grams")
+            for s in _sizes for m in _sizes.get(s, {})
+        )
+        if not _has_any:
             continue
 
         if _listing not in PRODUCT_LIBRARY:
@@ -15989,16 +16012,32 @@ def save_product_library(save_all_clicks, per_save_clicks, all_stls, all_times, 
 
         if _cat:
             PRODUCT_LIBRARY[_listing]["category"] = _cat
-        if _printers:
-            # Merge with existing printer data
-            existing_printers = PRODUCT_LIBRARY[_listing].get("printers", {})
-            for _m, _pd in _printers.items():
-                if _m not in existing_printers:
-                    existing_printers[_m] = {}
+
+        # Merge sizes with existing
+        existing_sizes = PRODUCT_LIBRARY[_listing].get("sizes", {})
+        # Migrate old printers format to sizes
+        if not existing_sizes and PRODUCT_LIBRARY[_listing].get("printers"):
+            existing_sizes = {"default": PRODUCT_LIBRARY[_listing]["printers"]}
+
+        for _size_name, _size_printers in _sizes.items():
+            if _size_name not in existing_sizes:
+                existing_sizes[_size_name] = {}
+            for _m, _pd in _size_printers.items():
+                if _m not in existing_sizes[_size_name]:
+                    existing_sizes[_size_name][_m] = {}
                 for _k, _v in _pd.items():
                     if _v is not None and _v != "":
-                        existing_printers[_m][_k] = _v
-            PRODUCT_LIBRARY[_listing]["printers"] = existing_printers
+                        existing_sizes[_size_name][_m][_k] = _v
+
+        # Add new size if requested (empty, ready to fill on next reload)
+        if _listing in _new_size_map:
+            _ns = _new_size_map[_listing]
+            if _ns and _ns not in existing_sizes:
+                existing_sizes[_ns] = {}
+
+        PRODUCT_LIBRARY[_listing]["sizes"] = existing_sizes
+        # Keep printers for backward compat
+        PRODUCT_LIBRARY[_listing]["printers"] = existing_sizes.get("default", {})
 
         PRODUCT_LIBRARY[_listing]["linked_listings"] = PRODUCT_LIBRARY[_listing].get("linked_listings", [_listing])
         if _listing not in PRODUCT_LIBRARY[_listing]["linked_listings"]:
