@@ -16529,25 +16529,47 @@ def _build_store_etsy_tab(store_key, store_label, store_color):
                 _sp_avg = _sp_total / len(_sp)
                 _store_profit_info = f"{len(_sp)} orders tracked | Profit: ${_sp_total:,.2f} (avg ${_sp_avg:,.2f}/order)"
 
+        # Check for existing listings data
+        _listings_info = ""
+        try:
+            from supabase_loader import get_config_value as _gcv_l
+            import json as _json_l
+            _lraw = _gcv_l(f"listings_csv_{store_key}")
+            if _lraw:
+                _lrecs = _json_l.loads(_lraw) if isinstance(_lraw, str) else _lraw
+                if _lrecs:
+                    _listings_info = f"{len(_lrecs)} active listings saved"
+        except Exception:
+            pass
+
         return html.Div([
+            # Row 1: Etsy Statements + Order CSVs
             html.Div([
                 _build_upload_zone("etsy", "\U0001f4ca", f"Etsy Statements — {store_label}", store_color, ".csv",
                                    f"Upload Etsy CSV for {store_label}. Rebuilds all sales, fees, and financial data."),
                 html.Div([
                     _build_upload_zone("orders", "\U0001f4e6", f"Order CSV — {store_label}", store_color, ".csv",
                                        f"Upload Etsy order export CSV for {store_label}. Links shipping labels to orders for per-order profit tracking."),
-                    # Show existing order files
                     html.Div([
                         html.Div(f, style={"color": GRAY, "fontSize": "11px", "padding": "2px 0"})
                         for f in _order_file_entries
                     ] if _order_file_entries else [
                         html.Div("No order CSVs uploaded yet", style={"color": DARKGRAY, "fontSize": "11px"})
                     ], style={"marginTop": "4px"}),
-                    # Show profit summary if available
                     html.Div(_store_profit_info, style={
                         "color": GREEN, "fontSize": "12px", "fontFamily": "monospace", "marginTop": "6px",
                     }) if _store_profit_info else html.Div(),
                 ]),
+            ], style={"display": "flex", "gap": "16px", "flexWrap": "wrap", "marginBottom": "16px"}),
+            # Row 2: Active Listings
+            html.Div([
+                _build_upload_zone("listings", "\U0001f3ea", f"Active Listings — {store_label}", store_color, ".csv",
+                                   f"Upload 'Currently for Sale Listings' CSV for {store_label}. Used to build Product Library and link STL files to listings."),
+                html.Div([
+                    html.Div(_listings_info, style={
+                        "color": store_color, "fontSize": "12px", "fontFamily": "monospace", "marginTop": "6px",
+                    }) if _listings_info else html.Div("No listings uploaded yet", style={"color": DARKGRAY, "fontSize": "11px", "marginTop": "6px"}),
+                ], style={"flex": "1"}),
             ], style={"display": "flex", "gap": "16px", "flexWrap": "wrap"}),
         ], style={"marginBottom": "16px"})
 
@@ -19068,20 +19090,25 @@ def init_datahub_files(_trigger, _selected_store, _tab_content, _dh_store_tab):
     Output("datahub-orders-status", "children"),
     Output("datahub-orders-files", "children"),
     Output("datahub-orders-stats", "children"),
+    Output("datahub-listings-status", "children"),
+    Output("datahub-listings-files", "children"),
+    Output("datahub-listings-stats", "children"),
     Input("datahub-etsy-upload", "contents"),
     Input("datahub-receipt-upload", "contents"),
     Input("datahub-bank-upload", "contents"),
     Input("datahub-orders-upload", "contents"),
+    Input("datahub-listings-upload", "contents"),
     State("datahub-etsy-upload", "filename"),
     State("datahub-receipt-upload", "filename"),
     State("datahub-bank-upload", "filename"),
     State("datahub-orders-upload", "filename"),
+    State("datahub-listings-upload", "filename"),
     State("datahub-activity-log", "children"),
     State("datahub-etsy-store-picker", "data"),
     prevent_initial_call=True,
 )
-def handle_datahub_upload(etsy_contents, receipt_contents, bank_contents, orders_contents,
-                          etsy_filename, receipt_filename, bank_filename, orders_filename,
+def handle_datahub_upload(etsy_contents, receipt_contents, bank_contents, orders_contents, listings_contents,
+                          etsy_filename, receipt_filename, bank_filename, orders_filename, listings_filename,
                           activity_log, etsy_store_picker):
     """Handle file uploads from all 3 Data Hub zones.
 
@@ -19102,6 +19129,7 @@ def handle_datahub_upload(etsy_contents, receipt_contents, bank_contents, orders
     rcpt_status, rcpt_file_list, rcpt_stats = nu, nu, nu
     bank_status, bank_file_list, bank_stats = nu, nu, nu
     orders_status, orders_file_list, orders_stats = nu, nu, nu
+    listings_status, listings_file_list, listings_stats = nu, nu, nu
     new_log = activity_log or []
     summary = nu
     header = nu
@@ -19527,9 +19555,75 @@ def handle_datahub_upload(etsy_contents, receipt_contents, bank_contents, orders
                          style={"color": DARKGRAY, "fontSize": "11px", "marginTop": "4px"}),
             ])
 
+    # ── Listings CSV Upload ────────────────────────────────────────────
+    elif "datahub-listings-upload" in trigger and listings_contents:
+        try:
+            content_type, content_string = listings_contents.split(",")
+            decoded = base64.b64decode(content_string)
+
+            _upload_store = etsy_store_picker or "keycomponentmfg"
+            _store_display = STORES.get(_upload_store, _upload_store)
+            fname = listings_filename or "listings.csv"
+
+            import io
+            _listings_df = pd.read_csv(io.BytesIO(decoded))
+            _cols = list(_listings_df.columns)
+            _row_count = len(_listings_df)
+
+            print(f"[UPLOAD] Listings CSV for {_store_display}: {fname}, {_row_count} listings, columns: {_cols}")
+
+            # Keep essential columns only
+            _keep = [c for c in ['TITLE', 'DESCRIPTION', 'PRICE', 'CURRENCY_CODE', 'QUANTITY',
+                                  'TAGS', 'MATERIALS', 'IMAGE1', 'LISTING_ID', 'STATE',
+                                  'SKU', 'SECTION', 'CATEGORY'] if c in _cols]
+            _slim = _listings_df[_keep] if _keep else _listings_df
+
+            # Persist to Supabase
+            import json as _json_l2
+            _records = _json_l2.loads(_slim.to_json(orient="records"))
+            import threading
+            def _save_listings():
+                try:
+                    from supabase_loader import save_config_value
+                    save_config_value(f"listings_csv_{_upload_store}", _json_l2.dumps(_records))
+                    print(f"[UPLOAD] Saved {len(_records)} listings for {_upload_store} to Supabase")
+                except Exception as _e:
+                    print(f"[UPLOAD] Listings Supabase save failed: {_e}")
+            threading.Thread(target=_save_listings, daemon=True).start()
+
+            _col_preview = ", ".join(_cols[:10])
+            if len(_cols) > 10:
+                _col_preview += f" ... (+{len(_cols) - 10} more)"
+
+            listings_status = html.Div([
+                html.Span("\u2713 ", style={"color": GREEN, "fontWeight": "bold"}),
+                html.Span(f"[{_store_display}] Uploaded {fname} — {_row_count} active listings",
+                          style={"color": GREEN, "fontSize": "13px"}),
+                html.Div(f"Columns: {_col_preview}",
+                         style={"color": GRAY, "fontSize": "11px", "marginTop": "4px", "fontFamily": "monospace"}),
+            ])
+            listings_stats = html.Div(f"{_row_count} active listings loaded",
+                                       style={"color": ORANGE, "fontSize": "12px", "fontFamily": "monospace"})
+            listings_file_list = html.Div(f"[{_store_display}] {fname}", style={"color": GRAY, "fontSize": "11px"})
+
+            new_log = [html.Div([
+                html.Span(f"[{now_str}] ", style={"color": DARKGRAY, "fontSize": "11px"}),
+                html.Span(f"\u2713 Listings [{_store_display}]: {fname} ({_row_count} listings)",
+                          style={"color": GREEN, "fontSize": "12px"}),
+            ], style={"padding": "3px 0", "borderBottom": "1px solid #ffffff08"})] + (
+                new_log if isinstance(new_log, list) else [])
+
+        except Exception as e:
+            listings_status = html.Div([
+                html.Span("\u2717 ", style={"color": RED, "fontWeight": "bold"}),
+                html.Span(f"Upload failed: {e}", style={"color": RED, "fontSize": "13px"}),
+                html.Div("Expected: Etsy 'Currently for Sale Listings' CSV from Shop Manager > Download Data",
+                         style={"color": DARKGRAY, "fontSize": "11px", "marginTop": "4px"}),
+            ])
+
     # If any upload succeeded, trigger a page reload after a short delay
     # so ALL tabs (not just Data Hub) show fresh data.
-    if any(x is not nu for x in [etsy_status, rcpt_status, bank_status, orders_status]):
+    if any(x is not nu for x in [etsy_status, rcpt_status, bank_status, orders_status, listings_status]):
         import time
         reload_trigger = time.time()  # unique value triggers clientside reload
 
@@ -19537,7 +19631,8 @@ def handle_datahub_upload(etsy_contents, receipt_contents, bank_contents, orders
             rcpt_status, rcpt_file_list, rcpt_stats,
             bank_status, bank_file_list, bank_stats,
             new_log, summary, header, reload_trigger,
-            orders_status, orders_file_list, orders_stats)
+            orders_status, orders_file_list, orders_stats,
+            listings_status, listings_file_list, listings_stats)
 
 
 # ── Delete Data Callbacks ─────────────────────────────────────────────────────
