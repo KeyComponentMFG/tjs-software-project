@@ -70,7 +70,7 @@ For purposes of this Agreement, the following terms shall have the meanings set 
 
 1.14. **"Major Strike"** means a strike event valued at two (2) Strike Points as defined in Article VI, Section 6.2(b).
 
-1.15. **"Managing Member"** means Thomas McNulty, or his successor appointed in accordance with this Agreement, who serves as the primary manager of the Company's day-to-day operations.
+1.15. **"Administrative Coordinator"** means Thomas McNulty, who serves as the initial administrative coordinator for day-to-day operations as described in Article VII, Section 7.1. This is a functional role, not a position of authority. The role may be reassigned by unanimous written consent.
 
 1.16. **"Member"** means each person identified in Article II as a member of the Company, and any person subsequently admitted as a member.
 
@@ -100,7 +100,7 @@ For purposes of this Agreement, the following terms shall have the meanings set 
 
 | Member | Address | Initial Ownership | Role |
 |--------|---------|-------------------|------|
-| Thomas McNulty ("TJ") | Tulsa, OK | 50% | Managing Member |
+| Thomas McNulty ("TJ") | Tulsa, OK | 50% | Member / Administrative Coordinator |
 | Braden Walker | Texas | 50% | Member |
 
 ---
@@ -134,8 +134,8 @@ The Company operates e-commerce stores on Etsy and other platforms (including bu
 3.5. **Equipment Upon Dissolution.** Upon dissolution or Member departure:
 
    (a) Each Member retains their personal pre-existing printer (Section 3.2)
-   (b) Company-purchased equipment remains Company property and stays with the Managing Member (Thomas McNulty) unless otherwise agreed
-   (c) The departing Member shall return all Company equipment in their possession within 14 days
+   (b) Company-purchased equipment remains Company property. If one Member departs, the remaining Member retains Company equipment but must compensate the departing Member for their ownership share of the equipment's current fair market value (replacement cost minus depreciation) as part of the buyout. If the Company dissolves entirely, Company equipment shall be divided equally by value — Members may agree on who takes which items, or items shall be sold and proceeds split per ownership percentages.
+   (c) The departing Member shall return all Company equipment in their possession within 14 days unless they are the Member retaining equipment per Section 3.5(b)
 
 3.6. **Additional Contributions.** No Member shall be required to make additional capital contributions without unanimous written consent.
 
@@ -173,7 +173,7 @@ The Company operates e-commerce stores on Etsy and other platforms (including bu
 
    (a) If a Member finds a cheaper or better supplier, they are **required** to share that information with the other Member immediately.
    (b) Both locations should use the same materials and supplies whenever possible to maintain product consistency.
-   (c) If a supplier relationship fails due to the managing Member's negligence (not reordering, not communicating issues, not negotiating), the responsible Member bears the cost difference in inventory.
+   (c) If a supplier relationship fails due to a Member's negligence (not reordering, not communicating issues, not negotiating), the responsible Member bears the cost difference in inventory.
 
 4.5. **Contribution Tracking.** The Company shall maintain a digital dashboard (currently at web-production-7f385.up.railway.app) that tracks contribution metrics in real time. Dashboard data is considered **authoritative evidence** of contribution levels. Both Members shall have full access at all times. Both Members are **required** to actively use the dashboard — logging in at minimum weekly, uploading data, and reviewing metrics. Failure to use the dashboard is a Standard Strike.
 
@@ -214,7 +214,7 @@ The Company operates e-commerce stores on Etsy and other platforms (including bu
    (c) Defective product shipped resulting in a return or complaint (per incident)
    (d) Negative review (1-3 stars) caused by the Member's fulfilled order (per review)
    (e) Failed print not reported or tracked (per incident)
-   (f) Taking an owner draw without Managing Member approval (per occurrence)
+   (f) Taking an owner draw without both Members' agreement per Section 8.2 (per occurrence)
    (g) Missing a monthly contribution review without 48-hour advance notice
    (h) Not restocking inventory when assigned and stock reaches low levels
    (i) Shipping wrong item, wrong quantity, or to wrong address (per incident)
@@ -268,8 +268,8 @@ The Company operates e-commerce stores on Etsy and other platforms (including bu
    (a) Both Members shall review the relevant dashboard data together within 5 days.
    (b) If the data clearly supports the strike (timestamps, tracking numbers, customer messages), the strike stands regardless of the dispute.
    (c) If the data is ambiguous, both Members shall attempt to reach agreement within 7 days.
-   (d) If no agreement is reached, the Managing Member's determination stands. The disputing Member may escalate to mediation under Article XIII, but the strike remains in effect during the mediation process.
-   (e) If mediation overturns the strike, it is removed retroactively and any consequences triggered by that strike are reversed.
+   (d) If no agreement is reached, the strike is suspended (not counted toward thresholds) and the dispute is submitted to mediation under Article XIII. The mediator's determination is final.
+   (e) If mediation overturns the strike, it is removed retroactively and any consequences triggered by that strike are reversed. If mediation upholds the strike, it is reinstated retroactively to the original date.
 
 6.8. **Cumulative Effect.** Strike Points are cumulative within the 90-day window. Multiple strikes on the same day each count separately. There is no daily cap on strikes. If a Member ships 5 defective products on one day, that is 5 separate Major Strikes (10 points).
 
@@ -277,16 +277,15 @@ The Company operates e-commerce stores on Etsy and other platforms (including bu
 
 ## ARTICLE VII — MANAGEMENT
 
-7.1. **Managing Member.** Thomas McNulty ("TJ") shall serve as Managing Member with authority over:
+7.1. **Administrative Coordinator.** Thomas McNulty ("TJ") shall serve as the initial Administrative Coordinator, responsible for:
 
-   (a) Day-to-day business operations and strategic decisions
-   (b) All financial accounts (bank accounts, Etsy Payments, Best Buy CC, payment processors)
-   (c) Software systems, dashboard administration, and technology infrastructure
-   (d) Vendor and supplier relationships and negotiations
-   (e) Tax filing, bookkeeping, and compliance
-   (f) Approving owner draws and distributions
-   (g) Setting quality standards and operational procedures
-   (h) Business direction and growth strategy — if the Managing Member wants to grow, the Company grows. If the other Member cannot keep up with growth, their contribution deficiency is addressed under Article X.
+   (a) Day-to-day business operations and coordination
+   (b) Software systems, dashboard administration, and technology infrastructure
+   (c) Tax filing, bookkeeping, and compliance
+   (d) Coordinating quality standards and operational procedures
+   (e) Coordinating vendor and supplier relationships
+
+   The Administrative Coordinator role is a functional responsibility, not a position of authority. It does not grant unilateral control over financial accounts, distributions, business strategy, or any decision-making power beyond what any Member has. Decisions on growth, direction, and finances are shared equally per Section 7.2 and 7.3. The role may be reassigned by unanimous written consent.
 
 7.2. **Decisions Requiring Unanimous Consent.**
 
@@ -299,27 +298,28 @@ The Company operates e-commerce stores on Etsy and other platforms (including bu
    (g) Entering leases or contracts over $1,000/year
    (h) Opening new stores on any platform
    (i) Purchasing new equipment over $200
-   (j) Changing product pricing strategy across the board (individual pricing adjustments based on data analysis are at the Managing Member's discretion)
+   (j) Changing product pricing strategy across the board (individual pricing adjustments based on data analysis may be made by either Member with notice to the other Member within 24 hours)
 
 7.3. **Disagreements on Business Direction.** If Members disagree on business strategy, product priorities, or growth direction:
 
    (a) Both Members present their reasoning with data (pros, cons, short-term and long-term impact)
    (b) If the other Member's idea is logically better with more pros than cons both short-term and long-term, it should be adopted regardless of who proposed it
-   (c) If no agreement is reached, the Managing Member makes the final decision
-   (d) The Managing Member is defined as the registered agent of the LLC AND the Member who has contributed the most to the Company
+   (c) If no agreement is reached within 7 days, the Members shall submit the disagreement to a neutral third-party advisor or mediator mutually agreed upon. If no mediator can be agreed upon, the dispute is resolved under Article XIII.
+   (d) Neither Member has unilateral authority over business direction. Both Members must act in good faith to reach consensus.
 
-7.4. **Banking.** All Company bank accounts shall remain in the Company's name. The Managing Member shall have primary signatory authority.
+7.4. **Banking.** All Company bank accounts shall remain in the Company's name. Both Members shall have signatory authority on all Company bank accounts.
 
 7.5. **E-Commerce Stores & Accounts.** All e-commerce stores, accounts, and selling channels — including but not limited to Etsy stores (KeyComponentMFG, Aurvio, Luna&Links), and any future stores created on Etsy, Amazon, Shopify, eBay, or any other platform — that are created, operated, or maintained by either Member for Company business are owned exclusively by the Company. No Member may transfer, close, rename, or create new stores without unanimous written consent. Any store created by a Member using Company resources, IP, products, or during Company working hours is presumed to be Company property.
 
 7.6. **Account Credentials & Security.**
 
-   (a) The Managing Member shall maintain a master record of all account credentials (Etsy, bank, suppliers, hosting, social media, etc.)
-   (b) The Managing Member retains administrative/owner-level access to ALL Company accounts
-   (c) All sign-in verification codes shall be sent to the Managing Member's phone number
-   (d) The Managing Member's personal email shall be the backup/recovery email on all Company accounts
-   (e) Both Members may have operational access to store dashboards for fulfillment purposes
+   (a) Both Members shall maintain a shared, encrypted password manager (e.g., 1Password, Bitwarden) containing all Company account credentials (Etsy, bank, suppliers, hosting, social media, etc.). Both Members shall have equal access to this password manager at all times.
+   (b) Both Members shall have administrative/owner-level access to ALL Company accounts. Neither Member may hold sole administrative access to any Company account.
+   (c) Sign-in verification codes and two-factor authentication shall be configured so that both Members can independently access all Company accounts (e.g., shared authenticator app, both phone numbers registered, or hardware security keys for each Member).
+   (d) The Company email shall be the primary recovery email on all Company accounts — not either Member's personal email.
+   (e) Both Members shall have full operational and administrative access to all store dashboards, not just fulfillment access.
    (f) **Changing any password, credential, or access setting without notifying the other Member is a Critical Strike.** If a Member changes credentials AND refuses to respond to the other Member's attempts to communicate, this constitutes a complete breach of this Agreement and grounds for immediate legal action, as it directly prevents the other Member from earning income through the Company.
+   (g) **Removing the other Member's access** to any Company account without unanimous written consent is a Critical Strike regardless of circumstances.
 
 7.7. **Personal Account Protection.** Neither Member may access, modify, use, or attempt to access the other Member's personal accounts (personal email, personal bank, personal social media) for any reason, even if credentials are known through Company operations.
 
@@ -329,7 +329,7 @@ The Company operates e-commerce stores on Etsy and other platforms (including bu
 
 8.1. **Profit and Loss Allocation.** Net profits and losses shall be allocated to Members in proportion to their current ownership percentages (which may adjust per Article X).
 
-8.2. **Equal Draws.** Owner draws shall be taken in equal amounts at equal times. Neither Member may take a draw without the other Member receiving the same amount. All draws must be approved by the Managing Member.
+8.2. **Equal Draws.** Owner draws shall be taken in equal amounts at equal times. Neither Member may take a draw without the other Member receiving the same amount. Either Member may initiate a draw request. A draw is approved when both Members agree and all conditions in Section 8.3 are met. Neither Member may unilaterally block a draw that meets the requirements of Section 8.3 — if one Member believes conditions are not met, they must provide specific written reasons within 48 hours.
 
 8.3. **Distribution Requirements.** Distributions shall only be made when:
 
@@ -342,7 +342,7 @@ The Company operates e-commerce stores on Etsy and other platforms (including bu
 
 8.5. **Excess Draws.** If a Member takes draws exceeding their ownership percentage, the excess is treated as a loan from the Company, due within 30 days. Unpaid excess draws accrue interest at 10% annually and constitute a Major Strike.
 
-8.6. **Managing Member Administrative Compensation.** The Managing Member may receive additional compensation for administrative duties beyond normal operations (tax filing, bookkeeping, system maintenance, legal compliance, software development) if unanimously agreed upon in writing.
+8.6. **Administrative Compensation.** If one Member takes on a disproportionate share of administrative duties beyond normal operations (tax filing, bookkeeping, system maintenance, legal compliance, software development), that Member may receive additional compensation if unanimously agreed upon in writing.
 
 ---
 
@@ -389,27 +389,27 @@ The Company operates e-commerce stores on Etsy and other platforms (including bu
 10.3. **Immediate Consequences (upon written notice):**
 
    (a) Non-contributing Member's owner draws are **immediately suspended** until contribution is restored and maintained for 30 consecutive days
-   (b) Non-contributing Member loses voting rights on non-essential business decisions
-   (c) Managing Member gains sole operational authority during the deficiency period
+   (b) Non-contributing Member loses voting rights on non-essential operational decisions (not financial or strategic decisions, which always require both Members)
+   (c) The contributing Member gains primary operational authority over day-to-day fulfillment decisions during the deficiency period, but may not make unilateral financial, strategic, or ownership decisions
 
 10.4. **Ownership Adjustment Procedure.** If the Contribution Deficiency is not cured within the 14-day Cure Period, the following formal process applies:
 
-   (a) **Calculation.** The Managing Member shall prepare a Contribution Report using Company Dashboard data covering the preceding 90 days. The report shall include: orders fulfilled per Member, customer response metrics, refund rates, products designed, shipping timeliness, Strike Points accumulated, and any other Contribution Metrics tracked by the Dashboard.
-   (b) **Proposed Adjustment.** Based on the Contribution Report, the Managing Member shall propose an ownership adjustment reflecting actual contribution ratios. Example: If the Dashboard shows Member A performed 75% of measurable work and Member B performed 25%, the proposed adjustment is 75/25.
-   (c) **Notice.** The Managing Member shall deliver Written Notice of the proposed adjustment to the other Member, attaching the Contribution Report and proposed new Ownership Percentages.
-   (d) **Response Period.** The other Member has 7 days to respond in writing. They may: (i) accept the adjustment, (ii) dispute specific data points with evidence, or (iii) fail to respond, in which case the adjustment is deemed accepted.
-   (e) **Resolution of Disputes.** If specific data points are disputed, both Members shall review the raw Dashboard data together. If no agreement is reached within 14 days of the initial notice, the Managing Member's proposed adjustment takes effect, subject to the other Member's right to mediation under Article XIII.
-   (f) **Effective Date.** The ownership adjustment takes effect on the date of acceptance, deemed acceptance (no response), or Managing Member's determination after the 14-day dispute period.
-   (g) **Documentation.** The adjustment shall be documented in a written amendment signed by both Members (or by the Managing Member alone if the other Member refuses to sign after deemed acceptance). A copy shall be stored in the Company Dashboard.
+   (a) **Calculation.** Either Member may prepare a Contribution Report using Company Dashboard data covering the preceding 90 days. The report shall include: orders fulfilled per Member, customer response metrics, refund rates, products designed, shipping timeliness, Strike Points accumulated, and any other Contribution Metrics tracked by the Dashboard. Both Members must have access to the same raw data used in the report.
+   (b) **Proposed Adjustment.** Based on the Contribution Report, the initiating Member shall propose an ownership adjustment reflecting actual contribution ratios. Example: If the Dashboard shows Member A performed 75% of measurable work and Member B performed 25%, the proposed adjustment is 75/25.
+   (c) **Notice.** The initiating Member shall deliver Written Notice of the proposed adjustment to the other Member, attaching the Contribution Report and proposed new Ownership Percentages.
+   (d) **Response Period.** The other Member has 7 days to respond in writing. They may: (i) accept the adjustment, (ii) dispute specific data points with evidence, or (iii) propose an alternative adjustment with supporting data. Failure to respond within 7 days is deemed acceptance.
+   (e) **Resolution of Disputes.** If specific data points are disputed, both Members shall review the raw Dashboard data together. If no agreement is reached within 14 days of the initial notice, the dispute shall be submitted to binding arbitration under Article XIII. No ownership adjustment takes effect until both Members agree or an arbitrator rules.
+   (f) **Effective Date.** The ownership adjustment takes effect on the date of mutual acceptance, deemed acceptance (no response), or arbitrator's ruling.
+   (g) **Documentation.** The adjustment shall be documented in a written amendment signed by both Members. A copy shall be stored in the Company Dashboard.
    (h) **Cumulative.** Ownership adjustments are cumulative and do not reset unless both Members unanimously agree in writing.
    (i) **Profit Distributions.** All profit distributions and draws adjust immediately to match the new Ownership Percentages as of the effective date.
    (j) **Principle.** Ownership in this Company has value only when backed by active, consistent, equal contribution. Ownership without contribution is not recognized.
 
-10.5. **Buyout Right (Contributing Member's option).** If a Member's ownership drops below 30%:
+10.5. **Buyout Right (Contributing Member's option).** If a Member's ownership drops below 30% through the arbitration process in Section 10.4:
 
    (a) The Contributing Member may offer to buy out the remaining interest at **fair market value minus documented damages**
    (b) Damages include: all refund costs attributed to the non-contributing Member, excess draws, capital account debits, and labor costs incurred covering their duties (valued at $25/hour)
-   (c) Buyout payable over 6 months at the Contributing Member's discretion
+   (c) Buyout payable over 6 months with a payment schedule agreed upon by both Members or determined by the arbitrator
 
 10.6. **Forced Buyout.** If a Member's ownership drops below 20%, OR their contribution falls below 15% for any 60-day period, OR they accumulate 15+ strike points:
 
@@ -422,18 +422,19 @@ The Company operates e-commerce stores on Etsy and other platforms (including bu
 
    (a) **Notice.** Departure must be communicated via Written Notice with a minimum of 30 days advance notice.
    (b) **Transition Required.** The departing Member must complete the Buyout Transition (Section 10.11) during the notice period.
-   (c) **Forfeiture Presumption.** Voluntary departure is presumed to be forfeiture of the departing Member's Ownership Percentage. The departing Member receives no buyout payment unless they demonstrate in writing, with supporting evidence, that they have consistently contributed equally to the Company for a sustained period and the departure is not due to Contribution Deficiency, breach, or abandonment.
-   (d) **Exception — Good Standing Departure.** If the departing Member has maintained equal Contribution (no Contribution Deficiency notices, fewer than 3 cumulative Strike Points in the preceding 180 days, and Ownership Percentage has never been adjusted downward), they may request a buyout at Fair Market Value. The Managing Member is not obligated to accept this request but shall consider it in good faith.
+   (c) **Good Standing Departure.** If the departing Member has maintained equal Contribution (no unresolved Contribution Deficiency notices, fewer than 3 cumulative Strike Points in the preceding 180 days, and Ownership Percentage has never been adjusted downward), they are entitled to a buyout at Fair Market Value per Section 10.10, payable over 6 months.
+   (d) **Departure During Deficiency.** If the departing Member is currently in Contribution Deficiency or has had their ownership adjusted downward, the buyout price is Fair Market Value multiplied by their current Ownership Percentage, minus documented damages per Section 10.9.
    (e) **Remaining Member.** Upon completion of the exit, the remaining Member assumes 100% Ownership.
    (f) **Obligations.** The departing Member must return all Company equipment, delete all Company files, and transfer all access within 14 days per Sections 10.12 and Article IX.
    (g) **Non-Compete.** Non-compete provisions (Article XIV) activate immediately upon departure.
 
 10.8. **Abandonment.** If a Member fails to perform any Company duties, respond to communications, or show dashboard activity for **21 consecutive days** without prior written approval:
 
-   (a) This constitutes voluntary abandonment and forfeiture of membership interest
-   (b) The abandoning Member's ownership is automatically reduced to 5%
-   (c) The remaining Member may purchase that 5% at book value, payable over 3 months
-   (d) All store access, credentials, and equipment revert to the remaining Member immediately
+   (a) The remaining Member shall send Written Notice (email, text, and certified mail to last known address) declaring abandonment. The abandoning Member has 7 days from the date of notice to respond and cure.
+   (b) If the abandoning Member fails to respond or cure within 7 days of the abandonment notice, this constitutes confirmed abandonment and forfeiture of membership interest.
+   (c) The abandoning Member's ownership is automatically reduced to 10%.
+   (d) The remaining Member may purchase that 10% at Fair Market Value multiplied by 10%, payable over 3 months.
+   (e) All store access, credentials, and equipment revert to the remaining Member immediately upon confirmed abandonment.
 
 10.9. **Damage Recovery.** The Contributing Member may recover documented damages from the non-contributing Member's capital account:
 
@@ -446,27 +447,27 @@ The Company operates e-commerce stores on Etsy and other platforms (including bu
 
    (a) **Step 1 — Mutual Agreement.** Both Members may agree in writing on the FMV. If agreement is reached within 14 days, that value governs.
    (b) **Step 2 — Dashboard Valuation.** If no agreement, the FMV shall be calculated as follows:
-      - (i) Determine Seller's Discretionary Earnings ("SDE") from the Company Dashboard for the trailing 12 months. SDE equals: Net Revenue minus Cost of Goods Sold minus Operating Expenses plus Owner Draws plus Managing Member compensation (if any).
+      - (i) Determine Seller's Discretionary Earnings ("SDE") from the Company Dashboard for the trailing 12 months. SDE equals: Net Revenue minus Cost of Goods Sold minus Operating Expenses plus Owner Draws plus Administrative Coordinator compensation (if any).
       - (ii) Apply a multiple of 2.0x to the annual SDE.
       - (iii) Add the fair market value of Company equipment (current replacement cost minus depreciation).
       - (iv) Add the Company's current cash on hand (bank balance plus Etsy Payments balance).
       - (v) Subtract all Company liabilities (credit card balances, outstanding debts).
       - (vi) The resulting figure is the FMV.
    (c) **Step 3 — Independent Appraisal.** If either Member disputes the Dashboard Valuation, either Member may request independent appraisals. Each Member selects one qualified business appraiser. The FMV is the average of the two appraisals. Appraisal costs are split equally.
-   (d) **Forced Buyout / Abandonment.** In cases of forced buyout (Section 10.6) or abandonment (Section 10.8), the Managing Member may use Step 2 (Dashboard Valuation) without proceeding to Step 3.
+   (d) **Forced Buyout / Abandonment.** In cases of forced buyout (Section 10.6) or abandonment (Section 10.8), either Member may use Step 2 (Dashboard Valuation). The other Member retains the right to request Step 3 (Independent Appraisal) if they dispute the Dashboard Valuation.
    (e) **Buyout Adjustments.** Buyout prices reference FMV but are adjusted as specified elsewhere in this Agreement to account for damages caused by the departing Member. These adjustments are authorized by Oklahoma Statutes Title 18, Section 2024, which permits remedies including reduction of capital interest, forfeiture, forced sale, and "other remedy or consequences." The specific adjustments are:
       - (i) **Forced Buyout (Section 10.6):** FMV minus documented damages, with a floor of 60% of FMV. The difference between FMV and the buyout price constitutes liquidated damages representing: lost revenue during the deficiency period, additional labor costs borne by the Contributing Member, reputational damage to the Company, and administrative costs of the ownership transition. Both Members agree these damages would be uncertain and difficult to prove precisely (per Oklahoma liquidated damages standards under 15 O.S. § 215), making this liquidated amount reasonable.
       - (ii) **Retaliation (Section 10.14):** FMV minus all documented damages caused by the retaliatory acts, with a floor of 25% of FMV. The steep reduction reflects that retaliation (sabotage, data deletion, customer interference) causes catastrophic, hard-to-quantify harm to a small e-commerce business where reputation and data are the primary assets.
-      - (iii) **Abandonment (Section 10.8):** Book value (capital account balance). Abandonment results in near-total loss of the abandoned Member's contributed value, as the remaining Member must rebuild all operations single-handedly.
-   (f) **Data Integrity.** Both Members agree that Company Dashboard financial data is reliable, accurate, and maintained in the ordinary course of business for valuation purposes. Any Member who has tampered with, falsified, or deleted Dashboard data forfeits their right to dispute the valuation and is subject to a Critical Strike.
+      - (iii) **Abandonment (Section 10.8):** Fair Market Value multiplied by the abandoning Member's reduced Ownership Percentage (10% per Section 10.8(c)). The significant reduction from full FMV reflects that the remaining Member must rebuild all operations single-handedly.
+   (f) **Data Integrity.** Both Members agree that Company Dashboard financial data is reliable, accurate, and maintained in the ordinary course of business for valuation purposes. Both Members shall have full administrative access to the Dashboard, including the ability to view all raw data, audit logs, and calculation methodologies. Either Member may request an independent technical audit of the Dashboard's data and code at Company expense. Any Member who has tampered with, falsified, or deleted Dashboard data forfeits their right to dispute the valuation and is subject to a Critical Strike.
    (g) **Statutory Authority.** The valuation methods and buyout adjustments in this Agreement are adopted pursuant to 18 O.S. § 2024 and represent the Members' agreed-upon remedies for failure to perform obligations. Both Members acknowledge they have reviewed and understand these provisions.
 
 10.11. **Buyout Transition Period.** When a buyout is initiated (voluntary, forced, or ownership-adjusted):
 
    (a) The departing Member must continue to fulfill Company duties and work to restore the business to single-owner operation before receiving any buyout payments.
    (b) The transition includes: transferring all account access, training the remaining Member on any processes only they handled, fulfilling pending orders, and ensuring all Company systems function properly.
-   (c) Buyout payments do not begin until the transition is complete and verified by the Managing Member.
-   (d) If the departing Member refuses to cooperate with the transition, buyout payments are forfeited.
+   (c) Buyout payments begin no later than 30 days after the buyout is initiated, regardless of transition status. If transition is not complete, the remaining Member may withhold up to 25% of each payment as a transition escrow, released upon transition completion.
+   (d) If the departing Member refuses to cooperate with the transition, the transition escrow (up to 25% of total buyout) is forfeited. The remaining 75% of buyout payments continue on schedule.
 
 10.12. **Equipment Return Enforcement.** If a departing Member fails to return Company equipment within 14 days:
 
@@ -497,8 +498,8 @@ The Company operates e-commerce stores on Etsy and other platforms (including bu
 
 11.1. **Returns & Quality Inspection.**
 
-   (a) ALL customer returns shall be shipped to the Company address: 2725 E 47th St, Tulsa, OK 74105
-   (b) The Managing Member shall inspect all returned products to assess quality and determine root cause
+   (a) ALL customer returns shall be shipped to the Company address: 2725 E 47th St, Tulsa, OK 74105 (or another address unanimously agreed upon by both Members)
+   (b) The Member receiving the return shall inspect all returned products to assess quality and determine root cause, and share findings with the other Member within 48 hours
    (c) Refund costs are attributed to the Member who fulfilled the order
    (d) The Company pays for shipping on all orders. Refund return shipping costs are attributed to the responsible Member's capital account.
 
@@ -528,22 +529,22 @@ The Company operates e-commerce stores on Etsy and other platforms (including bu
    (a) Both Members may use Company printers for personal projects
    (b) Personal projects must NOT interfere with Company production
    (c) Must use personal filament/materials — Company inventory may NOT be used
-   (d) Exception: Printing Company products for photography with Managing Member approval
+   (d) Exception: Printing Company products for photography with the other Member's knowledge
    (e) Personal use causing equipment damage = responsible Member pays repair/replacement
 
 11.6. **Product Listing Decisions.**
 
    (a) Add/remove decisions based on data: sales volume, margin, refund rate, print time, demand
-   (b) Either Member may propose. Disagreements resolved by Managing Member based on dashboard data.
+   (b) Either Member may propose. Disagreements resolved by mutual agreement based on dashboard data. If no agreement, the dispute is resolved per Section 7.3.
    (c) No listing removed solely because one Member doesn't want to print it
 
-11.7. **Pricing Decisions.** Price changes must be weighed technically — pros and cons measured for listing health and overall business health, both short-term and long-term. Managing Member makes final call on individual pricing. Across-the-board pricing changes require unanimous consent.
+11.7. **Pricing Decisions.** Price changes must be weighed technically — pros and cons measured for listing health and overall business health, both short-term and long-term. Either Member may make individual pricing adjustments based on data analysis with notice to the other Member within 24 hours. Across-the-board pricing changes require unanimous consent.
 
 11.8. **Print Scheduling.** Orders promised by a specific date take priority. Beyond that, orders with the longest print times should be started first to prevent late shipments. As long as everything ships on time, Members manage their own print queues.
 
 11.9. **Seasonal Planning.** Both Members shall agree on a seasonal inventory and staffing plan at least 60 days before major selling seasons (e.g., by October 1 for holiday season). Both Members are required to participate.
 
-11.10. **Company Operations Manual.** The Managing Member may maintain a separate Company Operations Manual covering print settings, quality checklists, packaging standards, and procedures. Both Members must follow this manual. The Managing Member may update it with 7 days written notice without amending this Agreement.
+11.10. **Company Operations Manual.** Either Member may propose and maintain a Company Operations Manual covering print settings, quality checklists, packaging standards, and procedures. Both Members must follow this manual. Updates to the manual require agreement from both Members and 7 days written notice, and do not require amending this Agreement.
 
 11.11. **File Management & Backups.**
 
@@ -563,7 +564,7 @@ The Company operates e-commerce stores on Etsy and other platforms (including bu
 11.13. **Etsy Payment Holds.**
 
    (a) If Etsy places a payment hold on any Company store due to one Member's actions (excessive complaints, late shipments, policy violations), that Member's owner draws are docked until the hold is fully released.
-   (b) The responsible Member must take immediate corrective action as directed by the Managing Member.
+   (b) The responsible Member must take immediate corrective action as agreed upon by both Members.
    (c) A payment hold triggered by negligence is a Major Strike.
 
 11.14. **Electricity & Workspace Costs.**
@@ -585,11 +586,11 @@ The Company operates e-commerce stores on Etsy and other platforms (including bu
 
 12.1. **Company Property.** All Company social media accounts (Instagram, TikTok, YouTube, Facebook, Pinterest, etc.) are Company property regardless of who created them.
 
-12.2. **Active Management Required.** Both Members are expected to contribute to social media and marketing. If a Member creates an account but fails to maintain or grow it within 60 days, the Managing Member may take over administration.
+12.2. **Active Management Required.** Both Members are expected to contribute to social media and marketing. If a Member creates an account but fails to maintain or grow it within 60 days, the other Member may take over administration with Written Notice.
 
 12.3. **Ad Budget.** Etsy ad spend and marketing budget decisions are made jointly through communication. Both Members must agree on ad strategy changes.
 
-12.4. **Credentials.** Login credentials for all social media accounts must be shared with the Managing Member and recorded in the Company credentials file.
+12.4. **Credentials.** Login credentials for all social media accounts must be shared with both Members and recorded in the shared Company password manager per Section 7.6(a).
 
 ---
 
@@ -599,7 +600,7 @@ The Company operates e-commerce stores on Etsy and other platforms (including bu
 
 13.2. **Mediation.** If unresolved within 14 days, submit to mediation. Costs split equally.
 
-13.3. **Arbitration.** If mediation fails within 30 days, binding arbitration in Tulsa, Oklahoma under AAA rules.
+13.3. **Arbitration.** If mediation fails within 30 days, binding arbitration under AAA rules. Arbitration may be conducted virtually (video conference) if either Member requests it. If in-person arbitration is required, it shall be held in Tulsa, Oklahoma (the state of formation).
 
 13.4. **Governing Law.** This Agreement shall be governed by and construed in accordance with the laws of the State of Oklahoma, without regard to conflict of law principles. Both Members consent to the exclusive jurisdiction and venue of the courts of Tulsa County, Oklahoma, and the United States District Court for the Northern District of Oklahoma, for any legal action arising from this Agreement.
 
@@ -614,6 +615,7 @@ The Company operates e-commerce stores on Etsy and other platforms (including bu
    (c) Dashboard data shall be treated as authoritative evidence of financial performance, Contribution Metrics, Strike Points, and all other tracked data in any mediation, arbitration, or court proceeding.
    (d) Neither Member may challenge the admissibility of Dashboard data that was available to both Members in real time and was not disputed within 30 days of its recording.
    (e) Tampering with, falsifying, or deleting Dashboard data is a Critical Strike, grounds for immediate forced buyout, and may constitute fraud.
+   (f) **Dashboard Access & Transparency.** Both Members shall have full, equal administrative access to the Dashboard at all times, including access to the underlying database (Supabase), source code, and hosting platform. The Dashboard shall not be hosted solely under one Member's personal account — it must be accessible to both Members independently. If the Dashboard is built or maintained by one Member, that Member must ensure the other Member can access, understand, and verify all data independently.
 
 ---
 
@@ -682,7 +684,7 @@ The Company operates e-commerce stores on Etsy and other platforms (including bu
 
 16.3. **Access.** Both Members have full, unrestricted access to all financial records and the dashboard. Restricting access is a Critical Strike.
 
-16.4. **Tax Returns.** Filed as partnership. Each Member receives K-1 annually. Each Member responsible for their own income taxes. The Managing Member currently handles tax preparation; both Members are responsible for providing necessary information on time.
+16.4. **Tax Returns.** Filed as partnership. Each Member receives K-1 annually. Each Member responsible for their own income taxes. Thomas McNulty currently handles tax preparation as Administrative Coordinator; both Members are responsible for providing necessary information on time. Either Member may take on tax preparation duties by unanimous agreement.
 
 ---
 
@@ -705,12 +707,12 @@ The Company operates e-commerce stores on Etsy and other platforms (including bu
    (c) Unlawful to continue
    (d) Forced buyout resulting in 100% ownership (Company continues)
 
-18.2. **Winding Up.** Managing Member winds up affairs:
+18.2. **Winding Up.** Both Members shall jointly wind up affairs. If one Member is unavailable or uncooperative, the other Member may wind up affairs alone:
 
    (a) Pay all Company debts (including Best Buy CC)
    (b) Each Member retrieves personal equipment (Section 3.2)
-   (c) Company equipment stays with Managing Member (Section 3.5)
-   (d) Remaining assets distributed by capital accounts
+   (c) Company equipment divided per Section 3.5(b)
+   (d) Remaining assets distributed by ownership percentages
    (e) All IP remains with the Company or continuing Member
 
 ---
@@ -738,7 +740,7 @@ The Company operates e-commerce stores on Etsy and other platforms (including bu
 
 19.8. **Annual Agreement Review.** In addition to quarterly contribution reviews, both Members shall review this Agreement annually and discuss any needed amendments.
 
-19.9. **Acknowledgment of Unequal Starting Contributions.** Both Members acknowledge that as of the effective date of this Agreement, Thomas McNulty has contributed disproportionately to the Company including but not limited to: 100% of product design and 3D modeling, 100% of software and dashboard development, 100% of business formation and legal setup, majority of customer service and administration, and personal credit for Company equipment. This Agreement starts both Members at 50/50 ownership as a fresh start — but this history is documented and may be considered in any future dispute regarding contribution levels.
+19.9. **Acknowledgment of Unequal Starting Contributions.** Both Members acknowledge that as of the effective date of this Agreement, Thomas McNulty has contributed disproportionately to the Company including but not limited to: 100% of product design and 3D modeling, 100% of software and dashboard development, 100% of business formation and legal setup, majority of customer service and administration, and personal credit for Company equipment. This Agreement starts both Members at 50/50 ownership as a fresh start. All prior contribution imbalances are considered resolved as of the Effective Date and shall NOT be used as evidence, leverage, or justification in any future dispute, ownership adjustment, or arbitration proceeding. From the Effective Date forward, both Members are evaluated solely on their contributions going forward.
 
 19.10. **Right to Audit.** Either Member may request a full audit of the Company's financial records, dashboard data, and contribution metrics at any time. The other Member must cooperate fully within 7 days. Refusal to cooperate with an audit is a Critical Strike.
 
@@ -770,9 +772,9 @@ The Company operates e-commerce stores on Etsy and other platforms (including bu
 
 19.17. **Good Standing.** Both Members agree to maintain the Company in good standing with the Oklahoma Secretary of State, including timely filing of annual reports and payment of franchise taxes.
 
-19.16. **Restructuring Authority.** If the Company reaches a size where restructuring (such as electing S-Corp status) would provide tax benefits, the Managing Member has authority to make this decision, as the Managing Member has handled 100% of business formation, filings, and tax compliance. The other Member must cooperate with any required paperwork.
+19.16. **Restructuring Authority.** If the Company reaches a size where restructuring (such as electing S-Corp status) would provide tax benefits, this decision requires unanimous written consent of both Members. Either Member may present the analysis and recommendation, but both Members must agree before any restructuring filing is made. Both Members must cooperate with any required paperwork once agreed upon.
 
-19.17. **Data Backup Responsibility.** The Managing Member is responsible for maintaining backups of all critical Company data including dashboard data, financial records, and Supabase databases. Both Members are responsible for maintaining the shared OneDrive per Section 11.11. Loss of Company data due to a Member's negligence (deleting files, not backing up, losing access) is a Major Strike.
+19.17. **Data Backup Responsibility.** Both Members are jointly responsible for maintaining backups of all critical Company data including dashboard data, financial records, and Supabase databases. Both Members are responsible for maintaining the shared OneDrive per Section 11.11. Loss of Company data due to a Member's negligence (deleting files, not backing up, losing access) is a Major Strike.
 
 ---
 
@@ -781,7 +783,7 @@ The Company operates e-commerce stores on Etsy and other platforms (including bu
 By signing below, each Member acknowledges they have read, understand, and agree to all terms of this Operating Agreement. Each Member confirms they have had the opportunity to consult with independent legal counsel.
 
 
-**Member 1 — Managing Member:**
+**Member 1:**
 
 Name: Thomas McNulty
 Signature: ________________________________
@@ -824,16 +826,16 @@ The following questions were discussed by the Members during the drafting of thi
 50/50. Both Members start on equal footing with the understanding that ownership going forward is tied to equal contribution.
 
 **Q2: Were contributions made in cash or time and equipment?**
-Primarily time, labor, and equipment. Business accounts and credit lines were established by the Managing Member.
+Primarily time, labor, and equipment. Business accounts and credit lines were established by Thomas McNulty.
 
 **Q3: How was equipment purchased?**
-Company equipment was purchased using a Best Buy credit card associated with the Managing Member's personal credit. Both Members share responsibility for this debt equally.
+Company equipment was purchased using a Best Buy credit card associated with Thomas McNulty's personal credit. Both Members share responsibility for this debt equally.
 
 **Q4: What personal capital has been invested?**
-The Company is funded through business revenue. All accounts and payment infrastructure were set up by the Managing Member.
+The Company is funded through business revenue. All accounts and payment infrastructure were set up by Thomas McNulty.
 
 **Q5: What credit obligations exist?**
-The Best Buy credit card is a business expense tied to the Managing Member's personal credit score. Both Members share equal responsibility for this debt per Section 3.4.
+The Best Buy credit card is a business expense tied to Thomas McNulty's personal credit score. Both Members share equal responsibility for this debt per Section 3.4.
 
 **Q6: What equipment does the Company have?**
 Four 3D printers total. Each Member contributed one personal printer, and two additional printers were purchased by the Company. Equipment is distributed equally between the two operating locations.
@@ -841,13 +843,13 @@ Four 3D printers total. Each Member contributed one personal printer, and two ad
 ### Equipment & Debt
 
 **Q7: Where is equipment located?**
-Tulsa: Managing Member's personal printer ($800) + Company printer ($867.06). Texas: Other Member's personal printer ($400) + Company printer ($867.06).
+Tulsa: Thomas McNulty's personal printer ($800) + Company printer ($867.06). Texas: Braden Walker's personal printer ($400) + Company printer ($867.06).
 
 **Q8: How is equipment debt paid?**
 The business bank account covers auto-payments. If the Company cannot pay, both Members share the obligation equally. Any personal payments made by one Member are owed 50% by the other.
 
 **Q9: What happens to equipment if the partnership dissolves?**
-Each Member retains their personal pre-existing printer. Company-purchased equipment remains Company property under the Managing Member's custody per Section 3.5.
+Each Member retains their personal pre-existing printer. Company-purchased equipment is divided by value per Section 3.5.
 
 ### Operations
 
@@ -888,7 +890,7 @@ Yes. Material waste and failed prints are tracked and attributed to the responsi
 ### Finances
 
 **Q20: How do owner draws work?**
-Equal draws at equal times, approved by the Managing Member. Neither Member may take more than the other per Section 8.2.
+Equal draws at equal times, approved by both Members. Neither Member may take more than the other. Neither Member may unilaterally block a qualifying draw per Section 8.2.
 
 ### Strike System
 
@@ -912,7 +914,7 @@ The Company is operated as a side business. However, both Members are held to eq
 ### Social Media & Marketing
 
 **Q27: Who owns social media accounts?**
-All social media accounts are Company property per Article XII. If a Member creates an account but fails to actively maintain it within 60 days, the Managing Member may take over administration.
+All social media accounts are Company property per Article XII. If a Member creates an account but fails to actively maintain it within 60 days, the other Member may take over administration with Written Notice.
 
 ### Suppliers & Purchasing
 
@@ -925,7 +927,7 @@ Previously purchased items may be reordered freely. New items require communicat
 ### Personal Use
 
 **Q30: Can Members use Company printers for personal projects?**
-Yes, provided they use their own materials, do not interfere with Company production, and do not use Company inventory or products. Exception for product photography with Managing Member approval per Section 11.5.
+Yes, provided they use their own materials, do not interfere with Company production, and do not use Company inventory or products. Exception for product photography with the other Member's knowledge per Section 11.5.
 
 ### Communication
 
@@ -933,7 +935,7 @@ Yes, provided they use their own materials, do not interfere with Company produc
 No fixed hourly minimum. Contribution is measured by output and metrics, not hours logged. If contribution is unequal, the provisions of Article X apply.
 
 **Q32: What happens to inactive social media accounts?**
-If a Member creates an account but doesn't maintain it within 60 days, the Managing Member takes administrative control per Section 12.2.
+If a Member creates an account but doesn't maintain it within 60 days, the other Member may take over administration with Written Notice per Section 12.2.
 
 ### Shipping & Returns
 
@@ -946,7 +948,7 @@ All returns go to the Company address (2725 E 47th St, Tulsa, OK 74105) for cent
 ### Listing Management
 
 **Q35: How are listing decisions made?**
-Data-driven analysis of sales volume, margin, refund rate, print time, and demand. The Managing Member resolves disagreements. No listing may be removed simply because a Member doesn't want to print it per Section 11.6.
+Data-driven analysis of sales volume, margin, refund rate, print time, and demand. Disagreements resolved by mutual agreement per Section 7.3. No listing may be removed simply because a Member doesn't want to print it per Section 11.6.
 
 ### Absence Coverage
 
@@ -969,12 +971,12 @@ If the suspension results from negligence or failure to meet standards (not an h
 ### Tax & Records
 
 **Q43: Who handles tax and financial records?**
-The Managing Member currently handles all administrative and tax compliance work. Both Members are expected to contribute to record-keeping, especially as Company tools become more streamlined.
+Thomas McNulty currently handles administrative and tax compliance work as Administrative Coordinator. Both Members are expected to contribute to record-keeping, and either Member may take on these duties by mutual agreement.
 
 ### Investment Decisions
 
 **Q44: How are reinvestment decisions handled?**
-The Managing Member decides on reinvestment strategy. If a Member agrees to support an investment direction but fails to match the commitment, their ownership may be adjusted accordingly.
+Reinvestment decisions are made jointly by both Members. If a Member agrees to support an investment direction but fails to match the commitment, their ownership may be adjusted accordingly.
 
 ### Customer Data & Software
 
@@ -999,7 +1001,7 @@ Both locations purchase identical materials through the Company account to maint
 ### Exit Terms
 
 **Q50: What happens if a Member voluntarily leaves?**
-Voluntary departure is presumed to be forfeiture per Section 10.7. A Member who has maintained equal contribution in good standing may request a buyout at Fair Market Value, subject to the Managing Member's consideration.
+A Member departing in good standing (no contribution deficiency, fewer than 3 strike points in 180 days, no ownership adjustments) is entitled to a buyout at Fair Market Value per Section 10.7. A Member departing during deficiency receives FMV multiplied by their current ownership percentage, minus documented damages.
 
 ### Peak Season
 
@@ -1029,12 +1031,12 @@ Both Members must be reachable via text and respond within 8 hours. Quick task r
 ### Account Control
 
 **Q56: How are Company accounts and credentials managed?**
-The Managing Member maintains a master record of all credentials. Verification codes and recovery emails are routed through the Managing Member's contact information. Both Members have operational access to store dashboards for fulfillment.
+Both Members maintain equal access to all credentials through a shared, encrypted password manager. Both Members have independent 2FA access and full administrative access to all Company accounts per Section 7.6.
 
 ### Quality Standards
 
 **Q57: Is there a separate quality standards document?**
-Yes. A Company Operations Manual maintained by the Managing Member, updatable with 7 days written notice without amending this Agreement, per Section 11.10.
+Yes. A Company Operations Manual maintained jointly by both Members, updatable with both Members' agreement and 7 days written notice without amending this Agreement, per Section 11.10.
 
 ### Customer Contacts
 
@@ -1109,7 +1111,7 @@ Yes. Both Members should continuously develop their skills in printing, design, 
 ### Platform Changes
 
 **Q73: How does the Company adapt to Etsy policy changes?**
-The Managing Member determines the response strategy, unless the other Member presents a proposal that is demonstrably better based on data and short-term/long-term analysis per Section 7.3.
+Both Members discuss and agree on the response strategy. If no agreement is reached, the dispute is resolved per Section 7.3 (neutral mediator).
 
 ### Material Supply
 
@@ -1124,7 +1126,7 @@ When orders spike — whether from a viral product, holiday rush, or marketing c
 ### Business Direction
 
 **Q76: How are strategic disagreements resolved?**
-Both Members present their reasoning with data. The best idea wins regardless of who proposed it. If no agreement is reached, the Managing Member makes the final decision per Section 7.3. The Company's growth should never be limited by one Member's unwillingness to keep pace.
+Both Members present their reasoning with data. The best idea wins regardless of who proposed it. If no agreement is reached, the dispute goes to a neutral mediator per Section 7.3. The Company's growth should never be limited by one Member's unwillingness to keep pace.
 
 ### Agreement Review
 
@@ -1144,7 +1146,7 @@ The responsible Member bears full financial responsibility for all fines, penalt
 ### Pricing Strategy
 
 **Q81: How are pricing decisions made?**
-Price changes must be analyzed thoroughly — weighing short-term and long-term impact on listing health and overall business performance. Individual pricing adjustments are at the Managing Member's discretion; across-the-board changes require unanimous consent per Section 11.7.
+Price changes must be analyzed thoroughly — weighing short-term and long-term impact on listing health and overall business performance. Either Member may make individual pricing adjustments based on data with notice to the other Member within 24 hours; across-the-board changes require unanimous consent per Section 11.7.
 
 ### Professional Conduct
 
@@ -1184,7 +1186,7 @@ The Company will pursue all legal remedies to recover its property. Equipment va
 ### Buyout Transition
 
 **Q89: What happens during a buyout transition?**
-The departing Member must work to restore the business to single-owner operation and ensure all systems function properly. Buyout payments (if applicable) begin only after the transition is verified complete per Section 10.11.
+The departing Member must work to restore the business to single-owner operation and ensure all systems function properly. Buyout payments begin no later than 30 days after the buyout is initiated, with up to 25% held in escrow until transition is complete per Section 10.11.
 
 ### Utility Costs
 
@@ -1194,7 +1196,7 @@ Each Member covers their own home electricity costs for printer operations. If t
 ### Restructuring
 
 **Q91: Who decides on business restructuring (e.g., S-Corp election)?**
-The Managing Member, as the Member responsible for all business formation, filings, and tax compliance, has authority over restructuring decisions per Section 19.18.
+Restructuring decisions require unanimous written consent of both Members per Section 19.16. Either Member may present the analysis and recommendation.
 
 ### Payment Holds
 
