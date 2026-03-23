@@ -517,48 +517,164 @@ def _filtered_data(store="all"):
 
 _DATA_ALL = None  # Stashed full DATA for store filter restore
 
+# ── State Manager (Phase 1 bridge) ────────────────────────────────────────────
+from dashboard_utils.state import state_manager as _state_manager, build_etsy_state
+
 
 def _apply_store_filter(store="all"):
-    """Temporarily swap DATA to a store-filtered version and recompute all globals.
+    """Filter DATA by store using the StateManager, then back-fill globals.
 
-    This lets all existing tab builders, charts, and metric computations work
-    without modification — they read globals, and we just swap what the globals point to.
-    Call with 'all' to restore the full dataset.
+    The StateManager builds a clean EtsyState from filtered data.
+    We then copy every value from the state into the old globals
+    so all existing tab builders, charts, and callbacks work unchanged.
     """
     global DATA, _DATA_ALL
     global gross_sales, total_refunds, net_sales, total_fees
     global total_shipping_cost, total_marketing, total_taxes, total_payments
     global order_count, avg_order, total_buyer_fees
 
-    # Stash full DATA on first call
+    # Initialize StateManager on first call
     if _DATA_ALL is None:
         _DATA_ALL = DATA.copy()
+        _state_manager.initialize(DATA, CONFIG)
 
-    # Swap DATA to filtered version
-    if store == "all" or not store:
-        DATA = _DATA_ALL
-    else:
-        DATA = _DATA_ALL[_DATA_ALL["Store"] == store].copy()
+    # Build a clean state for this store — no global mutation, no corruption
+    state = _state_manager.set_store_filter(store)
 
-    # Recompute all derived DataFrames and aggregations
-    _rebuild_etsy_derived()
+    # ── BRIDGE: back-fill old globals from the clean state ──
+    DATA = state.data
 
-    # Recompute top-level scalars (not done by _rebuild_etsy_derived)
-    gross_sales = sales_df["Net_Clean"].sum()
-    total_refunds = abs(refund_df["Net_Clean"].sum())
-    net_sales = gross_sales - total_refunds
-    total_fees = abs(fee_df["Net_Clean"].sum())
-    total_shipping_cost = abs(ship_df["Net_Clean"].sum())
-    total_marketing = abs(mkt_df["Net_Clean"].sum())
-    total_taxes = abs(tax_df["Net_Clean"].sum())
-    total_payments = payment_df["Net_Clean"].sum()
-    total_buyer_fees = abs(buyer_fee_df["Net_Clean"].sum()) if len(buyer_fee_df) else 0
-    order_count = len(sales_df)
-    avg_order = gross_sales / order_count if order_count else 0
+    # Back-fill scalar metrics
+    gross_sales = state.gross_sales
+    total_refunds = state.total_refunds
+    net_sales = state.net_sales
+    total_fees = state.total_fees
+    total_shipping_cost = state.total_shipping_cost
+    total_marketing = state.total_marketing
+    total_taxes = state.total_taxes
+    total_payments = state.total_payments
+    total_buyer_fees = state.total_buyer_fees
+    order_count = state.order_count
+    avg_order = state.avg_order
+
+    # Back-fill filtered DataFrames and all derived metrics
+    _backfill_etsy_derived(state)
 
     # Profit and profit_margin are business-level metrics (bank-derived).
     # They stay the same regardless of store selection because all stores
     # share one bank account. Don't override them per-store.
+
+
+def _backfill_etsy_derived(state):
+    """Copy all EtsyState values into the old module globals.
+
+    This is the compatibility bridge — every existing function that reads
+    globals will see the same values as before, but now they come from
+    a cleanly-built state object instead of piecemeal mutation.
+    """
+    global sales_df, fee_df, ship_df, mkt_df, refund_df, tax_df
+    global deposit_df, buyer_fee_df, payment_df
+    global monthly_sales, monthly_fees, monthly_shipping, monthly_marketing
+    global monthly_refunds, monthly_taxes, monthly_raw_fees, monthly_raw_shipping
+    global monthly_raw_marketing, monthly_raw_refunds, monthly_net_revenue
+    global monthly_raw_taxes, monthly_raw_buyer_fees, monthly_raw_payments
+    global daily_sales, daily_orders, daily_df, weekly_aov
+    global monthly_order_counts, monthly_aov, monthly_profit_per_order
+    global months_sorted, days_active
+    global product_fee_totals, product_revenue_est
+    global listing_fees, transaction_fees_product, transaction_fees_shipping
+    global processing_fees, credit_transaction, credit_listing, credit_processing
+    global share_save, total_credits, total_fees_gross
+    global etsy_ads, offsite_ads_fees, offsite_ads_credits
+    global usps_outbound, usps_outbound_count, usps_return, usps_return_count
+    global asendia_labels, asendia_count, ship_adjustments, ship_adjust_count
+    global ship_credits, ship_credit_count, ship_insurance, ship_insurance_count
+    global buyer_paid_shipping, shipping_profit, shipping_margin
+    global paid_ship_count, free_ship_count, avg_outbound_label
+    global _etsy_deposit_total, _deposit_rows
+
+    # Filtered DataFrames
+    sales_df = state.sales_df
+    fee_df = state.fee_df
+    ship_df = state.ship_df
+    mkt_df = state.mkt_df
+    refund_df = state.refund_df
+    tax_df = state.tax_df
+    deposit_df = state.deposit_df
+    buyer_fee_df = state.buyer_fee_df
+    payment_df = state.payment_df
+
+    # Monthly aggregations
+    months_sorted = state.months_sorted
+    monthly_sales = state.monthly_sales
+    monthly_fees = state.monthly_fees
+    monthly_shipping = state.monthly_shipping
+    monthly_marketing = state.monthly_marketing
+    monthly_refunds = state.monthly_refunds
+    monthly_taxes = state.monthly_taxes
+    monthly_raw_fees = state.monthly_raw_fees
+    monthly_raw_shipping = state.monthly_raw_shipping
+    monthly_raw_marketing = state.monthly_raw_marketing
+    monthly_raw_refunds = state.monthly_raw_refunds
+    monthly_raw_taxes = state.monthly_raw_taxes
+    monthly_raw_buyer_fees = state.monthly_raw_buyer_fees
+    monthly_raw_payments = state.monthly_raw_payments
+    monthly_net_revenue = state.monthly_net_revenue
+    monthly_order_counts = state.monthly_order_counts
+    monthly_aov = state.monthly_aov
+    monthly_profit_per_order = state.monthly_profit_per_order
+    days_active = state.days_active
+
+    # Daily aggregations
+    daily_sales = state.daily_sales
+    daily_orders = state.daily_orders
+    daily_df = state.daily_df
+    weekly_aov = state.weekly_aov
+
+    # Fee breakdown
+    listing_fees = state.listing_fees
+    transaction_fees_product = state.transaction_fees_product
+    transaction_fees_shipping = state.transaction_fees_shipping
+    processing_fees = state.processing_fees
+    credit_transaction = state.credit_transaction
+    credit_listing = state.credit_listing
+    credit_processing = state.credit_processing
+    share_save = state.share_save
+    total_credits = state.total_credits
+    total_fees_gross = state.total_fees_gross
+
+    # Marketing
+    etsy_ads = state.etsy_ads
+    offsite_ads_fees = state.offsite_ads_fees
+    offsite_ads_credits = state.offsite_ads_credits
+
+    # Shipping
+    usps_outbound = state.usps_outbound
+    usps_outbound_count = state.usps_outbound_count
+    usps_return = state.usps_return
+    usps_return_count = state.usps_return_count
+    asendia_labels = state.asendia_labels
+    asendia_count = state.asendia_count
+    ship_adjustments = state.ship_adjustments
+    ship_adjust_count = state.ship_adjust_count
+    ship_credits = state.ship_credits
+    ship_credit_count = state.ship_credit_count
+    ship_insurance = state.ship_insurance
+    ship_insurance_count = state.ship_insurance_count
+    buyer_paid_shipping = state.buyer_paid_shipping
+    shipping_profit = state.shipping_profit
+    shipping_margin = state.shipping_margin
+    paid_ship_count = state.paid_ship_count
+    free_ship_count = state.free_ship_count
+    avg_outbound_label = state.avg_outbound_label
+
+    # Product performance
+    product_fee_totals = state.product_fee_totals
+    product_revenue_est = state.product_revenue_est
+
+    # Deposit tracking
+    _etsy_deposit_total = state._etsy_deposit_total
+    _deposit_rows = state._deposit_rows
 
 
 # ── Pre-compute metrics ─────────────────────────────────────────────────────
@@ -2567,9 +2683,10 @@ def _cascade_reload(source="etsy"):
     global profit, profit_margin, receipt_cogs_outside_bank
     global bank_amazon_inv
 
-    # 0. Update the stashed full DATA so store filter stays current after uploads
+    # 0. Update the stashed full DATA and StateManager so store filter stays current after uploads
     global _DATA_ALL
     _DATA_ALL = DATA.copy()
+    _state_manager.update_data(DATA, CONFIG)
 
     # 1. Run pipeline FIRST to update all base metrics (etsy_balance, gross_sales, etc.)
     if _acct_pipeline is not None:
