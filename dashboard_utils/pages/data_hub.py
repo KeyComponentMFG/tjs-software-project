@@ -104,7 +104,7 @@ def build_tab7_data_hub(active_store_tab=None):
             html.Div([
                 _build_upload_zone("receipt", "\U0001f4e6", "Receipt PDFs", PURPLE, ".pdf",
                                    "Upload Amazon/supplier invoice PDFs. Parses items and updates inventory."),
-                _build_upload_zone("bank", "\U0001f3e6", "Bank Statements", CYAN, ".pdf,.csv",
+                _build_upload_zone("bank", "\U0001f3e6", "Bank Statements", CYAN, "",
                                    "Upload Capital One bank PDFs or CSV transaction downloads. Deduplicates automatically."),
             ], style={"display": "flex", "gap": "16px", "flexWrap": "wrap"}),
         ], style={"marginBottom": "20px"}),
