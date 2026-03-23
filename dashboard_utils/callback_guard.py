@@ -4,7 +4,7 @@ Callback error guard decorator for Dash callbacks.
 Wraps callbacks with standardized error handling, logging, and tracking.
 
 Usage:
-    from etsy_dashboard.callback_guard import guard_callback
+    from dashboard_utils.callback_guard import guard_callback
 
     @app.callback(Output("my-div", "children"), Input("my-input", "value"))
     @guard_callback(n_outputs=1)
@@ -19,7 +19,7 @@ import datetime
 import dash
 from dash import html
 
-from etsy_dashboard.logging_config import get_logger
+from dashboard_utils.logging_config import get_logger
 
 _logger = get_logger("callbacks")
 
