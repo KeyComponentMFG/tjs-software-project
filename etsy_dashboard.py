@@ -20072,15 +20072,110 @@ def handle_datahub_upload(etsy_contents, receipt_contents, bank_contents, orders
             content_type, content_string = etsy_contents.split(",")
             decoded = base64.b64decode(content_string)
 
-            valid, msg, df = _validate_etsy_csv(decoded)
-            if not valid:
-                etsy_status = html.Div([
-                    html.Span("\u2717 ", style={"color": RED, "fontWeight": "bold"}),
-                    html.Span(f"Invalid CSV: {msg}", style={"color": RED, "fontSize": "13px"}),
-                ])
+            # ── Phase 3: Upload validation with preview ──
+            from dashboard_utils.upload_validator import validate_etsy_csv as _validate_upload
+            from supabase_loader import get_config_value as _gcv_upload
+
+            _upload_store = etsy_store_picker or "keycomponentmfg"
+            _preview = _validate_upload(decoded, _upload_store, _gcv_upload, existing_data=DATA)
+
+            if not _preview.is_valid:
+                # Blocking errors — stop upload
+                _error_items = [html.Div([
+                    html.Span("\u2717 ", style={"color": RED, "fontWeight": "bold", "fontSize": "16px"}),
+                    html.Span("UPLOAD BLOCKED", style={"color": RED, "fontSize": "14px", "fontWeight": "bold"}),
+                ], style={"marginBottom": "6px"})]
+                for _err in _preview.errors:
+                    _error_items.append(html.Div([
+                        html.Span("  \u2022 ", style={"color": RED}),
+                        html.Span(_err, style={"color": RED, "fontSize": "12px"}),
+                    ]))
+                etsy_status = html.Div(_error_items, style={
+                    "background": "#1a0a0a", "border": f"1px solid {RED}44",
+                    "borderRadius": "6px", "padding": "10px 14px", "marginTop": "6px",
+                })
             else:
+                df = _preview.df
+
+                # ── Build preview info panel ──
+                _store_display = STORES.get(_upload_store, _upload_store)
+                _preview_items = []
+
+                # Header: what we're uploading
+                _preview_items.append(html.Div([
+                    html.Span("\u2713 ", style={"color": GREEN, "fontWeight": "bold", "fontSize": "16px"}),
+                    html.Span("CSV VALIDATED", style={"color": GREEN, "fontSize": "14px", "fontWeight": "bold"}),
+                    html.Span(f"  \u2192  {_store_display}", style={"color": CYAN, "fontSize": "13px", "marginLeft": "8px"}),
+                ], style={"marginBottom": "8px"}))
+
+                # Store detection result
+                if _preview.detected_store:
+                    _det_name = STORES.get(_preview.detected_store, _preview.detected_store)
+                    _det_color = GREEN if not _preview.store_mismatch else ORANGE
+                    _det_icon = "\u2713" if not _preview.store_mismatch else "\u26a0"
+                    _conf_pct = f"{_preview.store_confidence:.0%}"
+                    _preview_items.append(html.Div([
+                        html.Span(f"{_det_icon} ", style={"color": _det_color, "fontWeight": "bold"}),
+                        html.Span("Detected store: ", style={"color": GRAY, "fontSize": "12px"}),
+                        html.Span(f"{_det_name} ", style={"color": _det_color, "fontSize": "12px", "fontWeight": "bold"}),
+                        html.Span(f"({_conf_pct} confidence)", style={"color": DARKGRAY, "fontSize": "11px"}),
+                    ], style={"marginBottom": "3px"}))
+                else:
+                    _preview_items.append(html.Div([
+                        html.Span("\u2014 ", style={"color": DARKGRAY}),
+                        html.Span("Store detection: ", style={"color": GRAY, "fontSize": "12px"}),
+                        html.Span("No listings match (upload listings first for auto-detection)",
+                                  style={"color": DARKGRAY, "fontSize": "11px", "fontStyle": "italic"}),
+                    ], style={"marginBottom": "3px"}))
+
+                # Date range and row count
+                _date_str = f"{_preview.date_range[0]} - {_preview.date_range[1]}" if _preview.date_range[0] else "Unknown"
+                _months_str = ", ".join(_preview.months) if _preview.months else "N/A"
+                _preview_items.append(html.Div([
+                    html.Span("\u2022 ", style={"color": CYAN}),
+                    html.Span(f"{_preview.row_count} rows", style={"color": WHITE, "fontSize": "12px", "fontWeight": "bold"}),
+                    html.Span(f"  |  {_preview.month_count} month(s): {_months_str}",
+                              style={"color": GRAY, "fontSize": "12px"}),
+                ], style={"marginBottom": "2px"}))
+                _preview_items.append(html.Div([
+                    html.Span("\u2022 ", style={"color": CYAN}),
+                    html.Span(f"Date range: {_date_str}", style={"color": GRAY, "fontSize": "12px"}),
+                ], style={"marginBottom": "2px"}))
+
+                # Transaction breakdown
+                if _preview.transaction_count_by_type:
+                    _type_parts = []
+                    for _ttype, _tcount in sorted(_preview.transaction_count_by_type.items(), key=lambda x: -x[1]):
+                        _type_parts.append(f"{_ttype}: {_tcount}")
+                    _preview_items.append(html.Div([
+                        html.Span("\u2022 ", style={"color": CYAN}),
+                        html.Span("Breakdown: ", style={"color": GRAY, "fontSize": "12px"}),
+                        html.Span(" | ".join(_type_parts), style={"color": TEAL, "fontSize": "11px", "fontFamily": "monospace"}),
+                    ], style={"marginBottom": "2px"}))
+
+                # Warnings (store mismatch, overlap, etc.)
+                if _preview.warnings:
+                    _preview_items.append(html.Hr(style={"borderColor": "#ffffff11", "margin": "6px 0"}))
+                    for _warn in _preview.warnings:
+                        _warn_color = ORANGE if "mismatch" in _warn.lower() else "#ccaa00"
+                        _preview_items.append(html.Div([
+                            html.Span("\u26a0 ", style={"color": ORANGE, "fontWeight": "bold"}),
+                            html.Span(_warn, style={"color": _warn_color, "fontSize": "12px"}),
+                        ], style={"marginBottom": "2px"}))
+
+                # Store mismatch gets extra emphasis
+                if _preview.store_mismatch:
+                    _det_name = STORES.get(_preview.detected_store, _preview.detected_store)
+                    _preview_items.append(html.Div([
+                        html.Span("\u26a0 VERIFY: ", style={"color": ORANGE, "fontWeight": "bold", "fontSize": "12px"}),
+                        html.Span(f"This CSV looks like it belongs to {_det_name}. "
+                                  f"Uploading to {_store_display} instead. Proceed with caution.",
+                                  style={"color": ORANGE, "fontSize": "11px", "fontStyle": "italic"}),
+                    ], style={"marginTop": "4px", "background": "#2a1a00", "padding": "6px 10px",
+                              "borderRadius": "4px", "border": f"1px solid {ORANGE}44"}))
+
+                # ── Proceed with upload (auto-confirm for now) ──
                 # Tag uploaded data with the selected store
-                _upload_store = etsy_store_picker or "keycomponentmfg"
                 df["Store"] = _upload_store
 
                 # Auto-name: use filename as-is, or generate etsy_statement_YYYY_MM.csv
@@ -20158,27 +20253,42 @@ def handle_datahub_upload(etsy_contents, receipt_contents, bank_contents, orders
                 _cascade_reload("etsy")
                 _logger.info("Upload complete: %d rows, gross=$%.2f", len(DATA), gross_sales)
                 msg = f"{len(_new_df)} rows loaded ({_replaced_count} replaced, months: {stats['months']})"
-            
+
 
                 if not _sb_ok:
                     msg += " (WARNING: Supabase sync failed — data may not persist after restart)"
 
-                _store_display = STORES.get(_upload_store, _upload_store)
+                # ── Build final status with preview + result ──
+                _preview_items.append(html.Hr(style={"borderColor": "#ffffff11", "margin": "6px 0"}))
+
                 if has_overlap:
-                    etsy_status = html.Div([
+                    _preview_items.append(html.Div([
                         html.Span("\u26a0 ", style={"color": ORANGE, "fontWeight": "bold"}),
-                        html.Span(f"[{_store_display}] Replaced {overlap_file} — {overlap_msg}. {msg}",
-                                  style={"color": ORANGE, "fontSize": "13px"}),
-                    ])
+                        html.Span(f"Replaced {overlap_file} — {overlap_msg}. {msg}",
+                                  style={"color": ORANGE, "fontSize": "12px"}),
+                    ]))
                     log_icon, log_color = "\u26a0", ORANGE
                     log_text = f"Etsy CSV [{_store_display}]: Replaced {overlap_file} with {fname} ({msg})"
                 else:
-                    etsy_status = html.Div([
+                    _preview_items.append(html.Div([
                         html.Span("\u2713 ", style={"color": GREEN, "fontWeight": "bold"}),
-                        html.Span(f"[{_store_display}] Uploaded {fname} — {msg}", style={"color": GREEN, "fontSize": "13px"}),
-                    ])
+                        html.Span(f"Uploaded {fname} — {msg}", style={"color": GREEN, "fontSize": "12px"}),
+                    ]))
                     log_icon, log_color = "\u2713", GREEN
                     log_text = f"Etsy CSV [{_store_display}]: {fname} ({msg})"
+
+                if not _sb_ok:
+                    _preview_items.append(html.Div([
+                        html.Span("\u26a0 ", style={"color": RED, "fontWeight": "bold"}),
+                        html.Span("Supabase sync failed — data may not persist after restart",
+                                  style={"color": RED, "fontSize": "11px"}),
+                    ]))
+
+                etsy_status = html.Div(_preview_items, style={
+                    "background": "#0a1a0a" if not _preview.store_mismatch else "#1a1a0a",
+                    "border": f"1px solid {GREEN}44" if not _preview.store_mismatch else f"1px solid {ORANGE}44",
+                    "borderRadius": "6px", "padding": "10px 14px", "marginTop": "6px",
+                })
 
                 etsy_stats = html.Div(
                     f"{stats['transactions']} transactions  |  {stats['orders']} orders  |  "
