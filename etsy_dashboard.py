@@ -12645,33 +12645,11 @@ def _build_ship_type():
 
 
 def _build_per_order_profit_section():
-    """Build the per-order profit section for the Financials tab.
+    """Build the per-order detail section for the Financials tab.
 
-    DISABLED: Label-to-order matching uses a ±2 day window which produces
-    incorrect matches when print times exceed 2 days. This section will be
-    re-enabled once Etsy API integration provides real order→label→tracking links.
+    Shows real order data (order #, date, store, items, value).
+    Label matching columns disabled until Etsy API provides real links.
     """
-    return html.Div([
-        html.H3("\U0001f4b0 PER-ORDER PROFIT", style={
-            "color": ORANGE, "margin": "30px 0 6px 0", "fontSize": "14px",
-            "letterSpacing": "1.5px", "borderTop": f"2px solid {ORANGE}33", "paddingTop": "14px",
-        }),
-        html.Div([
-            html.Div("TEMPORARILY DISABLED", style={
-                "color": ORANGE, "fontSize": "13px", "fontWeight": "bold", "marginBottom": "6px",
-            }),
-            html.P("Per-order profit tracking requires accurate label-to-order matching. "
-                    "The current ±2 day window produces incorrect matches when print times exceed 2 days. "
-                    "This section will be re-enabled once Etsy API integration is built, which provides "
-                    "real order → label → tracking links.",
-                    style={"color": GRAY, "fontSize": "12px", "lineHeight": "1.5"}),
-        ], style={
-            "backgroundColor": f"{ORANGE}10", "borderRadius": "8px", "padding": "14px 18px",
-            "borderLeft": f"3px solid {ORANGE}",
-        }),
-    ])
-
-    # ── Original implementation below — kept for re-enabling with API data ──
     if not ORDER_PROFITS:
         return html.Div([
             html.H3("\U0001f4b0 PER-ORDER PROFIT", style={
@@ -12701,39 +12679,31 @@ def _build_per_order_profit_section():
                    style={"color": GRAY, "fontSize": "12px"}),
         ])
 
-    _total_profit = sum(r["order_profit"] for r in _filtered)
     _total_revenue = sum(r["order_value"] for r in _filtered)
-    _total_label = sum(r["label_cost"] for r in _filtered)
     _total_ship_charged = sum(r["shipping_charged"] for r in _filtered)
-    _ship_pl = _total_ship_charged - _total_label
-    _avg_profit = _total_profit / len(_filtered) if _filtered else 0
-    _avg_margin = (_total_profit / _total_revenue * 100) if _total_revenue else 0
+    _avg_value = _total_revenue / len(_filtered) if _filtered else 0
 
-    # Summary KPIs
+    # Summary KPIs — only showing real order data, no label-dependent metrics
     _kpi_style = {
         "backgroundColor": CARD, "borderRadius": "8px", "padding": "12px 16px",
         "textAlign": "center", "flex": "1", "minWidth": "120px",
     }
     _kpi_row = html.Div([
         html.Div([
-            html.Div(f"${_total_profit:,.2f}", style={"color": GREEN, "fontSize": "20px", "fontWeight": "bold", "fontFamily": "monospace"}),
-            html.Div("Total Profit", style={"color": GRAY, "fontSize": "11px", "marginTop": "4px"}),
+            html.Div(f"{len(_filtered)}", style={"color": WHITE, "fontSize": "20px", "fontWeight": "bold", "fontFamily": "monospace"}),
+            html.Div("Orders", style={"color": GRAY, "fontSize": "11px", "marginTop": "4px"}),
         ], style=_kpi_style),
         html.Div([
-            html.Div(f"${_avg_profit:,.2f}", style={"color": CYAN, "fontSize": "20px", "fontWeight": "bold", "fontFamily": "monospace"}),
+            html.Div(f"${_total_revenue:,.2f}", style={"color": GREEN, "fontSize": "20px", "fontWeight": "bold", "fontFamily": "monospace"}),
+            html.Div("Total Revenue", style={"color": GRAY, "fontSize": "11px", "marginTop": "4px"}),
+        ], style=_kpi_style),
+        html.Div([
+            html.Div(f"${_avg_value:,.2f}", style={"color": CYAN, "fontSize": "20px", "fontWeight": "bold", "fontFamily": "monospace"}),
             html.Div("Avg/Order", style={"color": GRAY, "fontSize": "11px", "marginTop": "4px"}),
         ], style=_kpi_style),
         html.Div([
-            html.Div(f"{_avg_margin:.1f}%", style={"color": ORANGE, "fontSize": "20px", "fontWeight": "bold", "fontFamily": "monospace"}),
-            html.Div("Margin", style={"color": GRAY, "fontSize": "11px", "marginTop": "4px"}),
-        ], style=_kpi_style),
-        html.Div([
-            html.Div(f"${_ship_pl:,.2f}", style={"color": GREEN if _ship_pl >= 0 else RED, "fontSize": "20px", "fontWeight": "bold", "fontFamily": "monospace"}),
-            html.Div("Shipping P/L", style={"color": GRAY, "fontSize": "11px", "marginTop": "4px"}),
-        ], style=_kpi_style),
-        html.Div([
-            html.Div(f"{len(_filtered)}", style={"color": WHITE, "fontSize": "20px", "fontWeight": "bold", "fontFamily": "monospace"}),
-            html.Div("Shipped", style={"color": GRAY, "fontSize": "11px", "marginTop": "4px"}),
+            html.Div(f"${_total_ship_charged:,.2f}", style={"color": TEAL, "fontSize": "20px", "fontWeight": "bold", "fontFamily": "monospace"}),
+            html.Div("Buyer Shipping", style={"color": GRAY, "fontSize": "11px", "marginTop": "4px"}),
         ], style=_kpi_style),
         html.Div([
             html.Div(f"{ORDER_PROFIT_SUMMARY.get('unshipped_orders', 0)}", style={"color": ORANGE, "fontSize": "20px", "fontWeight": "bold", "fontFamily": "monospace"}),
@@ -12777,10 +12747,7 @@ def _build_per_order_profit_section():
     _table_data = []
     for _op in _filtered:
         _store_short = {"keycomponentmfg": "KeyComp", "aurvio": "Aurvio", "lunalinks": "L&L"}.get(_op["store"], _op["store"])
-        _return_cost = _op.get("return_label_cost", 0)
         _refund_amt = _op.get("refund_amount", 0)
-        _lbl_info = _op.get("label_info", "")
-        _lbl_display = _lbl_info.replace("Label #", "#") if _lbl_info.startswith("Label #") else _lbl_info
         _table_data.append({
             "Order #": str(_op["order_id"]),
             "Date": _op["ship_date"],
@@ -12788,12 +12755,7 @@ def _build_per_order_profit_section():
             "Item": _op["items"][:60],
             "Value": round(_op["order_value"], 2),
             "Buyer Ship": round(_op["shipping_charged"], 2),
-            "Label #": _lbl_display[:18] if _lbl_display else "",
-            "Label $": round(_op["label_cost"], 2),
-            "Return": round(_return_cost, 2) if _return_cost > 0 else None,
             "Refund": round(-_refund_amt, 2) if _refund_amt > 0 else None,
-            "Ship P/L": round(_op["shipping_pl"], 2),
-            "True P/L": round(_op["order_profit"], 2),
         })
 
     _dt_columns = [
@@ -12803,12 +12765,7 @@ def _build_per_order_profit_section():
         {"name": "Item", "id": "Item", "type": "text"},
         {"name": "Value", "id": "Value", "type": "numeric", "format": {"specifier": "$,.2f"}},
         {"name": "Ship $", "id": "Buyer Ship", "type": "numeric", "format": {"specifier": "$,.2f"}},
-        {"name": "Label #", "id": "Label #", "type": "text"},
-        {"name": "Label $", "id": "Label $", "type": "numeric", "format": {"specifier": "$,.2f"}},
-        {"name": "Return", "id": "Return", "type": "numeric", "format": {"specifier": "$,.2f"}},
         {"name": "Refund", "id": "Refund", "type": "numeric", "format": {"specifier": "$,.2f"}},
-        {"name": "Ship P/L", "id": "Ship P/L", "type": "numeric", "format": {"specifier": "$,.2f"}},
-        {"name": "True P/L", "id": "True P/L", "type": "numeric", "format": {"specifier": "$,.2f"}},
     ]
 
     _order_table = dash_table.DataTable(
@@ -12832,25 +12789,16 @@ def _build_per_order_profit_section():
             "textAlign": "right",
         },
         style_cell_conditional=[
-            {"if": {"column_id": "Order #"}, "textAlign": "left", "color": CYAN, "width": "110px", "cursor": "pointer"},
-            {"if": {"column_id": "Date"}, "textAlign": "left", "width": "90px", "color": GRAY},
-            {"if": {"column_id": "Store"}, "textAlign": "left", "width": "60px"},
-            {"if": {"column_id": "Item"}, "textAlign": "left", "width": "180px",
-             "overflow": "hidden", "textOverflow": "ellipsis", "maxWidth": "180px"},
-            {"if": {"column_id": "Value"}, "width": "70px"},
-            {"if": {"column_id": "Buyer Ship"}, "width": "65px"},
-            {"if": {"column_id": "Label #"}, "textAlign": "left", "width": "100px", "color": DARKGRAY, "fontSize": "10px"},
-            {"if": {"column_id": "Label $"}, "width": "65px"},
-            {"if": {"column_id": "Return"}, "width": "65px"},
-            {"if": {"column_id": "Refund"}, "width": "65px"},
-            {"if": {"column_id": "Ship P/L"}, "width": "70px"},
-            {"if": {"column_id": "True P/L"}, "width": "80px"},
+            {"if": {"column_id": "Order #"}, "textAlign": "left", "color": CYAN, "width": "110px"},
+            {"if": {"column_id": "Date"}, "textAlign": "left", "width": "100px", "color": GRAY},
+            {"if": {"column_id": "Store"}, "textAlign": "left", "width": "70px"},
+            {"if": {"column_id": "Item"}, "textAlign": "left", "width": "280px",
+             "overflow": "hidden", "textOverflow": "ellipsis", "maxWidth": "280px"},
+            {"if": {"column_id": "Value"}, "width": "90px"},
+            {"if": {"column_id": "Buyer Ship"}, "width": "80px"},
+            {"if": {"column_id": "Refund"}, "width": "80px"},
         ],
         style_data_conditional=[
-            {"if": {"filter_query": "{True P/L} < 0"}, "backgroundColor": "#1a0a0a"},
-            {"if": {"filter_query": "{Ship P/L} < 0", "column_id": "Ship P/L"}, "color": RED},
-            {"if": {"filter_query": "{Ship P/L} >= 0", "column_id": "Ship P/L"}, "color": GREEN},
-            {"if": {"filter_query": "{True P/L} < 0", "column_id": "True P/L"}, "color": RED, "fontWeight": "bold"},
             {"if": {"filter_query": "{True P/L} >= 0", "column_id": "True P/L"}, "color": GREEN, "fontWeight": "bold"},
             {"if": {"filter_query": "{Refund} < 0", "column_id": "Refund"}, "color": RED},
             {"if": {"filter_query": "{Return} > 0", "column_id": "Return"}, "color": RED},
@@ -12935,11 +12883,11 @@ def _build_per_order_profit_section():
         ], style={"marginTop": "12px"})
 
     return html.Div([
-        html.H3("\U0001f4b0 PER-ORDER PROFIT", style={
-            "color": ORANGE, "margin": "30px 0 6px 0", "fontSize": "14px",
-            "letterSpacing": "1.5px", "borderTop": f"2px solid {ORANGE}33", "paddingTop": "14px",
+        html.H3("\U0001f4e6 ORDER DETAIL", style={
+            "color": CYAN, "margin": "30px 0 6px 0", "fontSize": "14px",
+            "letterSpacing": "1.5px", "borderTop": f"2px solid {CYAN}33", "paddingTop": "14px",
         }),
-        html.P("Profit after all Etsy fees + shipping labels. Does not include material/COGS costs.",
+        html.P("Order data from uploaded CSVs. Label costs and true profit will be added with Etsy API integration.",
                style={"color": GRAY, "margin": "0 0 14px 0", "fontSize": "12px"}),
         _kpi_row,
         _store_summary,
