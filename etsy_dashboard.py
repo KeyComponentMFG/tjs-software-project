@@ -12748,24 +12748,34 @@ def _build_per_order_profit_section():
     for _op in _filtered:
         _store_short = {"keycomponentmfg": "KeyComp", "aurvio": "Aurvio", "lunalinks": "L&L"}.get(_op["store"], _op["store"])
         _refund_amt = _op.get("refund_amount", 0)
+        _order_net = _op.get("order_net", 0)
+        _discount = _op.get("discount", 0)
         _table_data.append({
             "Order #": str(_op["order_id"]),
-            "Date": _op["ship_date"],
+            "Date": _op.get("sale_date", _op.get("ship_date", "")),
             "Store": _store_short,
+            "Buyer": _op.get("buyer", "")[:25],
             "Item": _op["items"][:60],
             "Value": round(_op["order_value"], 2),
-            "Buyer Ship": round(_op["shipping_charged"], 2),
+            "Ship $": round(_op["shipping_charged"], 2),
+            "Discount": round(-_discount, 2) if _discount > 0 else None,
+            "Net": round(_order_net, 2),
             "Refund": round(-_refund_amt, 2) if _refund_amt > 0 else None,
+            "State": _op.get("ship_state", ""),
         })
 
     _dt_columns = [
         {"name": "Order #", "id": "Order #", "type": "text"},
         {"name": "Date", "id": "Date", "type": "text"},
         {"name": "Store", "id": "Store", "type": "text"},
+        {"name": "Buyer", "id": "Buyer", "type": "text"},
         {"name": "Item", "id": "Item", "type": "text"},
         {"name": "Value", "id": "Value", "type": "numeric", "format": {"specifier": "$,.2f"}},
-        {"name": "Ship $", "id": "Buyer Ship", "type": "numeric", "format": {"specifier": "$,.2f"}},
+        {"name": "Ship $", "id": "Ship $", "type": "numeric", "format": {"specifier": "$,.2f"}},
+        {"name": "Discount", "id": "Discount", "type": "numeric", "format": {"specifier": "$,.2f"}},
+        {"name": "Net", "id": "Net", "type": "numeric", "format": {"specifier": "$,.2f"}},
         {"name": "Refund", "id": "Refund", "type": "numeric", "format": {"specifier": "$,.2f"}},
+        {"name": "State", "id": "State", "type": "text"},
     ]
 
     _order_table = dash_table.DataTable(
@@ -12789,14 +12799,18 @@ def _build_per_order_profit_section():
             "textAlign": "right",
         },
         style_cell_conditional=[
-            {"if": {"column_id": "Order #"}, "textAlign": "left", "color": CYAN, "width": "110px"},
-            {"if": {"column_id": "Date"}, "textAlign": "left", "width": "100px", "color": GRAY},
-            {"if": {"column_id": "Store"}, "textAlign": "left", "width": "70px"},
-            {"if": {"column_id": "Item"}, "textAlign": "left", "width": "280px",
-             "overflow": "hidden", "textOverflow": "ellipsis", "maxWidth": "280px"},
-            {"if": {"column_id": "Value"}, "width": "90px"},
-            {"if": {"column_id": "Buyer Ship"}, "width": "80px"},
-            {"if": {"column_id": "Refund"}, "width": "80px"},
+            {"if": {"column_id": "Order #"}, "textAlign": "left", "color": CYAN, "width": "100px"},
+            {"if": {"column_id": "Date"}, "textAlign": "left", "width": "85px", "color": GRAY},
+            {"if": {"column_id": "Store"}, "textAlign": "left", "width": "60px"},
+            {"if": {"column_id": "Buyer"}, "textAlign": "left", "width": "120px", "overflow": "hidden", "textOverflow": "ellipsis"},
+            {"if": {"column_id": "Item"}, "textAlign": "left", "width": "200px",
+             "overflow": "hidden", "textOverflow": "ellipsis", "maxWidth": "200px"},
+            {"if": {"column_id": "Value"}, "width": "75px", "color": GREEN},
+            {"if": {"column_id": "Ship $"}, "width": "65px"},
+            {"if": {"column_id": "Discount"}, "width": "70px", "color": ORANGE},
+            {"if": {"column_id": "Net"}, "width": "75px", "color": CYAN},
+            {"if": {"column_id": "Refund"}, "width": "70px", "color": RED},
+            {"if": {"column_id": "State"}, "textAlign": "left", "width": "50px", "color": GRAY},
         ],
         style_data_conditional=[
             {"if": {"filter_query": "{True P/L} >= 0", "column_id": "True P/L"}, "color": GREEN, "fontWeight": "bold"},
