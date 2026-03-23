@@ -1,14 +1,17 @@
 """
-tests/conftest.py — Shared fixtures and helpers for the golden-dataset QA suite.
+tests/conftest.py — Shared fixtures and helpers for the golden-dataset QA suite
+AND the dashboard_utils regression test suite.
 
 Provides:
-- Golden dataset loader (JSON → DataFrame + bank_txns + invoices + config + expected)
+- Golden dataset loader (JSON -> DataFrame + bank_txns + invoices + config + expected)
 - Pipeline runner helper (runs full pipeline on fixture data, returns metrics + results)
 - Assertion helpers for Decimal-precision comparison
+- Supabase real-data fixtures (skip gracefully if no connection)
 """
 
 import json
 import os
+import sys
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
@@ -20,6 +23,11 @@ import pytest
 # ── Path constants ──
 TESTS_DIR = Path(__file__).parent
 GOLDEN_DIR = TESTS_DIR / "golden"
+PROJECT_DIR = TESTS_DIR.parent
+
+# Ensure the project root is on sys.path so imports work
+if str(PROJECT_DIR) not in sys.path:
+    sys.path.insert(0, str(PROJECT_DIR))
 
 
 # ── Golden dataset loader ──
@@ -68,7 +76,7 @@ def load_golden(filename: str) -> GoldenDataset:
 
 
 def _parse_money(val) -> float:
-    """Parse Etsy money strings: '$40.00' → 40.0, '--' → 0.0."""
+    """Parse Etsy money strings: '$40.00' -> 40.0, '--' -> 0.0."""
     if pd.isna(val) or val in ("--", "", None):
         return 0.0
     s = str(val).replace("$", "").replace(",", "").replace('"', "").strip()
@@ -144,7 +152,7 @@ def assert_money_decimal(actual: Decimal, expected_float: float, name: str = "",
     assert_money(float(actual), expected_float, name, tolerance)
 
 
-# ── Fixtures ──
+# ── Golden dataset fixtures ──
 
 @pytest.fixture(params=[
     "scenario_1_simple_month.json",
@@ -188,3 +196,37 @@ def scenario5():
 @pytest.fixture
 def scenario6():
     return load_golden("scenario_6_clean_reconciliation.json")
+
+
+# ── Supabase real-data fixtures (for dashboard_utils tests) ──
+
+def _try_load_supabase():
+    """Attempt to load real data from Supabase. Returns dict or None."""
+    try:
+        from supabase_loader import load_data
+        d = load_data()
+        if d and "DATA" in d and len(d["DATA"]) > 0:
+            return d
+    except Exception:
+        pass
+    return None
+
+
+_supabase_cache = {"loaded": False, "data": None}
+
+
+@pytest.fixture(scope="session")
+def real_data():
+    """Load real data from Supabase once for the entire test session.
+
+    Skips all tests using this fixture if Supabase is unavailable.
+    """
+    if not _supabase_cache["loaded"]:
+        _supabase_cache["data"] = _try_load_supabase()
+        _supabase_cache["loaded"] = True
+
+    if _supabase_cache["data"] is None:
+        pytest.skip("Supabase connection unavailable — skipping real-data tests")
+
+    d = _supabase_cache["data"]
+    return d["DATA"], d["CONFIG"]
