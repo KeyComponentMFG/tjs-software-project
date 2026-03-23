@@ -17144,7 +17144,72 @@ def _build_store_etsy_tab(store_key, store_label, store_color):
         except Exception:
             pass
 
+        # ── Data Coverage summary from Supabase for THIS store ──
+        _all_data = _DATA_ALL if _DATA_ALL is not None else DATA
+        _store_data = _all_data[_all_data["Store"] == store_key] if "Store" in _all_data.columns else pd.DataFrame()
+        _store_txn_count = len(_store_data)
+        _store_sales = _store_data[_store_data["Type"] == "Sale"] if _store_txn_count > 0 else pd.DataFrame()
+        _store_order_count = len(_store_sales)
+        _store_gross = _store_sales["Net_Clean"].sum() if _store_order_count > 0 else 0
+
+        # Date range
+        _store_date_range = ""
+        if _store_txn_count > 0 and "Date_Parsed" in _store_data.columns:
+            _sd_min = _store_data["Date_Parsed"].min()
+            _sd_max = _store_data["Date_Parsed"].max()
+            if pd.notna(_sd_min) and pd.notna(_sd_max):
+                _store_date_range = f"{_sd_min.strftime('%b %d, %Y')} — {_sd_max.strftime('%b %d, %Y')}"
+        elif _store_txn_count > 0:
+            try:
+                _sd_dates = pd.to_datetime(_store_data["Date"], format="%B %d, %Y", errors="coerce")
+                _sd_min = _sd_dates.min()
+                _sd_max = _sd_dates.max()
+                if pd.notna(_sd_min) and pd.notna(_sd_max):
+                    _store_date_range = f"{_sd_min.strftime('%b %d, %Y')} — {_sd_max.strftime('%b %d, %Y')}"
+            except Exception:
+                pass
+
+        # Month count
+        _store_months = []
+        if _store_txn_count > 0 and "Month" in _store_data.columns:
+            _store_months = sorted(_store_data["Month"].dropna().unique())
+
+        # Build data coverage card
+        if _store_txn_count > 0:
+            _coverage_card = html.Div([
+                html.Div([
+                    html.Span("DATA COVERAGE", style={"color": GRAY, "fontSize": "11px", "fontWeight": "600",
+                                                        "letterSpacing": "1px", "marginBottom": "6px", "display": "block"}),
+                    html.Div([
+                        html.Span(f"{_store_txn_count}", style={"color": store_color, "fontSize": "20px", "fontWeight": "bold"}),
+                        html.Span(" transactions", style={"color": GRAY, "fontSize": "13px", "marginLeft": "4px"}),
+                        html.Span(f"  |  {_store_order_count} orders  |  ${_store_gross:,.2f} gross",
+                                  style={"color": GRAY, "fontSize": "13px", "marginLeft": "8px"}),
+                    ]),
+                    html.Div(_store_date_range, style={"color": WHITE, "fontSize": "12px", "marginTop": "4px",
+                                                         "fontFamily": "monospace"}) if _store_date_range else html.Div(),
+                    html.Div(f"{len(_store_months)} month{'s' if len(_store_months) != 1 else ''}: {', '.join(_store_months)}",
+                             style={"color": DARKGRAY, "fontSize": "11px", "marginTop": "2px",
+                                    "fontFamily": "monospace"}) if _store_months else html.Div(),
+                ]),
+            ], style={
+                "backgroundColor": f"{store_color}10", "borderRadius": "8px", "padding": "12px 16px",
+                "borderLeft": f"3px solid {store_color}", "marginBottom": "16px",
+            })
+        else:
+            _coverage_card = html.Div([
+                html.Span("DATA COVERAGE", style={"color": GRAY, "fontSize": "11px", "fontWeight": "600",
+                                                    "letterSpacing": "1px", "marginBottom": "4px", "display": "block"}),
+                html.Div(f"No data uploaded for {store_label} yet.", style={
+                    "color": ORANGE, "fontSize": "13px"}),
+            ], style={
+                "backgroundColor": f"{ORANGE}10", "borderRadius": "8px", "padding": "12px 16px",
+                "borderLeft": f"3px solid {ORANGE}", "marginBottom": "16px",
+            })
+
         return html.Div([
+            # Data coverage summary
+            _coverage_card,
             # Row 1: Etsy Statements + Order CSVs
             html.Div([
                 _build_upload_zone("etsy", "\U0001f4ca", f"Etsy Statements — {store_label}", store_color, ".csv",
