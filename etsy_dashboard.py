@@ -17465,61 +17465,70 @@ app.layout = serve_layout
 )
 def render_active_tab(tab, _strict_flag, _upload_trigger, _selected_store, _dh_active_tab):
     """Rebuild the active tab's content on every tab switch, strict mode toggle, store change, or upload."""
-    print(f"[STORE] render_active_tab fired: tab={tab}, store={_selected_store}")
-    _apply_store_filter(_selected_store or "all")
-    _rebuild_all_charts()
-    stale_banner = _build_stale_data_banner()
+    try:
+        print(f"[STORE] render_active_tab fired: tab={tab}, store={_selected_store}")
+        _apply_store_filter(_selected_store or "all")
+        _rebuild_all_charts()
+        stale_banner = _build_stale_data_banner()
 
-    # Store filter banner — show which store is active
-    _store_label = STORES.get(_selected_store, "All Stores") if _selected_store and _selected_store != "all" else None
-    store_banner = html.Div()
-    if _store_label:
-        store_banner = html.Div([
-            html.Span(f"Viewing: {_store_label}", style={
-                "color": CYAN, "fontSize": "14px", "fontWeight": "bold",
-            }),
-            html.Span(f" — {order_count} orders, {len(DATA)} transactions", style={
-                "color": GRAY, "fontSize": "13px", "marginLeft": "12px",
-            }),
-        ], style={
-            "padding": "8px 20px", "backgroundColor": f"{CYAN}15",
-            "borderLeft": f"3px solid {CYAN}", "marginBottom": "4px",
-        })
+        # Store filter banner — show which store is active
+        _store_label = STORES.get(_selected_store, "All Stores") if _selected_store and _selected_store != "all" else None
+        store_banner = html.Div()
+        if _store_label:
+            store_banner = html.Div([
+                html.Span(f"Viewing: {_store_label}", style={
+                    "color": CYAN, "fontSize": "14px", "fontWeight": "bold",
+                }),
+                html.Span(f" — {order_count} orders, {len(DATA)} transactions", style={
+                    "color": GRAY, "fontSize": "13px", "marginLeft": "12px",
+                }),
+            ], style={
+                "padding": "8px 20px", "backgroundColor": f"{CYAN}15",
+                "borderLeft": f"3px solid {CYAN}", "marginBottom": "4px",
+            })
 
-    # Empty store guard — show message instead of crashing
-    _store_empty = order_count == 0 and _selected_store and _selected_store != "all"
-    if _store_empty and tab not in ("tab-data-hub", "tab-inventory"):
+        # Empty store guard — show message instead of crashing
+        _store_empty = order_count == 0 and _selected_store and _selected_store != "all"
+        if _store_empty and tab not in ("tab-data-hub", "tab-inventory"):
+            return html.Div([
+                stale_banner,
+                store_banner,
+                html.Div([
+                    html.Div(f"No data for {STORES.get(_selected_store, _selected_store)}", style={
+                        "color": ORANGE, "fontSize": "24px", "fontWeight": "bold", "textAlign": "center",
+                        "marginTop": "60px",
+                    }),
+                    html.Div("Upload Etsy CSV statements for this store in the Data Hub tab.", style={
+                        "color": GRAY, "fontSize": "14px", "textAlign": "center", "marginTop": "12px",
+                    }),
+                ], style={"padding": "40px"}),
+            ])
+
+        if tab == "tab-overview":
+            return html.Div([stale_banner, store_banner, build_tab1_overview()])
+        elif tab == "tab-deep-dive":
+            return html.Div([stale_banner, store_banner, build_tab2_deep_dive()])
+        elif tab == "tab-financials":
+            return html.Div([stale_banner, store_banner, build_tab3_financials()])
+        elif tab == "tab-inventory":
+            return html.Div([stale_banner, store_banner, build_tab4_inventory()])
+        elif tab == "tab-tax-forms":
+            return html.Div([stale_banner, store_banner, build_tab5_tax_forms()])
+        elif tab == "tab-valuation":
+            return html.Div([stale_banner, store_banner, build_tab6_valuation()])
+        elif tab == "tab-data-hub":
+            return html.Div([stale_banner, store_banner, build_tab7_data_hub(_dh_active_tab)])
+        elif tab == "tab-agreement":
+            return html.Div([stale_banner, store_banner, build_tab_agreement()])
+        return html.Div("Select a tab")
+    except Exception as _tab_err:
+        import traceback
+        _tb = traceback.format_exc()
+        print(f"[STORE] ERROR in render_active_tab: {_tb}")
         return html.Div([
-            stale_banner,
-            store_banner,
-            html.Div([
-                html.Div(f"No data for {STORES.get(_selected_store, _selected_store)}", style={
-                    "color": ORANGE, "fontSize": "24px", "fontWeight": "bold", "textAlign": "center",
-                    "marginTop": "60px",
-                }),
-                html.Div("Upload Etsy CSV statements for this store in the Data Hub tab.", style={
-                    "color": GRAY, "fontSize": "14px", "textAlign": "center", "marginTop": "12px",
-                }),
-            ], style={"padding": "40px"}),
+            html.Div(f"Error rendering tab (store={_selected_store}):", style={"color": RED, "fontWeight": "bold", "padding": "20px"}),
+            html.Pre(str(_tb), style={"color": ORANGE, "padding": "20px", "whiteSpace": "pre-wrap", "fontSize": "12px"}),
         ])
-
-    if tab == "tab-overview":
-        return html.Div([stale_banner, store_banner, build_tab1_overview()])
-    elif tab == "tab-deep-dive":
-        return html.Div([stale_banner, store_banner, build_tab2_deep_dive()])
-    elif tab == "tab-financials":
-        return html.Div([stale_banner, store_banner, build_tab3_financials()])
-    elif tab == "tab-inventory":
-        return html.Div([stale_banner, store_banner, build_tab4_inventory()])
-    elif tab == "tab-tax-forms":
-        return html.Div([stale_banner, store_banner, build_tab5_tax_forms()])
-    elif tab == "tab-valuation":
-        return html.Div([stale_banner, store_banner, build_tab6_valuation()])
-    elif tab == "tab-data-hub":
-        return html.Div([stale_banner, store_banner, build_tab7_data_hub(_dh_active_tab)])
-    elif tab == "tab-agreement":
-        return html.Div([stale_banner, store_banner, build_tab_agreement()])
-    return html.Div("Select a tab")
 
 
 # ── Strict Mode Toggle ───────────────────────────────────────────────────────
