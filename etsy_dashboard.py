@@ -12645,7 +12645,33 @@ def _build_ship_type():
 
 
 def _build_per_order_profit_section():
-    """Build the per-order profit table for the Financials tab."""
+    """Build the per-order profit section for the Financials tab.
+
+    DISABLED: Label-to-order matching uses a ±2 day window which produces
+    incorrect matches when print times exceed 2 days. This section will be
+    re-enabled once Etsy API integration provides real order→label→tracking links.
+    """
+    return html.Div([
+        html.H3("\U0001f4b0 PER-ORDER PROFIT", style={
+            "color": ORANGE, "margin": "30px 0 6px 0", "fontSize": "14px",
+            "letterSpacing": "1.5px", "borderTop": f"2px solid {ORANGE}33", "paddingTop": "14px",
+        }),
+        html.Div([
+            html.Div("TEMPORARILY DISABLED", style={
+                "color": ORANGE, "fontSize": "13px", "fontWeight": "bold", "marginBottom": "6px",
+            }),
+            html.P("Per-order profit tracking requires accurate label-to-order matching. "
+                    "The current ±2 day window produces incorrect matches when print times exceed 2 days. "
+                    "This section will be re-enabled once Etsy API integration is built, which provides "
+                    "real order → label → tracking links.",
+                    style={"color": GRAY, "fontSize": "12px", "lineHeight": "1.5"}),
+        ], style={
+            "backgroundColor": f"{ORANGE}10", "borderRadius": "8px", "padding": "14px 18px",
+            "borderLeft": f"3px solid {ORANGE}",
+        }),
+    ])
+
+    # ── Original implementation below — kept for re-enabling with API data ──
     if not ORDER_PROFITS:
         return html.Div([
             html.H3("\U0001f4b0 PER-ORDER PROFIT", style={
