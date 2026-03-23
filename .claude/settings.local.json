@@ -60,7 +60,17 @@
       "Bash(railway status:*)",
       "Bash(railway variables:*)",
       "Bash(grep:*)",
-      "Bash(ps aux:*)"
+      "Bash(ps aux:*)",
+      "WebSearch",
+      "Bash(while read:*)",
+      "Bash(do echo:*)",
+      "WebFetch(domain:www.reddit.com)",
+      "WebFetch(domain:forum.bambulab.com)",
+      "WebFetch(domain:wiki.bambulab.com)",
+      "WebFetch(domain:www.printables.com)",
+      "WebFetch(domain:all3dp.com)",
+      "WebFetch(domain:github.com)",
+      "Bash(python -c \":*)"
     ]
   }
 }

@@ -21,8 +21,8 @@ import flask
 import urllib.parse
 import logging
 _logger = logging.getLogger("dashboard.main")
-from etsy_dashboard.logging_config import get_logger as _get_logger
-from etsy_dashboard.callback_guard import guard_callback, get_error_summary
+from dashboard_utils.logging_config import get_logger as _get_logger
+from dashboard_utils.callback_guard import guard_callback, get_error_summary
 
 # ── Theme ────────────────────────────────────────────────────────────────────
 
