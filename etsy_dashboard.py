@@ -16549,7 +16549,8 @@ def _build_upload_zone(zone_id, icon, label, color, accept, description):
 
 
 def _get_existing_files(zone_type):
-    """Scan the appropriate directory and return list of {filename, size_kb, modified}."""
+    """Scan the appropriate directory and return list of {filename, size_kb, uploaded}."""
+    from datetime import datetime as _dt_files
     dir_map = {
         "etsy": os.path.join(BASE_DIR, "data", "etsy_statements"),
         "receipt": os.path.join(BASE_DIR, "data", "invoices", "keycomp"),
@@ -16568,6 +16569,7 @@ def _get_existing_files(zone_type):
                 files.append({
                     "filename": fn,
                     "size_kb": round(stat.st_size / 1024, 1),
+                    "uploaded": _dt_files.fromtimestamp(stat.st_mtime).strftime("%b %d, %Y %I:%M %p"),
                 })
         # For etsy: also scan store subdirectories
         if zone_type == "etsy":
@@ -16581,23 +16583,30 @@ def _get_existing_files(zone_type):
                             files.append({
                                 "filename": f"{store_slug}/{fn}",
                                 "size_kb": round(stat.st_size / 1024, 1),
+                                "uploaded": _dt_files.fromtimestamp(stat.st_mtime).strftime("%b %d, %Y %I:%M %p"),
                             })
+    # Sort by most recently uploaded first
+    files.sort(key=lambda x: x.get("uploaded", ""), reverse=True)
     return files
 
 
 def _render_file_list(files, color):
-    """Render a list of existing files as compact rows."""
+    """Render a list of existing files as compact rows with upload dates."""
     if not files:
         return html.Div("No files yet", style={"color": DARKGRAY, "fontSize": "12px", "fontStyle": "italic"})
     return html.Div([
         html.Div([
-            html.Span(f["filename"], style={"color": WHITE, "fontSize": "12px", "flex": "1"}),
-            html.Span(f'{f["size_kb"]} KB', style={"color": DARKGRAY, "fontSize": "11px",
-                                                      "fontFamily": "monospace"}),
-        ], style={"display": "flex", "justifyContent": "space-between",
-                   "padding": "3px 0", "borderBottom": "1px solid #ffffff08"})
+            html.Div([
+                html.Span(f["filename"], style={"color": WHITE, "fontSize": "12px"}),
+                html.Span(f'  {f["size_kb"]} KB', style={"color": DARKGRAY, "fontSize": "11px",
+                                                          "fontFamily": "monospace"}),
+            ], style={"flex": "1"}),
+            html.Span(f.get("uploaded", ""), style={"color": GRAY, "fontSize": "11px",
+                                                      "fontFamily": "monospace", "whiteSpace": "nowrap"}),
+        ], style={"display": "flex", "justifyContent": "space-between", "alignItems": "center",
+                   "padding": "4px 0", "borderBottom": "1px solid #ffffff08", "gap": "12px"})
         for f in files
-    ], style={"maxHeight": "120px", "overflowY": "auto"})
+    ], style={"maxHeight": "160px", "overflowY": "auto"})
 
 
 def _build_datahub_summary():
@@ -17089,12 +17098,16 @@ def _build_store_etsy_tab(store_key, store_label, store_color):
     else:
         # Per-store tab — has upload zone + stats + file list
         # Pre-populate order CSV file list from disk + Supabase
+        from datetime import datetime as _dt_order_files
         _order_file_entries = []
         _od = os.path.join(BASE_DIR, "data", "order_csvs", store_key)
         if os.path.isdir(_od):
             for _of in sorted(os.listdir(_od)):
                 if _of.endswith(".csv"):
-                    _order_file_entries.append(_of)
+                    _ofpath = os.path.join(_od, _of)
+                    _ofstat = os.stat(_ofpath)
+                    _ofdate = _dt_order_files.fromtimestamp(_ofstat.st_mtime).strftime("%b %d, %Y %I:%M %p")
+                    _order_file_entries.append(f"{_of}  ({_ofdate})")
         # Also check Supabase for persisted data
         if not _order_file_entries:
             try:
