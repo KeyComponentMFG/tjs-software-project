@@ -2646,6 +2646,7 @@ def _check_etsy_csv_overlap(new_df, new_filename):
 
     Returns (has_overlap, overlap_file, message).
     If overlap found, the caller should replace the old file.
+    Only checks files for the SAME store — never cross-store overlap.
     """
     import io
     etsy_dir = os.path.join(BASE_DIR, "data", "etsy_statements")
@@ -2661,32 +2662,32 @@ def _check_etsy_csv_overlap(new_df, new_filename):
     if pd.isna(new_min) or pd.isna(new_max):
         return False, None, ""
 
-    # Check both root dir and store subdirectories
+    # Only check the store-specific subdirectory — never the root or other stores
     _store = new_df["Store"].iloc[0] if "Store" in new_df.columns and len(new_df) > 0 else None
-    _dirs_to_check = [etsy_dir]
-    if _store:
-        _store_dir = os.path.join(etsy_dir, _store)
-        if os.path.isdir(_store_dir):
-            _dirs_to_check.append(_store_dir)
+    if not _store:
+        return False, None, ""
 
-    for _check_dir in _dirs_to_check:
-        for fn in os.listdir(_check_dir):
-            if not fn.lower().endswith(".csv"):
+    _store_dir = os.path.join(etsy_dir, _store)
+    if not os.path.isdir(_store_dir):
+        return False, None, ""
+
+    for fn in os.listdir(_store_dir):
+        if not fn.lower().endswith(".csv"):
+            continue
+        # Exact filename match
+        if fn == new_filename:
+            return True, fn, f"Replacing existing file {fn}"
+        # Date range overlap check
+        try:
+            existing_df = pd.read_csv(os.path.join(_store_dir, fn))
+            ex_dates = pd.to_datetime(existing_df["Date"], format="%B %d, %Y", errors="coerce")
+            ex_min, ex_max = ex_dates.min(), ex_dates.max()
+            if pd.isna(ex_min) or pd.isna(ex_max):
                 continue
-            # Exact filename match
-            if fn == new_filename:
-                return True, fn, f"Replacing existing file {fn}"
-            # Date range overlap check
-            try:
-                existing_df = pd.read_csv(os.path.join(_check_dir, fn))
-                ex_dates = pd.to_datetime(existing_df["Date"], format="%B %d, %Y", errors="coerce")
-                ex_min, ex_max = ex_dates.min(), ex_dates.max()
-                if pd.isna(ex_min) or pd.isna(ex_max):
-                    continue
-                if new_min <= ex_max and ex_min <= new_max:
-                    return True, fn, f"Date range overlaps with {fn} ({ex_min.strftime('%b %Y')}–{ex_max.strftime('%b %Y')})"
-            except Exception:
-                continue
+            if new_min <= ex_max and ex_min <= new_max:
+                return True, fn, f"Date range overlaps with {fn} ({ex_min.strftime('%b %Y')}–{ex_max.strftime('%b %Y')})"
+        except Exception:
+            continue
     return False, None, ""
 
 
