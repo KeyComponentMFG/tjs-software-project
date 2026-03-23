@@ -19,6 +19,10 @@ import os
 import base64
 import flask
 import urllib.parse
+import logging
+_logger = logging.getLogger("dashboard.main")
+from etsy_dashboard.logging_config import get_logger as _get_logger
+from etsy_dashboard.callback_guard import guard_callback, get_error_summary
 
 # ── Theme ────────────────────────────────────────────────────────────────────
 
@@ -226,7 +230,7 @@ elif os.path.isdir(_etsy_dir):
             _df_tmp["Store"] = "keycomponentmfg"
             _etsy_frames.append(_df_tmp)
         except Exception as _e:
-            print(f"WARNING: Failed to parse Etsy CSV {os.path.basename(_ef)}: {_e}")
+            _logger.warning("Failed to parse Etsy CSV %s: %s", os.path.basename(_ef), _e)
     # Load store-specific subdirectories
     for _store_slug in ("keycomponentmfg", "aurvio", "lunalinks"):
         _store_dir = os.path.join(_etsy_dir, _store_slug)
@@ -237,7 +241,7 @@ elif os.path.isdir(_etsy_dir):
                     _df_tmp["Store"] = _store_slug
                     _etsy_frames.append(_df_tmp)
                 except Exception as _e:
-                    print(f"WARNING: Failed to parse Etsy CSV {_store_slug}/{os.path.basename(_ef)}: {_e}")
+                    _logger.warning("Failed to parse Etsy CSV %s/%s: %s", _store_slug, os.path.basename(_ef), _e)
 
 _parse_warnings = []  # Track parse failures for visibility
 
@@ -295,7 +299,7 @@ if _etsy_frames:
     DATA["Month"] = DATA["Date_Parsed"].dt.to_period("M").astype(str)
     DATA["Week"] = DATA["Date_Parsed"].dt.to_period("W").apply(lambda p: p.start_time)
     if _parse_warnings:
-        print(f"WARNING: {len(_parse_warnings)} money values failed to parse (treated as $0.00)")
+        _logger.warning("%d money values failed to parse (treated as $0.00)", len(_parse_warnings))
         for w in _parse_warnings[:5]:  # Show first 5
             print(f"  {w}")
         if len(_parse_warnings) > 5:
@@ -347,7 +351,7 @@ if os.path.isdir(_init_bank_dir):
                 _init_bank_txns.extend(_txns)
                 _init_covered.update(_cov)
             except Exception as _e:
-                print(f"WARNING: Failed to parse bank PDF {_fn}: {_e}")
+                _logger.warning("Failed to parse bank PDF %s: %s", _fn, _e)
     _csv_txns = []
     _csv_cov = set()
     for _fn in sorted(os.listdir(_init_bank_dir)):
@@ -357,7 +361,7 @@ if os.path.isdir(_init_bank_dir):
                 _csv_txns.extend(_txns)
                 _csv_cov.update(_cov)
             except Exception as _e:
-                print(f"WARNING: Failed to parse bank CSV {_fn}: {_e}")
+                _logger.warning("Failed to parse bank CSV %s: %s", _fn, _e)
     if _csv_txns:
         _seen = {}
         for _t in _csv_txns:
@@ -708,7 +712,7 @@ try:
                 "location": d.get("location", ""),
             })
 except Exception as _e:
-    print(f"WARNING: Failed to load item details: {_e}")
+    _logger.warning("Failed to load item details: %s", _e)
 
 # ── Location Overrides ─────────────────────────────────────────────────────
 # Load overrides from Supabase (keyed by (order_num, item_name))
@@ -719,7 +723,7 @@ try:
         key = (ov["order_num"], ov["item_name"])
         _LOC_OVERRIDES.setdefault(key, []).append({"location": ov["location"], "qty": ov["qty"]})
 except Exception as _e:
-    print(f"WARNING: Failed to load location overrides: {_e}")
+    _logger.warning("Failed to load location overrides: %s", _e)
 
 # Apply overrides: expand split items into separate rows
 # NOTE: Skip overrides when item details exist (details already include locations)
@@ -939,7 +943,7 @@ etsy_csv_gap = round(etsy_balance_calculated - etsy_balance, 2)
 _check_net = round(DATA["Net_Clean"].sum(), 2)
 _check_earned = round(etsy_net_earned, 2)
 if abs(_check_net - _check_earned) > 0.01:
-    print(f"WARNING: etsy_net_earned ({_check_earned}) != DATA Net_Clean sum ({_check_net})")
+    _logger.warning("etsy_net_earned (%s) != DATA Net_Clean sum (%s)", _check_earned, _check_net)
 
 # ── Bank-Reconciled Profit (the REAL numbers) ──
 # This is the single source of truth for profit, used across all tabs
@@ -1008,9 +1012,9 @@ try:
     _acct_pipeline = _get_pipeline()
     _acct_pipeline.full_rebuild(DATA, BANK_TXNS, CONFIG, invoices=INVOICES)
     _publish_to_globals(_acct_pipeline, __name__)
-    print(f"[Dashboard] Accounting pipeline active: {_acct_pipeline.ledger.summary()}")
+    _logger.info("Accounting pipeline active: %s", _acct_pipeline.ledger.summary())
 except Exception as _pipe_err:
-    print(f"WARNING: Accounting pipeline failed, using legacy calculations: {_pipe_err}")
+    _logger.warning("Accounting pipeline failed, using legacy calculations: %s", _pipe_err)
     import traceback
     traceback.print_exc()
     _acct_pipeline = None
@@ -1022,7 +1026,7 @@ try:
     _ceo_agent = CEOAgent()
     _ceo_health = _ceo_agent.run_startup_check(_acct_pipeline) if _acct_pipeline else None
 except Exception as _ceo_err:
-    print(f"WARNING: CEO Agent failed (pipeline still active): {_ceo_err}")
+    _logger.warning("CEO Agent failed (pipeline still active): %s", _ceo_err)
     import traceback
     traceback.print_exc()
 
@@ -2319,7 +2323,7 @@ def _reload_inventory_data(new_order):
     _sb_ok = _save_new_order(new_order)
 
     if not _sb_ok:
-        print(f"WARNING: Failed to save order {new_order.get('order_num', '?')} to Supabase")
+        _logger.warning("Failed to save order %s to Supabase", new_order.get('order_num', '?'))
 
     # Build new INV_ITEMS rows (mirrors lines 8809-8851)
     try:
@@ -2573,9 +2577,9 @@ def _cascade_reload(source="etsy"):
             _sm = getattr(_acct_pipeline, '_strict_mode', False)
             _acct_pipeline.full_rebuild(DATA, BANK_TXNS, CONFIG, invoices=INVOICES, strict_mode=_sm)
             _publish_to_globals(_acct_pipeline, __name__)
-            print(f"[Dashboard] Pipeline rebuilt after {source} reload: {_acct_pipeline.ledger.summary()}")
+            _logger.info("Pipeline rebuilt after %s reload: %s", source, _acct_pipeline.ledger.summary())
         except Exception as e:
-            print(f"WARNING: Pipeline rebuild failed after {source} reload: {e}")
+            _logger.warning("Pipeline rebuild failed after %s reload: %s", source, e)
             import traceback
             traceback.print_exc()
 
@@ -5953,7 +5957,7 @@ def _rebuild_all_charts():
         _build_all_charts_inner()
     except Exception as _chart_err:
         import traceback
-        print(f"[CHARTS] Error building charts: {traceback.format_exc()}")
+        _logger.warning("Error building charts: %s", traceback.format_exc())
         # Charts that were built before the error keep their values.
         # Charts not yet built keep their previous values or defaults.
         # This prevents a crash in one chart from blocking the whole page.
@@ -10855,7 +10859,8 @@ def api_health():
         "breakdown": [
             {"name": k, "score": sub_scores[k], "weight": round(weights[k] * 100)}
             for k in sub_scores
-        ]
+        ],
+        "callback_errors": get_error_summary(),
     })
 
 
@@ -17575,72 +17580,64 @@ app.layout = serve_layout
     Input("store-selector", "value"),
     State("datahub-active-store-tab", "data"),
 )
+@guard_callback(n_outputs=1)
 def render_active_tab(tab, _strict_flag, _upload_trigger, _selected_store, _dh_active_tab):
     """Rebuild the active tab's content on every tab switch, strict mode toggle, store change, or upload."""
-    try:
-        print(f"[STORE] render_active_tab fired: tab={tab}, store={_selected_store}")
-        _apply_store_filter(_selected_store or "all")
-        _rebuild_all_charts()
-        stale_banner = _build_stale_data_banner()
+    _logger.info("render_active_tab fired: tab=%s, store=%s", tab, _selected_store)
+    _apply_store_filter(_selected_store or "all")
+    _rebuild_all_charts()
+    stale_banner = _build_stale_data_banner()
 
-        # Store filter banner — show which store is active
-        _store_label = STORES.get(_selected_store, "All Stores") if _selected_store and _selected_store != "all" else None
-        store_banner = html.Div()
-        if _store_label:
-            store_banner = html.Div([
-                html.Span(f"Viewing: {_store_label}", style={
-                    "color": CYAN, "fontSize": "14px", "fontWeight": "bold",
-                }),
-                html.Span(f" — {order_count} orders, {len(DATA)} transactions", style={
-                    "color": GRAY, "fontSize": "13px", "marginLeft": "12px",
-                }),
-            ], style={
-                "padding": "8px 20px", "backgroundColor": f"{CYAN}15",
-                "borderLeft": f"3px solid {CYAN}", "marginBottom": "4px",
-            })
+    # Store filter banner — show which store is active
+    _store_label = STORES.get(_selected_store, "All Stores") if _selected_store and _selected_store != "all" else None
+    store_banner = html.Div()
+    if _store_label:
+        store_banner = html.Div([
+            html.Span(f"Viewing: {_store_label}", style={
+                "color": CYAN, "fontSize": "14px", "fontWeight": "bold",
+            }),
+            html.Span(f" — {order_count} orders, {len(DATA)} transactions", style={
+                "color": GRAY, "fontSize": "13px", "marginLeft": "12px",
+            }),
+        ], style={
+            "padding": "8px 20px", "backgroundColor": f"{CYAN}15",
+            "borderLeft": f"3px solid {CYAN}", "marginBottom": "4px",
+        })
 
-        # Empty store guard — show message instead of crashing
-        _store_empty = order_count == 0 and _selected_store and _selected_store != "all"
-        if _store_empty and tab not in ("tab-data-hub", "tab-inventory"):
-            return html.Div([
-                stale_banner,
-                store_banner,
-                html.Div([
-                    html.Div(f"No data for {STORES.get(_selected_store, _selected_store)}", style={
-                        "color": ORANGE, "fontSize": "24px", "fontWeight": "bold", "textAlign": "center",
-                        "marginTop": "60px",
-                    }),
-                    html.Div("Upload Etsy CSV statements for this store in the Data Hub tab.", style={
-                        "color": GRAY, "fontSize": "14px", "textAlign": "center", "marginTop": "12px",
-                    }),
-                ], style={"padding": "40px"}),
-            ])
-
-        if tab == "tab-overview":
-            return html.Div([stale_banner, store_banner, build_tab1_overview()])
-        elif tab == "tab-deep-dive":
-            return html.Div([stale_banner, store_banner, build_tab2_deep_dive()])
-        elif tab == "tab-financials":
-            return html.Div([stale_banner, store_banner, build_tab3_financials()])
-        elif tab == "tab-inventory":
-            return html.Div([stale_banner, store_banner, build_tab4_inventory()])
-        elif tab == "tab-tax-forms":
-            return html.Div([stale_banner, store_banner, build_tab5_tax_forms()])
-        elif tab == "tab-valuation":
-            return html.Div([stale_banner, store_banner, build_tab6_valuation()])
-        elif tab == "tab-data-hub":
-            return html.Div([stale_banner, store_banner, build_tab7_data_hub(_dh_active_tab)])
-        elif tab == "tab-agreement":
-            return html.Div([stale_banner, store_banner, build_tab_agreement()])
-        return html.Div("Select a tab")
-    except Exception as _tab_err:
-        import traceback
-        _tb = traceback.format_exc()
-        print(f"[STORE] ERROR in render_active_tab: {_tb}")
+    # Empty store guard — show message instead of crashing
+    _store_empty = order_count == 0 and _selected_store and _selected_store != "all"
+    if _store_empty and tab not in ("tab-data-hub", "tab-inventory"):
         return html.Div([
-            html.Div(f"Error rendering tab (store={_selected_store}):", style={"color": RED, "fontWeight": "bold", "padding": "20px"}),
-            html.Pre(str(_tb), style={"color": ORANGE, "padding": "20px", "whiteSpace": "pre-wrap", "fontSize": "12px"}),
+            stale_banner,
+            store_banner,
+            html.Div([
+                html.Div(f"No data for {STORES.get(_selected_store, _selected_store)}", style={
+                    "color": ORANGE, "fontSize": "24px", "fontWeight": "bold", "textAlign": "center",
+                    "marginTop": "60px",
+                }),
+                html.Div("Upload Etsy CSV statements for this store in the Data Hub tab.", style={
+                    "color": GRAY, "fontSize": "14px", "textAlign": "center", "marginTop": "12px",
+                }),
+            ], style={"padding": "40px"}),
         ])
+
+    if tab == "tab-overview":
+        return html.Div([stale_banner, store_banner, build_tab1_overview()])
+    elif tab == "tab-deep-dive":
+        return html.Div([stale_banner, store_banner, build_tab2_deep_dive()])
+    elif tab == "tab-financials":
+        return html.Div([stale_banner, store_banner, build_tab3_financials()])
+    elif tab == "tab-inventory":
+        return html.Div([stale_banner, store_banner, build_tab4_inventory()])
+    elif tab == "tab-tax-forms":
+        return html.Div([stale_banner, store_banner, build_tab5_tax_forms()])
+    elif tab == "tab-valuation":
+        return html.Div([stale_banner, store_banner, build_tab6_valuation()])
+    elif tab == "tab-data-hub":
+        return html.Div([stale_banner, store_banner, build_tab7_data_hub(_dh_active_tab)])
+    elif tab == "tab-agreement":
+        return html.Div([stale_banner, store_banner, build_tab_agreement()])
+    return html.Div("Select a tab")
 
 
 # ── Strict Mode Toggle ───────────────────────────────────────────────────────
@@ -17664,11 +17661,11 @@ def toggle_strict_mode(is_on):
             _recompute_tax_years()
             _recompute_valuation()
             _rebuild_all_charts()
-            print(f"[Dashboard] Strict mode {'ON' if is_on else 'OFF'}: {_acct_pipeline.ledger.summary()}")
+            _logger.info("Strict mode %s: %s", 'ON' if is_on else 'OFF', _acct_pipeline.ledger.summary())
         except Exception as e:
             import traceback
             traceback.print_exc()
-            print(f"WARNING: Strict mode toggle failed: {e}")
+            _logger.warning("Strict mode toggle failed: %s", e)
 
     label = "ON" if is_on else "OFF"
     color = {"color": "#e74c3c" if is_on else GRAY, "fontSize": "11px",
@@ -18696,7 +18693,7 @@ def handle_receipt_wizard(contents, save_clicks, skip_clicks, done_clicks, back_
         _sb_ok = _save_new_order(order)
     
         if not _sb_ok:
-            print(f"WARNING: Failed to save order {order.get('order_num', '?')} to Supabase (wizard)")
+            _logger.warning("Failed to save order %s to Supabase (wizard)", order.get('order_num', '?'))
 
         # Build INV_ITEMS rows for this new order
         try:
@@ -19701,6 +19698,7 @@ def render_datahub_store_tab(tab):
     Input("datahub-store-tab-content", "children"),
     State("datahub-store-tabs", "value"),
 )
+@guard_callback(n_outputs=6)
 def init_datahub_files(_trigger, _selected_store, _tab_content, _dh_store_tab):
     """Populate existing file lists and initial stats on page load."""
     # Use the Data Hub store sub-tab for Etsy filtering
@@ -19788,6 +19786,7 @@ def init_datahub_files(_trigger, _selected_store, _tab_content, _dh_store_tab):
     State("datahub-etsy-store-picker", "data"),
     prevent_initial_call=True,
 )
+@guard_callback(n_outputs=19)
 def handle_datahub_upload(etsy_contents, receipt_contents, bank_contents, orders_contents, listings_contents,
                           etsy_filename, receipt_filename, bank_filename, orders_filename, listings_filename,
                           activity_log, etsy_store_picker):
@@ -19803,7 +19802,7 @@ def handle_datahub_upload(etsy_contents, receipt_contents, bank_contents, orders
     now_str = _dt.datetime.now().strftime("%I:%M:%S %p")
     nu = dash.no_update  # shorthand
 
-    print(f"[UPLOAD] Callback fired! trigger={trigger}, IS_RAILWAY={IS_RAILWAY}")
+    _logger.info("Upload callback fired: trigger=%s, IS_RAILWAY=%s", trigger, IS_RAILWAY)
 
     # Initialize outputs — all no_update by default
     etsy_status, etsy_file_list, etsy_stats = nu, nu, nu
@@ -19884,19 +19883,19 @@ def handle_datahub_upload(etsy_contents, receipt_contents, bank_contents, orders
                 _full_store_df["Store"] = _upload_store
                 _replaced_count = len(_existing_store) - len(_keep_existing)
 
-                print(f"[UPLOAD] Syncing {len(_full_store_df)} rows for '{_upload_store}' to Supabase ({_replaced_count} replaced)...")
+                _logger.info("Syncing %d rows for '%s' to Supabase (%d replaced)", len(_full_store_df), _upload_store, _replaced_count)
                 _sb_ok = False
                 try:
                     _sync_etsy_to_supabase(_full_store_df)
                     _sb_ok = True
                 except Exception as _se:
-                    print(f"[UPLOAD] Supabase sync failed: {_se}")
+                    _logger.error("Supabase sync failed: %s", _se)
 
                 # Step 3: Reload ALL data from Supabase to get a clean, complete state
-                print(f"[UPLOAD] Reloading all data from Supabase...")
+                _logger.info("Reloading all data from Supabase...")
                 _sb_data = _load_data()
                 DATA = _sb_data["DATA"]
-                print(f"[UPLOAD] Loaded {len(DATA)} total rows from Supabase")
+                _logger.info("Loaded %d total rows from Supabase", len(DATA))
 
                 # Step 4: Rebuild everything from the clean data
                 _rebuild_etsy_derived()
@@ -19906,7 +19905,7 @@ def handle_datahub_upload(etsy_contents, receipt_contents, bank_contents, orders
                 stats["replaced_rows"] = _replaced_count
                 stats["months"] = ", ".join(sorted(_new_months))
                 _cascade_reload("etsy")
-                print(f"[UPLOAD] Complete: {len(DATA)} rows, gross=${gross_sales:.2f}")
+                _logger.info("Upload complete: %d rows, gross=$%.2f", len(DATA), gross_sales)
                 msg = f"{len(_new_df)} rows loaded ({_replaced_count} replaced, months: {stats['months']})"
             
 
@@ -20170,7 +20169,7 @@ def handle_datahub_upload(etsy_contents, receipt_contents, bank_contents, orders
             _cols = list(_order_df.columns)
             _row_count = len(_order_df)
 
-            print(f"[UPLOAD] Order CSV for {_store_display}: {fname}, {_row_count} rows, columns: {_cols}")
+            _logger.info("Order CSV for %s: %s, %d rows, columns: %s", _store_display, fname, _row_count, _cols)
 
             # Persist to Supabase so data survives redeploys
             _csv_type = "orders" if "Order Net" in _cols else "items"
@@ -20197,7 +20196,7 @@ def handle_datahub_upload(etsy_contents, receipt_contents, bank_contents, orders
                                    f"(avg ${ORDER_PROFIT_SUMMARY['avg_profit']:,.2f})")
             except Exception as _pe:
                 _profit_msg = ""
-                print(f"[UPLOAD] Order profit compute failed: {_pe}")
+                _logger.warning("Order profit compute failed: %s", _pe)
 
             orders_status = html.Div([
                 html.Span("\u2713 ", style={"color": GREEN, "fontWeight": "bold"}),
@@ -20251,7 +20250,7 @@ def handle_datahub_upload(etsy_contents, receipt_contents, bank_contents, orders
             _cols = list(_listings_df.columns)
             _row_count = len(_listings_df)
 
-            print(f"[UPLOAD] Listings CSV for {_store_display}: {fname}, {_row_count} listings, columns: {_cols}")
+            _logger.info("Listings CSV for %s: %s, %d listings, columns: %s", _store_display, fname, _row_count, _cols)
 
             # Keep essential columns only
             _keep = [c for c in ['TITLE', 'DESCRIPTION', 'PRICE', 'CURRENCY_CODE', 'QUANTITY',
@@ -20267,9 +20266,9 @@ def handle_datahub_upload(etsy_contents, receipt_contents, bank_contents, orders
                 try:
                     from supabase_loader import save_config_value
                     save_config_value(f"listings_csv_{_upload_store}", _json_l2.dumps(_records))
-                    print(f"[UPLOAD] Saved {len(_records)} listings for {_upload_store} to Supabase")
+                    _logger.info("Saved %d listings for %s to Supabase", len(_records), _upload_store)
                 except Exception as _e:
-                    print(f"[UPLOAD] Listings Supabase save failed: {_e}")
+                    _logger.error("Listings Supabase save failed: %s", _e)
             threading.Thread(target=_save_listings, daemon=True).start()
 
             _col_preview = ", ".join(_cols[:10])
