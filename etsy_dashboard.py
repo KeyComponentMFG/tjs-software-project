@@ -16293,7 +16293,6 @@ def sync_datahub_store_tab(tab):
 @app.callback(
     Output("datahub-store-tab-content", "children"),
     Input("datahub-store-tabs", "value"),
-    prevent_initial_call=True,
 )
 def render_datahub_store_tab(tab):
     """Render the content for the selected store sub-tab."""
