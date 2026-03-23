@@ -70,7 +70,8 @@
       "WebFetch(domain:www.printables.com)",
       "WebFetch(domain:all3dp.com)",
       "WebFetch(domain:github.com)",
-      "Bash(python -c \":*)"
+      "Bash(python -c \":*)",
+      "Bash(iconv -f UTF-8 -t ASCII//TRANSLIT)"
     ]
   }
 }
