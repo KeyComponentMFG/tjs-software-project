@@ -21,37 +21,9 @@ logger = get_logger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Helper functions (duplicated from etsy_dashboard.py to avoid circular imports)
+# Helper functions — canonical definitions live in dashboard_utils.helpers
 # ---------------------------------------------------------------------------
-
-def _normalize_product_name(name: str, aliases: dict | None = None) -> str:
-    """Normalize Etsy product names that get truncated differently in CSVs."""
-    if not isinstance(name, str):
-        return name
-    name = name.rstrip(".")
-    if aliases:
-        for canonical, variants in aliases.items():
-            if name in variants or name == canonical:
-                return canonical
-    if " | " in name:
-        name = name.split(" | ")[0]
-    return name.strip()
-
-
-def _merge_product_prefixes(series: pd.Series, aliases: dict | None = None) -> pd.Series:
-    """Merge truncated product names that are prefixes of known shorter canonical names."""
-    if aliases:
-        return series.apply(lambda n: _normalize_product_name(n, aliases=aliases))
-    canonical = sorted(series.unique(), key=len)
-    mapping: dict[str, str] = {}
-    for name in canonical:
-        for shorter in canonical:
-            if shorter != name and len(shorter) >= 10 and name.startswith(shorter):
-                mapping[name] = shorter
-                break
-    if mapping:
-        return series.map(lambda n: mapping.get(n, n))
-    return series
+from dashboard_utils.helpers import _normalize_product_name, _merge_product_prefixes  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
