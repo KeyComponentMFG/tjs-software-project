@@ -5949,6 +5949,35 @@ def _rebuild_all_charts():
         return
 
     # ── Build Charts ─────────────────────────────────────────────────────────────
+    try:
+        _build_all_charts_inner()
+    except Exception as _chart_err:
+        import traceback
+        print(f"[CHARTS] Error building charts: {traceback.format_exc()}")
+        # Charts that were built before the error keep their values.
+        # Charts not yet built keep their previous values or defaults.
+        # This prevents a crash in one chart from blocking the whole page.
+
+
+def _build_all_charts_inner():
+    """Inner chart builder — separated so _rebuild_all_charts can catch errors."""
+    global BANK_MONTH_NAMES, _anomaly_high, _anomaly_low, _aov_best_week, _aov_worst_week, _best_day_rev, _best_dow, _breakeven_daily
+    global _breakeven_monthly, _breakeven_orders, _cf_cum, _cf_debits, _cf_deposits, _cf_months, _cf_net, _contrib_margin_pct
+    global _corr_ad_vals, _corr_r2, _corr_rev_vals, _current_14d_profit_avg, _daily_orders_avg, _daily_profit_avg, _daily_rev_avg, _daily_rev_mean, _daily_rev_std
+    global _dow_names, _dow_ord_vals, _dow_orders, _dow_prof_vals, _dow_profit, _dow_rev_vals, _dow_revenue, _etsy_took
+    global _growth_pct, _inv_cogs_ratio, _inv_months, _inv_rev_vals, _inv_spend_vals, _last_aov_val, _last_fee_pct, _last_margin_pct
+    global _last_mkt_pct, _last_ppo_m, _last_ppo_val, _last_ratio_m, _last_ref_pct, _last_ship_pct, _latest_month_net, _latest_month_rev
+    global _month_abbr, _monthly_fixed, _net_margin_overall, _peak_orders_day, _prod_monthly, _r2_sales, _supplier_spend, _top_n_products
+    global _top_prod_names, _total_costs, _unit_ads, _unit_cogs, _unit_fees, _unit_margin, _unit_profit, _unit_refund
+    global _unit_rev, _unit_ship, _worst_dow, _zero_days, all_inv_months, all_loc_months, anomaly_fig, aov_fig
+    global aov_vals, bank_month_debs, bank_month_deps, bank_month_labels, bank_month_nets, bank_monthly_fig, bank_months_sorted, cashflow_fig
+    global corr_fig, cost_ratio_fig, cum_fig, daily_fig, dow_fig, expense_colors_list, expense_labels_list, expense_pie
+    global expense_values_list, fee_pcts, intl_fig, inv_cat_bar, inv_cat_fig, inv_monthly_fig, inv_months_sorted, loc_fig
+    global loc_monthly_fig, margin_pcts, mkt_pcts_list, monthly_fig, net_by_month, orders_day_fig, ppo_fig, ppo_months
+    global ppo_vals, prod_name, product_fig, product_heat, profit_rolling_fig, proj_chart, ratio_months, ref_pcts, rev_cogs_fig
+    global rev_inv_fig, sankey_fig, sankey_link_colors, sankey_node_colors, sankey_node_labels, sankey_sources, sankey_targets, sankey_values
+    global ship_pcts, ship_type_colors, ship_type_fig, ship_type_names, ship_type_vals, shipping_compare, texas_cat_fig, top_n
+    global top_products, trend_profit_rev, true_profit_monthly, tulsa_cat_fig, unit_wf
 
     # --- TAB 1: OVERVIEW CHARTS ---
 
@@ -6464,7 +6493,7 @@ def _rebuild_all_charts():
 
     # Revenue projection chart
     proj_chart = _no_data_fig("Revenue Projection", "Need 3+ months of data for projections.")
-    if "proj_sales" in analytics_projections:
+    if "proj_sales" in analytics_projections and len(months_sorted) >= 2:
         from datetime import datetime as _dt_chart
         import calendar as _cal_chart
         _cur_m_chart = _dt_chart.now().strftime("%Y-%m")
@@ -6475,7 +6504,10 @@ def _rebuild_all_charts():
         _complete_months = [m for m in months_sorted if m != _cur_m_chart] if _is_partial else list(months_sorted)
 
         # Future projection months
-        _last_complete = _complete_months[-1] if _complete_months else months_sorted[-1]
+        if not months_sorted:
+            _last_complete = _cur_m_chart
+        else:
+            _last_complete = _complete_months[-1] if _complete_months else months_sorted[-1]
         _last_period = pd.Period(_last_complete, freq="M")
         _proj_months = [(_last_period + i).strftime("%Y-%m") for i in range(1, 4)]
         _proj_sales_vals = list(np.maximum(analytics_projections["proj_sales"], 0))
@@ -6575,16 +6607,18 @@ def _rebuild_all_charts():
 
         # ── Vertical divider ──
         proj_chart.add_vline(x=_last_complete, line=dict(color=GRAY, width=1, dash="dot"))
-        proj_chart.add_annotation(
-            x=_complete_months[len(_complete_months) // 2], y=1.05, yref="paper",
-            text="ACTUAL", showarrow=False,
-            font=dict(size=13, color=GREEN, family="Arial Black"),
-        )
-        proj_chart.add_annotation(
-            x=_proj_months[1], y=1.05, yref="paper",
-            text="PROJECTED", showarrow=False,
-            font=dict(size=13, color=CYAN, family="Arial Black"),
-        )
+        if _complete_months:
+            proj_chart.add_annotation(
+                x=_complete_months[len(_complete_months) // 2], y=1.05, yref="paper",
+                text="ACTUAL", showarrow=False,
+                font=dict(size=13, color=GREEN, family="Arial Black"),
+            )
+        if len(_proj_months) > 1:
+            proj_chart.add_annotation(
+                x=_proj_months[1], y=1.05, yref="paper",
+                text="PROJECTED", showarrow=False,
+                font=dict(size=13, color=CYAN, family="Arial Black"),
+            )
 
         # ── R² confidence ──
         _r2 = analytics_projections.get("r2_sales", 0)
