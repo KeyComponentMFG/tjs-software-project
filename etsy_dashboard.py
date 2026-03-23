@@ -16373,33 +16373,238 @@ def init_datahub_files(_trigger, _selected_store, _tab_content, _dh_store_tab):
 
 # ── Data Hub: Upload Callback ───────────────────────────────────────────────
 
-# ── DEBUG: Standalone bank upload test — fires on ANY bank file drop ──
+# ── Bank + Receipt Upload (shared across stores — always in DOM) ─────────
 @app.callback(
-    Output("datahub-bank-status", "children", allow_duplicate=True),
+    Output("datahub-bank-status", "children"),
+    Output("datahub-bank-files", "children", allow_duplicate=True),
+    Output("datahub-bank-stats", "children", allow_duplicate=True),
+    Output("datahub-receipt-status", "children"),
+    Output("datahub-receipt-files", "children", allow_duplicate=True),
+    Output("datahub-receipt-stats", "children", allow_duplicate=True),
+    Output("datahub-activity-log", "children", allow_duplicate=True),
+    Output("datahub-summary-strip", "children", allow_duplicate=True),
+    Output("app-header-content", "children", allow_duplicate=True),
+    Output("upload-reload-trigger", "data", allow_duplicate=True),
     Input("datahub-bank-upload", "contents"),
+    Input("datahub-receipt-upload", "contents"),
     State("datahub-bank-upload", "filename"),
+    State("datahub-receipt-upload", "filename"),
+    State("datahub-activity-log", "children"),
     prevent_initial_call=True,
 )
-def _debug_bank_upload(contents, filename):
-    if not contents:
-        return dash.no_update
-    _logger.info("BANK UPLOAD DEBUG: file=%s, has_contents=%s", filename, bool(contents))
-    return html.Div([
-        html.Span("FILE RECEIVED: ", style={"color": GREEN, "fontWeight": "bold"}),
-        html.Span(f"{filename}", style={"color": WHITE}),
-    ])
+@guard_callback(n_outputs=10)
+def handle_shared_upload(bank_contents, receipt_contents,
+                         bank_filename, receipt_filename,
+                         activity_log):
+    """Handle bank and receipt uploads — these are always visible on All Stores tab."""
+    global DATA, BANK_TXNS
+    import datetime as _dt
+
+    trigger = callback_context.triggered[0]["prop_id"] if callback_context.triggered else ""
+    now_str = _dt.datetime.now().strftime("%I:%M:%S %p")
+    nu = dash.no_update
+
+    _logger.info("Shared upload callback fired: trigger=%s", trigger)
+
+    bank_status, bank_file_list, bank_stats = nu, nu, nu
+    rcpt_status, rcpt_file_list, rcpt_stats = nu, nu, nu
+    new_log = activity_log or []
+    summary = nu
+    header = nu
+    reload_trigger = nu
+
+    # ── Receipt PDF Upload ───────────────────────────────────────────────
+    if "datahub-receipt-upload" in trigger and receipt_contents:
+        try:
+            content_type, content_string = receipt_contents.split(",")
+            decoded = base64.b64decode(content_string)
+
+            fname = receipt_filename or "receipt.pdf"
+            save_folder = os.path.join(BASE_DIR, "data", "invoices", "keycomp")
+            os.makedirs(save_folder, exist_ok=True)
+            save_path = os.path.join(save_folder, fname)
+            with open(save_path, "wb") as f:
+                f.write(decoded)
+
+            from _parse_invoices import parse_pdf_file
+            order = parse_pdf_file(save_path)
+
+            if not order or not order.get("items"):
+                try:
+                    os.remove(save_path)
+                except Exception:
+                    pass
+                rcpt_status = html.Div([
+                    html.Span("\u2717 ", style={"color": RED, "fontWeight": "bold"}),
+                    html.Span("Could not parse any items from this PDF.",
+                              style={"color": RED, "fontSize": "13px"}),
+                ])
+            else:
+                dup = any(inv["order_num"] == order["order_num"] for inv in INVOICES)
+                if dup:
+                    try:
+                        os.remove(save_path)
+                    except Exception:
+                        pass
+                    rcpt_status = html.Div([
+                        html.Span("\u26a0 ", style={"color": ORANGE, "fontWeight": "bold"}),
+                        html.Span(f"Order #{order['order_num']} already exists!",
+                                  style={"color": ORANGE, "fontSize": "13px", "fontWeight": "bold"}),
+                    ])
+                else:
+                    if order.get("source") == "Personal Amazon":
+                        new_folder = os.path.join(BASE_DIR, "data", "invoices", "personal_amazon")
+                        new_path = os.path.join(new_folder, fname)
+                        if save_path != new_path:
+                            try:
+                                os.rename(save_path, new_path)
+                            except Exception:
+                                pass
+
+                    stats = _reload_inventory_data(order)
+                    _cascade_reload("inventory")
+                    rcpt_status = html.Div([
+                        html.Div([
+                            html.Span("\u2713 ", style={"color": GREEN, "fontWeight": "bold"}),
+                            html.Span(f"Parsed {fname}: Order #{stats['order_num']} — "
+                                      f"{stats['item_count']} item(s), ${stats['grand_total']:.2f}",
+                                      style={"color": GREEN, "fontSize": "13px"}),
+                        ]),
+                        html.Div([
+                            html.Span("\u2192 ", style={"color": CYAN, "fontWeight": "bold"}),
+                            html.Span("Next: Go to the Inventory tab to review and name these items.",
+                                      style={"color": CYAN, "fontSize": "12px", "fontStyle": "italic"}),
+                        ], style={"marginTop": "4px"}),
+                    ])
+                    rcpt_stats = html.Div(
+                        f"{len(INVOICES)} orders  |  ${total_inventory_cost:,.2f} total spend",
+                        style={"color": PURPLE, "fontSize": "12px", "fontFamily": "monospace"})
+                    rcpt_file_list = _render_file_list(_get_existing_files("receipt"), PURPLE)
+                    summary = _build_datahub_summary()
+                    header = _header_text()
+                    reload_trigger = _dt.datetime.now().timestamp()
+                    new_log = [html.Div([
+                        html.Span(f"[{now_str}] ", style={"color": DARKGRAY, "fontSize": "11px"}),
+                        html.Span(f"\u2713 Receipt: {fname} (Order #{stats['order_num']}, "
+                                  f"{stats['item_count']} items)",
+                                  style={"color": GREEN, "fontSize": "12px"}),
+                    ], style={"padding": "3px 0", "borderBottom": "1px solid #ffffff08"})] + (
+                        new_log if isinstance(new_log, list) else [])
+        except Exception as e:
+            rcpt_status = html.Div([
+                html.Span("\u2717 ", style={"color": RED, "fontWeight": "bold"}),
+                html.Span(f"Upload failed: {e}", style={"color": RED, "fontSize": "13px"}),
+            ])
+
+    # ── Bank PDF/CSV Upload ─────────────────────────────────────────────
+    elif "datahub-bank-upload" in trigger and bank_contents:
+        try:
+            content_type, content_string = bank_contents.split(",")
+            decoded = base64.b64decode(content_string)
+
+            is_dup, dup_file = _check_bank_file_duplicate(decoded, bank_filename)
+            if is_dup:
+                bank_status = html.Div([
+                    html.Span("\u26a0 ", style={"color": ORANGE, "fontWeight": "bold"}),
+                    html.Span(f"This file is already uploaded (matches {dup_file})",
+                              style={"color": ORANGE, "fontSize": "13px", "fontWeight": "bold"}),
+                ])
+            else:
+                fname = bank_filename or "bank_statement.pdf"
+                save_folder = os.path.join(BASE_DIR, "data", "bank_statements")
+                os.makedirs(save_folder, exist_ok=True)
+                save_path = os.path.join(save_folder, fname)
+                with open(save_path, "wb") as f:
+                    f.write(decoded)
+
+                _sb_ok = False
+                if IS_RAILWAY:
+                    from _parse_bank_statements import parse_bank_pdf as _pb, parse_bank_csv as _pc
+                    from _parse_bank_statements import apply_overrides as _ao
+                    _new_txns = []
+                    if fname.lower().endswith(".pdf"):
+                        try:
+                            _new_txns, _ = _pb(save_path)
+                        except Exception:
+                            pass
+                    elif fname.lower().endswith(".csv"):
+                        try:
+                            _new_txns, _ = _pc(save_path)
+                        except Exception:
+                            pass
+                    _new_txns = _ao(_new_txns)
+                    _bank_added_count = 0
+                    _bank_skipped_count = 0
+                    if _new_txns:
+                        _existing_keys = {(t["date"], f"{t['amount']:.2f}", t["type"],
+                                           t.get("raw_desc", t["desc"])) for t in BANK_TXNS}
+                        _added = [t for t in _new_txns
+                                  if (t["date"], f"{t['amount']:.2f}", t["type"],
+                                      t.get("raw_desc", t["desc"])) not in _existing_keys]
+                        _bank_added_count = len(_added)
+                        _bank_skipped_count = len(_new_txns) - _bank_added_count
+                        BANK_TXNS.extend(_added)
+                    _rebuild_bank_derived()
+                    _final_bal = bank_running[-1]["_balance"] if bank_running else 0.0
+                    stats = {"transactions": len(BANK_TXNS), "statements": 0,
+                             "net_cash": round(_final_bal, 2),
+                             "added": _bank_added_count, "skipped": _bank_skipped_count}
+                    _cascade_reload("bank")
+                    import threading
+                    _bank_copy = list(_new_txns)
+                    threading.Thread(target=_append_bank_to_supabase, args=(_bank_copy,), daemon=True).start()
+                    _sb_ok = True
+                else:
+                    stats = _reload_bank_data()
+                    stats["added"] = stats.get("transactions", 0)
+                    stats["skipped"] = 0
+                    _cascade_reload("bank")
+                    import threading
+                    _bank_copy = list(BANK_TXNS)
+                    threading.Thread(target=_sync_bank_to_supabase, args=(_bank_copy,), daemon=True).start()
+                    _sb_ok = True
+
+                _bank_warn = "" if _sb_ok else " (WARNING: Supabase sync failed)"
+                _dedup_info = ""
+                if stats.get("skipped", 0) > 0:
+                    _dedup_info = f" ({stats['added']} new, {stats['skipped']} duplicates skipped)"
+                elif stats.get("added", 0) > 0:
+                    _dedup_info = f" ({stats['added']} new transactions)"
+                bank_status = html.Div([
+                    html.Span("\u2713 ", style={"color": GREEN, "fontWeight": "bold"}),
+                    html.Span(f"Uploaded {fname} — {stats['transactions']} total transactions{_dedup_info}, "
+                              f"Net: ${stats['net_cash']:,.2f}{_bank_warn}",
+                              style={"color": GREEN if _sb_ok else ORANGE, "fontSize": "13px"}),
+                ])
+                bank_stats = html.Div(
+                    f"{stats['transactions']} transactions  |  Net: ${stats['net_cash']:,.2f}",
+                    style={"color": CYAN, "fontSize": "12px", "fontFamily": "monospace"})
+                bank_file_list = _render_file_list(_get_existing_files("bank"), CYAN)
+                summary = _build_datahub_summary()
+                header = _header_text()
+                reload_trigger = _dt.datetime.now().timestamp()
+                new_log = [html.Div([
+                    html.Span(f"[{now_str}] ", style={"color": DARKGRAY, "fontSize": "11px"}),
+                    html.Span(f"\u2713 Bank: {fname} ({stats['transactions']} txns)",
+                              style={"color": GREEN, "fontSize": "12px"}),
+                ], style={"padding": "3px 0", "borderBottom": "1px solid #ffffff08"})] + (
+                    new_log if isinstance(new_log, list) else [])
+        except Exception as e:
+            bank_status = html.Div([
+                html.Span("\u2717 ", style={"color": RED, "fontWeight": "bold"}),
+                html.Span(f"Upload failed: {e}", style={"color": RED, "fontSize": "13px"}),
+            ])
+
+    return (bank_status, bank_file_list, bank_stats,
+            rcpt_status, rcpt_file_list, rcpt_stats,
+            new_log, summary, header, reload_trigger)
 
 
+# ── Store-Specific Uploads (etsy, orders, listings — only exist on store tabs) ──
 @app.callback(
     Output("datahub-etsy-status", "children"),
     Output("datahub-etsy-files", "children", allow_duplicate=True),
     Output("datahub-etsy-stats", "children", allow_duplicate=True),
-    Output("datahub-receipt-status", "children"),
-    Output("datahub-receipt-files", "children", allow_duplicate=True),
-    Output("datahub-receipt-stats", "children", allow_duplicate=True),
-    Output("datahub-bank-status", "children"),
-    Output("datahub-bank-files", "children", allow_duplicate=True),
-    Output("datahub-bank-stats", "children", allow_duplicate=True),
     Output("datahub-activity-log", "children"),
     Output("datahub-summary-strip", "children"),
     Output("app-header-content", "children"),
@@ -16411,22 +16616,18 @@ def _debug_bank_upload(contents, filename):
     Output("datahub-listings-files", "children"),
     Output("datahub-listings-stats", "children"),
     Input("datahub-etsy-upload", "contents"),
-    Input("datahub-receipt-upload", "contents"),
-    Input("datahub-bank-upload", "contents"),
     Input("datahub-orders-upload", "contents"),
     Input("datahub-listings-upload", "contents"),
     State("datahub-etsy-upload", "filename"),
-    State("datahub-receipt-upload", "filename"),
-    State("datahub-bank-upload", "filename"),
     State("datahub-orders-upload", "filename"),
     State("datahub-listings-upload", "filename"),
     State("datahub-activity-log", "children"),
     State("datahub-etsy-store-picker", "data"),
     prevent_initial_call=True,
 )
-@guard_callback(n_outputs=19)
-def handle_datahub_upload(etsy_contents, receipt_contents, bank_contents, orders_contents, listings_contents,
-                          etsy_filename, receipt_filename, bank_filename, orders_filename, listings_filename,
+@guard_callback(n_outputs=13)
+def handle_datahub_upload(etsy_contents, orders_contents, listings_contents,
+                          etsy_filename, orders_filename, listings_filename,
                           activity_log, etsy_store_picker):
     """Handle file uploads from all 3 Data Hub zones.
 
@@ -16444,8 +16645,6 @@ def handle_datahub_upload(etsy_contents, receipt_contents, bank_contents, orders
 
     # Initialize outputs — all no_update by default
     etsy_status, etsy_file_list, etsy_stats = nu, nu, nu
-    rcpt_status, rcpt_file_list, rcpt_stats = nu, nu, nu
-    bank_status, bank_file_list, bank_stats = nu, nu, nu
     orders_status, orders_file_list, orders_stats = nu, nu, nu
     listings_status, listings_file_list, listings_stats = nu, nu, nu
     new_log = activity_log or []
@@ -16698,202 +16897,6 @@ def handle_datahub_upload(etsy_contents, receipt_contents, bank_contents, orders
                          style={"color": DARKGRAY, "fontSize": "11px", "marginTop": "4px"}),
             ])
 
-    # ── Receipt PDF Upload ───────────────────────────────────────────────
-    elif "datahub-receipt-upload" in trigger and receipt_contents:
-        try:
-            content_type, content_string = receipt_contents.split(",")
-            decoded = base64.b64decode(content_string)
-
-            fname = receipt_filename or "receipt.pdf"
-            save_folder = os.path.join(BASE_DIR, "data", "invoices", "keycomp")
-            os.makedirs(save_folder, exist_ok=True)
-            save_path = os.path.join(save_folder, fname)
-            with open(save_path, "wb") as f:
-                f.write(decoded)
-
-            # Parse with _parse_invoices
-            from _parse_invoices import parse_pdf_file
-            order = parse_pdf_file(save_path)
-
-            if not order or not order.get("items"):
-                try:
-                    os.remove(save_path)
-                except Exception:
-                    pass
-                rcpt_status = html.Div([
-                    html.Span("\u2717 ", style={"color": RED, "fontWeight": "bold"}),
-                    html.Span("Could not parse any items from this PDF.",
-                              style={"color": RED, "fontSize": "13px"}),
-                ])
-            else:
-                # Check for duplicate order numbers
-                dup = any(inv["order_num"] == order["order_num"] for inv in INVOICES)
-                if dup:
-                    try:
-                        os.remove(save_path)
-                    except Exception:
-                        pass
-                    rcpt_status = html.Div([
-                        html.Span("\u26a0 ", style={"color": ORANGE, "fontWeight": "bold"}),
-                        html.Span(f"Order #{order['order_num']} already exists!",
-                                  style={"color": ORANGE, "fontSize": "13px", "fontWeight": "bold"}),
-                    ])
-                else:
-                    # Move to personal_amazon folder if source matches
-                    if order.get("source") == "Personal Amazon":
-                        new_folder = os.path.join(BASE_DIR, "data", "invoices", "personal_amazon")
-                        new_path = os.path.join(new_folder, fname)
-                        if save_path != new_path:
-                            try:
-                                os.rename(save_path, new_path)
-                            except Exception:
-                                pass
-
-                    stats = _reload_inventory_data(order)
-                    _cascade_reload("inventory")
-                    rcpt_status = html.Div([
-                        html.Div([
-                            html.Span("\u2713 ", style={"color": GREEN, "fontWeight": "bold"}),
-                            html.Span(f"Parsed {fname}: Order #{stats['order_num']} — "
-                                      f"{stats['item_count']} item(s), ${stats['grand_total']:.2f}",
-                                      style={"color": GREEN, "fontSize": "13px"}),
-                        ]),
-                        html.Div([
-                            html.Span("\u2192 ", style={"color": CYAN, "fontWeight": "bold"}),
-                            html.Span("Next: Go to the Inventory tab to review and name these items.",
-                                      style={"color": CYAN, "fontSize": "12px", "fontStyle": "italic"}),
-                        ], style={"marginTop": "4px"}),
-                    ])
-                    rcpt_stats = html.Div(
-                        f"{len(INVOICES)} orders  |  ${total_inventory_cost:,.2f} total spend",
-                        style={"color": PURPLE, "fontSize": "12px", "fontFamily": "monospace"})
-                    rcpt_file_list = _render_file_list(_get_existing_files("receipt"), PURPLE)
-                    summary = _build_datahub_summary()
-                    header = _header_text()
-                    new_log = [html.Div([
-                        html.Span(f"[{now_str}] ", style={"color": DARKGRAY, "fontSize": "11px"}),
-                        html.Span(f"\u2713 Receipt: {fname} (Order #{stats['order_num']}, "
-                                  f"{stats['item_count']} items)",
-                                  style={"color": GREEN, "fontSize": "12px"}),
-                    ], style={"padding": "3px 0", "borderBottom": "1px solid #ffffff08"})] + (
-                        new_log if isinstance(new_log, list) else [])
-        except Exception as e:
-            rcpt_status = html.Div([
-                html.Span("\u2717 ", style={"color": RED, "fontWeight": "bold"}),
-                html.Span(f"Upload failed: {e}", style={"color": RED, "fontSize": "13px"}),
-                html.Div("Expected: Amazon/supplier invoice PDF with order number and item list",
-                         style={"color": DARKGRAY, "fontSize": "11px", "marginTop": "4px"}),
-            ])
-
-    # ── Bank PDF/CSV Upload ─────────────────────────────────────────────
-    elif "datahub-bank-upload" in trigger and bank_contents:
-        try:
-            content_type, content_string = bank_contents.split(",")
-            decoded = base64.b64decode(content_string)
-
-            # Check for duplicate before saving
-            is_dup, dup_file = _check_bank_file_duplicate(decoded, bank_filename)
-            if is_dup:
-                bank_status = html.Div([
-                    html.Span("\u26a0 ", style={"color": ORANGE, "fontWeight": "bold"}),
-                    html.Span(f"This file is already uploaded (matches {dup_file})",
-                              style={"color": ORANGE, "fontSize": "13px", "fontWeight": "bold"}),
-                ])
-                new_log = [html.Div([
-                    html.Span(f"[{now_str}] ", style={"color": DARKGRAY, "fontSize": "11px"}),
-                    html.Span(f"\u26a0 Bank: Duplicate of {dup_file}, skipped",
-                              style={"color": ORANGE, "fontSize": "12px"}),
-                ], style={"padding": "3px 0", "borderBottom": "1px solid #ffffff08"})] + (
-                    new_log if isinstance(new_log, list) else [])
-            else:
-                fname = bank_filename or "bank_statement.pdf"
-                save_folder = os.path.join(BASE_DIR, "data", "bank_statements")
-                os.makedirs(save_folder, exist_ok=True)
-                save_path = os.path.join(save_folder, fname)
-                with open(save_path, "wb") as f:
-                    f.write(decoded)
-
-                if IS_RAILWAY:
-                    # On Railway, local disk only has the just-uploaded file.
-                    # Parse it and merge into existing BANK_TXNS (from Supabase).
-                    from _parse_bank_statements import parse_bank_pdf as _pb, parse_bank_csv as _pc
-                    from _parse_bank_statements import apply_overrides as _ao
-                    _new_txns = []
-                    if fname.lower().endswith(".pdf"):
-                        try:
-                            _new_txns, _ = _pb(save_path)
-                        except Exception:
-                            pass
-                    elif fname.lower().endswith(".csv"):
-                        try:
-                            _new_txns, _ = _pc(save_path)
-                        except Exception:
-                            pass
-                    _new_txns = _ao(_new_txns)
-                    _bank_added_count = 0
-                    _bank_skipped_count = 0
-                    if _new_txns:
-                        # Dedup: skip transactions already in BANK_TXNS
-                        _existing_keys = {(t["date"], f"{t['amount']:.2f}", t["type"],
-                                           t.get("raw_desc", t["desc"])) for t in BANK_TXNS}
-                        _added = [t for t in _new_txns
-                                  if (t["date"], f"{t['amount']:.2f}", t["type"],
-                                      t.get("raw_desc", t["desc"])) not in _existing_keys]
-                        _bank_added_count = len(_added)
-                        _bank_skipped_count = len(_new_txns) - _bank_added_count
-                        BANK_TXNS.extend(_added)
-                    _rebuild_bank_derived()
-                    _final_bal = bank_running[-1]["_balance"] if bank_running else 0.0
-                    stats = {"transactions": len(BANK_TXNS), "statements": 0,
-                             "net_cash": round(_final_bal, 2),
-                             "added": _bank_added_count, "skipped": _bank_skipped_count}
-                    _cascade_reload("bank")
-                    import threading
-                    _bank_copy = list(_new_txns)
-                    threading.Thread(target=_append_bank_to_supabase, args=(_bank_copy,), daemon=True).start()
-                    _sb_ok = True
-                else:
-                    stats = _reload_bank_data()
-                    stats["added"] = stats.get("transactions", 0)
-                    stats["skipped"] = 0
-                    _cascade_reload("bank")
-                    import threading
-                    _bank_copy = list(BANK_TXNS)
-                    threading.Thread(target=_sync_bank_to_supabase, args=(_bank_copy,), daemon=True).start()
-                    _sb_ok = True
-
-                _bank_warn = "" if _sb_ok else " (WARNING: Supabase sync failed)"
-                _dedup_info = ""
-                if stats.get("skipped", 0) > 0:
-                    _dedup_info = f" ({stats['added']} new, {stats['skipped']} duplicates skipped)"
-                elif stats.get("added", 0) > 0:
-                    _dedup_info = f" ({stats['added']} new transactions)"
-                bank_status = html.Div([
-                    html.Span("\u2713 ", style={"color": GREEN, "fontWeight": "bold"}),
-                    html.Span(f"Uploaded {fname} — {stats['transactions']} total transactions{_dedup_info}, "
-                              f"Net: ${stats['net_cash']:,.2f}{_bank_warn}",
-                              style={"color": GREEN if _sb_ok else ORANGE, "fontSize": "13px"}),
-                ])
-                bank_stats = html.Div(
-                    f"{stats['transactions']} transactions  |  Net: ${stats['net_cash']:,.2f}",
-                    style={"color": CYAN, "fontSize": "12px", "fontFamily": "monospace"})
-                bank_file_list = _render_file_list(_get_existing_files("bank"), CYAN)
-                summary = _build_datahub_summary()
-                header = _header_text()
-                new_log = [html.Div([
-                    html.Span(f"[{now_str}] ", style={"color": DARKGRAY, "fontSize": "11px"}),
-                    html.Span(f"\u2713 Bank: {fname} ({stats['transactions']} txns)",
-                              style={"color": GREEN, "fontSize": "12px"}),
-                ], style={"padding": "3px 0", "borderBottom": "1px solid #ffffff08"})] + (
-                    new_log if isinstance(new_log, list) else [])
-        except Exception as e:
-            bank_status = html.Div([
-                html.Span("\u2717 ", style={"color": RED, "fontWeight": "bold"}),
-                html.Span(f"Upload failed: {e}", style={"color": RED, "fontSize": "13px"}),
-                html.Div("Expected: Capital One bank statement PDF or transaction CSV export",
-                         style={"color": DARKGRAY, "fontSize": "11px", "marginTop": "4px"}),
-            ])
-
     # ── Order CSV Upload ────────────────────────────────────────────────
     elif "datahub-orders-upload" in trigger and orders_contents:
         try:
@@ -17051,13 +17054,11 @@ def handle_datahub_upload(etsy_contents, receipt_contents, bank_contents, orders
 
     # If any upload succeeded, trigger a page reload after a short delay
     # so ALL tabs (not just Data Hub) show fresh data.
-    if any(x is not nu for x in [etsy_status, rcpt_status, bank_status, orders_status, listings_status]):
+    if any(x is not nu for x in [etsy_status, orders_status, listings_status]):
         import time
-        reload_trigger = time.time()  # unique value triggers clientside reload
+        reload_trigger = time.time()
 
     return (etsy_status, etsy_file_list, etsy_stats,
-            rcpt_status, rcpt_file_list, rcpt_stats,
-            bank_status, bank_file_list, bank_stats,
             new_log, summary, header, reload_trigger,
             orders_status, orders_file_list, orders_stats,
             listings_status, listings_file_list, listings_stats)
