@@ -17456,25 +17456,15 @@ app.layout = serve_layout
 # ── Dynamic Tab Rendering ────────────────────────────────────────────────────
 
 @app.callback(
-    Output("selected-store", "data"),
-    Input("store-selector", "value"),
-    prevent_initial_call=True,
-)
-def _sync_store_selector(value):
-    """Sync the store dropdown to the session store."""
-    return value or "all"
-
-
-@app.callback(
     Output("tab-content", "children"),
     Input("main-tabs", "value"),
     Input("strict-mode-store", "data"),
     Input("upload-reload-trigger", "data"),
-    Input("selected-store", "data"),
+    Input("store-selector", "value"),
     State("datahub-active-store-tab", "data"),
 )
 def render_active_tab(tab, _strict_flag, _upload_trigger, _selected_store, _dh_active_tab):
-    """Rebuild the active tab's content on every tab switch, strict mode toggle, or upload."""
+    """Rebuild the active tab's content on every tab switch, strict mode toggle, store change, or upload."""
     print(f"[STORE] render_active_tab fired: tab={tab}, store={_selected_store}")
     _apply_store_filter(_selected_store or "all")
     _rebuild_all_charts()
@@ -19586,7 +19576,7 @@ def render_datahub_store_tab(tab):
     Output("datahub-receipt-stats", "children"),
     Output("datahub-bank-stats", "children"),
     Input("datahub-init-trigger", "data"),
-    Input("selected-store", "data"),
+    Input("store-selector", "value"),
     Input("datahub-store-tab-content", "children"),
     State("datahub-store-tabs", "value"),
 )
