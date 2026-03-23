@@ -16373,6 +16373,23 @@ def init_datahub_files(_trigger, _selected_store, _tab_content, _dh_store_tab):
 
 # ── Data Hub: Upload Callback ───────────────────────────────────────────────
 
+# ── DEBUG: Standalone bank upload test — fires on ANY bank file drop ──
+@app.callback(
+    Output("datahub-bank-status", "children", allow_duplicate=True),
+    Input("datahub-bank-upload", "contents"),
+    State("datahub-bank-upload", "filename"),
+    prevent_initial_call=True,
+)
+def _debug_bank_upload(contents, filename):
+    if not contents:
+        return dash.no_update
+    _logger.info("BANK UPLOAD DEBUG: file=%s, has_contents=%s", filename, bool(contents))
+    return html.Div([
+        html.Span("FILE RECEIVED: ", style={"color": GREEN, "fontWeight": "bold"}),
+        html.Span(f"{filename}", style={"color": WHITE}),
+    ])
+
+
 @app.callback(
     Output("datahub-etsy-status", "children"),
     Output("datahub-etsy-files", "children", allow_duplicate=True),
