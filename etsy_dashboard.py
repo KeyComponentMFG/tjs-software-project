@@ -16261,6 +16261,7 @@ def _build_per_order_profit_section():
     State({"type": "refund-return-input", "order": ALL}, "value"),
     prevent_initial_call=True,
 )
+@guard_callback(n_outputs=2)
 def save_refund_cost_override(all_clicks, all_types, all_outbound, all_return):
     """Save manual refund cost overrides to Supabase."""
     global _refund_cost_overrides
@@ -16342,6 +16343,7 @@ def save_refund_cost_override(all_clicks, all_types, all_outbound, all_return):
     State({"type": "pl-notes", "listing": ALL}, "value"),
     prevent_initial_call=True,
 )
+@guard_callback(n_outputs=2)
 def save_product_library(save_all_clicks, per_save_clicks, all_stls, all_times, all_grams, all_categories, all_new_sizes,
                           all_filaments, all_locations, all_success, all_weights, all_boxes, all_variations, all_components, all_notes):
     """Save all product library entries to Supabase at once."""
@@ -17900,6 +17902,7 @@ def render_active_tab(tab, _strict_flag, _upload_trigger, _selected_store, _dh_a
     Input("strict-mode-toggle", "value"),
     prevent_initial_call=True,
 )
+@guard_callback(n_outputs=3)
 def toggle_strict_mode(is_on):
     """Toggle strict mode: rebuild pipeline, refresh all charts + derived data."""
     global _acct_pipeline
@@ -18727,6 +18730,7 @@ def _refresh_editor_on_save(trigger, search, cat_filter, status_filter):
     State("wizard-split-active", "data"),
     prevent_initial_call=True,
 )
+@guard_callback(n_outputs=25)
 def handle_receipt_wizard(contents, save_clicks, skip_clicks, done_clicks, back_clicks,
                           split_toggle_clicks,
                           filename, state, wiz_name, wiz_cat, wiz_qty, wiz_loc,
@@ -19794,6 +19798,7 @@ _TAB_LABELS = {
     State("main-tabs", "value"),
     prevent_initial_call=True,
 )
+@guard_callback(n_outputs=4)
 def handle_chat(n_clicks, n_submit, quick_clicks, nav_clicks, user_input, history_data, current_children, current_tab):
     ctx = callback_context
     if not ctx.triggered:
@@ -19912,6 +19917,7 @@ def handle_chat(n_clicks, n_submit, quick_clicks, nav_clicks, user_input, histor
     Output("datahub-etsy-store-picker", "data"),
     Output("datahub-active-store-tab", "data"),
     Input("datahub-store-tabs", "value"),
+    prevent_initial_call=True,
 )
 def sync_datahub_store_tab(tab):
     """Set the hidden store picker and remember active tab."""
@@ -19924,6 +19930,7 @@ def sync_datahub_store_tab(tab):
 @app.callback(
     Output("datahub-store-tab-content", "children"),
     Input("datahub-store-tabs", "value"),
+    prevent_initial_call=True,
 )
 def render_datahub_store_tab(tab):
     """Render the content for the selected store sub-tab."""
@@ -19948,6 +19955,7 @@ def render_datahub_store_tab(tab):
     Input("store-selector", "value"),
     Input("datahub-store-tab-content", "children"),
     State("datahub-store-tabs", "value"),
+    prevent_initial_call=True,
 )
 @guard_callback(n_outputs=6)
 def init_datahub_files(_trigger, _selected_store, _tab_content, _dh_store_tab):
