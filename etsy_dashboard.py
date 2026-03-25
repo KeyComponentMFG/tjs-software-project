@@ -12958,13 +12958,14 @@ def _build_per_order_profit_section():
 @app.callback(
     Output("refund-editor-status", "children"),
     Output("upload-reload-trigger", "data", allow_duplicate=True),
+    Output("ceo-alert-banner", "children", allow_duplicate=True),
     Input({"type": "refund-save-btn", "order": ALL}, "n_clicks"),
     State({"type": "refund-type-dd", "order": ALL}, "value"),
     State({"type": "refund-outbound-input", "order": ALL}, "value"),
     State({"type": "refund-return-input", "order": ALL}, "value"),
     prevent_initial_call=True,
 )
-@guard_callback(n_outputs=2)
+@guard_callback(n_outputs=3)
 def save_refund_cost_override(all_clicks, all_types, all_outbound, all_return):
     """Save manual refund cost overrides to Supabase."""
     global _refund_cost_overrides
@@ -13015,13 +13016,21 @@ def save_refund_cost_override(all_clicks, all_types, all_outbound, all_return):
     except Exception:
         pass
 
+    # Re-run CEO health check so alert banner updates immediately
+    global _ceo_health
+    if _ceo_agent and _acct_pipeline:
+        try:
+            _ceo_health = _ceo_agent.run_periodic_check(_acct_pipeline)
+        except Exception:
+            pass
+
     import time
     status = html.Div([
         html.Span("\u2713 ", style={"color": GREEN, "fontWeight": "bold"}),
         html.Span(f"Order #{order_id} saved: {_type}, outbound ${_outbound:.2f}, return ${_return:.2f}",
                   style={"color": GREEN, "fontSize": "12px"}),
     ])
-    return status, time.time()
+    return status, time.time(), _build_ceo_banner()
 
 
 # ── Product Library Save Callback ─────────────────────────────────────────────
