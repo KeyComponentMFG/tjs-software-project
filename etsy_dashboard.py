@@ -10232,13 +10232,46 @@ def _build_receipt_gallery():
         else:
             biz_cards.append(card)
 
+    # Tag each card with searchable data for filtering
+    all_biz = []
+    for i, inv in enumerate([inv for inv in sorted_invoices
+                              if inv.get("source") != "Personal Amazon"
+                              and "Gigi" not in inv.get("file", "")]):
+        search_text = " ".join([
+            str(inv.get("order_num", "")),
+            inv.get("date", ""),
+            inv.get("source", ""),
+            inv.get("payment_method", ""),
+            inv.get("ship_address", ""),
+            " ".join(it.get("name", "") for it in inv.get("items", [])),
+        ]).lower()
+        all_biz.append(html.Div(
+            biz_cards[i] if i < len(biz_cards) else html.Div(),
+            id={"type": "receipt-card", "index": i},
+            **{"data-search": search_text},
+        ))
+
     gallery_children = [
         html.H5(f"RECEIPT GALLERY  ({len(biz_cards)} business)", style={
             "color": CYAN, "fontWeight": "bold", "marginBottom": "4px", "fontSize": "15px",
         }),
         html.P("Every uploaded receipt with embedded PDF viewer and parsed specs.",
-               style={"color": GRAY, "fontSize": "12px", "marginBottom": "14px"}),
-    ] + biz_cards
+               style={"color": GRAY, "fontSize": "12px", "marginBottom": "8px"}),
+        # Search bar
+        dcc.Input(
+            id="receipt-gallery-search",
+            type="text",
+            placeholder="Search receipts... (order #, item name, date, source)",
+            style={
+                "width": "100%", "padding": "8px 12px", "fontSize": "13px",
+                "backgroundColor": BG, "color": WHITE,
+                "border": f"1px solid {CYAN}44", "borderRadius": "6px",
+                "marginBottom": "14px",
+            },
+            debounce=True,
+        ),
+        html.Div(id="receipt-gallery-cards", children=all_biz),
+    ]
 
     # Personal receipts in a collapsed section
     if personal_cards:
@@ -10261,6 +10294,78 @@ def _build_receipt_gallery():
         "marginTop": "14px", "border": f"1px solid {CYAN}33",
         "borderTop": f"4px solid {CYAN}", "maxHeight": "800px", "overflowY": "auto",
     })
+
+
+# ── Receipt Gallery Search ────────────────────────────────────────────────
+@app.callback(
+    Output("receipt-gallery-cards", "children"),
+    Input("receipt-gallery-search", "value"),
+    prevent_initial_call=True,
+)
+def filter_receipt_gallery(search):
+    """Filter receipt gallery cards by search text."""
+    if not search or not search.strip():
+        # Rebuild all cards
+        return _build_receipt_cards_filtered("")
+    return _build_receipt_cards_filtered(search.strip().lower())
+
+
+def _build_receipt_cards_filtered(query):
+    """Build receipt card list filtered by search query."""
+    import urllib.parse as _ul2
+
+    sorted_invoices = sorted(INVOICES, key=lambda o: o.get("date", ""), reverse=True)
+    try:
+        sorted_invoices = sorted(INVOICES,
+            key=lambda o: pd.to_datetime(o.get("date", ""), format="%B %d, %Y", errors="coerce"),
+            reverse=True)
+    except Exception:
+        pass
+
+    cards = []
+    for inv in sorted_invoices:
+        is_personal = inv.get("source") == "Personal Amazon" or "Gigi" in inv.get("file", "")
+        if is_personal:
+            continue
+
+        if query:
+            search_text = " ".join([
+                str(inv.get("order_num", "")),
+                inv.get("date", ""),
+                inv.get("source", ""),
+                inv.get("payment_method", ""),
+                " ".join(it.get("name", "") for it in inv.get("items", [])),
+            ]).lower()
+            if query not in search_text:
+                continue
+
+        # Build a simple card (reuse the gallery's card builder)
+        order_num = inv.get("order_num", "N/A")
+        date_str = inv.get("date", "")
+        source = inv.get("source", "")
+        total = inv.get("grand_total", 0)
+        items_str = ", ".join(it.get("name", "")[:40] for it in inv.get("items", []))
+
+        card = html.Div([
+            html.Div([
+                html.Span(f"#{order_num}", style={"color": CYAN, "fontWeight": "bold", "fontSize": "13px"}),
+                html.Span(f"  {date_str}", style={"color": GRAY, "fontSize": "12px", "marginLeft": "8px"}),
+                html.Span(f"  ${total:,.2f}", style={"color": ORANGE, "fontWeight": "bold", "fontSize": "13px",
+                                                       "marginLeft": "auto", "fontFamily": "monospace"}),
+            ], style={"display": "flex", "alignItems": "center", "marginBottom": "4px"}),
+            html.Div(items_str[:120], style={"color": WHITE, "fontSize": "11px",
+                                               "overflow": "hidden", "textOverflow": "ellipsis",
+                                               "whiteSpace": "nowrap"}),
+            html.Div(source, style={"color": TEAL, "fontSize": "10px", "marginTop": "2px"}),
+        ], style={
+            "backgroundColor": CARD, "borderRadius": "8px", "padding": "10px 14px",
+            "marginBottom": "6px", "borderLeft": f"3px solid {CYAN}44",
+        })
+        cards.append(card)
+
+    if not cards:
+        return [html.Div("No receipts match your search.", style={"color": GRAY, "fontSize": "12px", "padding": "12px"})]
+    return cards
 
 
 def _get_bank_computed():
