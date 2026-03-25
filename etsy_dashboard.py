@@ -10078,140 +10078,141 @@ def _build_completed_receipts():
               "marginBottom": "20px"})
 
 
+def _make_receipt_card(inv, is_personal=False):
+    """Build a single receipt card with PDF viewer + specs."""
+    import urllib.parse as _ul_rc
+    source = inv.get("source", "Unknown")
+    subfolder = _SOURCE_FOLDER_MAP.get(source, "keycomp")
+    raw_file = inv.get("file", "")
+
+    # Strip " (page X)" suffix for multi-page scanned receipts
+    clean_file = re.sub(r'\s*\(page\s*\d+\)$', '', raw_file)
+    encoded_file = _ul_rc.quote(clean_file)
+
+    # Check if file exists on disk
+    file_path = os.path.join(BASE_DIR, "data", "invoices", subfolder, clean_file)
+    file_exists = os.path.isfile(file_path)
+
+    pdf_url = f"/api/receipt/{subfolder}/{encoded_file}"
+
+    # Left side: PDF viewer
+    if file_exists:
+        pdf_viewer = html.Iframe(
+            src=pdf_url,
+            style={
+                "width": "100%", "height": "320px", "border": "none",
+                "borderRadius": "8px", "backgroundColor": "#ffffff",
+            },
+        )
+    else:
+        pdf_viewer = html.Div(
+            [html.Span("PDF not found on disk", style={"color": GRAY, "fontSize": "13px"}),
+             html.Br(),
+             html.Span(raw_file, style={"color": DARKGRAY, "fontSize": "11px"})],
+            style={
+                "width": "100%", "height": "320px", "display": "flex",
+                "flexDirection": "column", "alignItems": "center",
+                "justifyContent": "center", "backgroundColor": "#ffffff08",
+                "borderRadius": "8px", "border": f"1px dashed {DARKGRAY}",
+            },
+        )
+
+    # Right side: Specs
+    order_num = inv.get("order_num", "N/A")
+    date_str = inv.get("date", "Unknown")
+    payment = inv.get("payment_method", "Unknown")
+    ship_addr = inv.get("ship_address", "")
+    if ship_addr.count(",") >= 2:
+        parts = ship_addr.split(",")
+        short_addr = parts[1].strip() + ", " + parts[2].strip().split(" ")[0]
+    else:
+        short_addr = ship_addr
+
+    accent = PINK if is_personal else CYAN
+
+    # Items table
+    item_rows = []
+    for it in inv.get("items", []):
+        item_rows.append(html.Tr([
+            html.Td(it["name"][:60] + ("..." if len(it["name"]) > 60 else ""),
+                     style={"color": WHITE, "fontSize": "11px", "padding": "3px 6px",
+                            "maxWidth": "280px", "overflow": "hidden", "textOverflow": "ellipsis"}),
+            html.Td(str(it["qty"]), style={"color": GRAY, "fontSize": "11px",
+                                            "textAlign": "center", "padding": "3px 6px"}),
+            html.Td(f"${it['price']:,.2f}", style={"color": WHITE, "fontSize": "11px",
+                                                    "textAlign": "right", "padding": "3px 6px"}),
+        ]))
+
+    specs_panel = html.Div([
+        # Order number
+        html.Div([
+            html.Span("Order #  ", style={"color": GRAY, "fontSize": "11px"}),
+            html.Span(order_num, style={"color": accent, "fontSize": "13px", "fontWeight": "bold"}),
+        ], style={"marginBottom": "6px"}),
+        # Date
+        html.Div([
+            html.Span("Date  ", style={"color": GRAY, "fontSize": "11px"}),
+            html.Span(date_str, style={"color": WHITE, "fontSize": "12px"}),
+        ], style={"marginBottom": "4px"}),
+        # Source
+        html.Div([
+            html.Span("Source  ", style={"color": GRAY, "fontSize": "11px"}),
+            html.Span(source, style={"color": TEAL, "fontSize": "12px"}),
+        ], style={"marginBottom": "4px"}),
+        # Payment
+        html.Div([
+            html.Span("Payment  ", style={"color": GRAY, "fontSize": "11px"}),
+            html.Span(payment, style={"color": WHITE, "fontSize": "12px"}),
+        ], style={"marginBottom": "4px"}),
+        # Ship to
+        html.Div([
+            html.Span("Ship to  ", style={"color": GRAY, "fontSize": "11px"}),
+            html.Span(short_addr, style={"color": CYAN, "fontSize": "12px"}),
+        ], style={"marginBottom": "8px"}) if short_addr else html.Div(),
+        # Items table
+        html.Table([
+            html.Thead(html.Tr([
+                html.Th("Item", style={"textAlign": "left", "color": GRAY, "fontSize": "10px",
+                                       "padding": "3px 6px", "borderBottom": f"1px solid {DARKGRAY}"}),
+                html.Th("Qty", style={"textAlign": "center", "color": GRAY, "fontSize": "10px",
+                                      "padding": "3px 6px", "borderBottom": f"1px solid {DARKGRAY}"}),
+                html.Th("Price", style={"textAlign": "right", "color": GRAY, "fontSize": "10px",
+                                        "padding": "3px 6px", "borderBottom": f"1px solid {DARKGRAY}"}),
+            ])),
+            html.Tbody(item_rows),
+        ], style={"width": "100%", "borderCollapse": "collapse", "marginBottom": "8px"}),
+        # Totals
+        html.Div([
+            html.Div([
+                html.Span("Subtotal ", style={"color": GRAY, "fontSize": "11px"}),
+                html.Span(f"${inv.get('subtotal', 0):,.2f}", style={"color": WHITE, "fontSize": "12px"}),
+            ]),
+            html.Div([
+                html.Span("Tax ", style={"color": GRAY, "fontSize": "11px"}),
+                html.Span(f"${inv.get('tax', 0):,.2f}", style={"color": WHITE, "fontSize": "12px"}),
+            ]),
+            html.Div([
+                html.Span("Total ", style={"color": GRAY, "fontSize": "11px", "fontWeight": "bold"}),
+                html.Span(f"${inv.get('grand_total', 0):,.2f}",
+                          style={"color": ORANGE, "fontSize": "14px", "fontWeight": "bold"}),
+            ], style={"marginTop": "2px"}),
+        ], style={"borderTop": f"1px solid {DARKGRAY}", "paddingTop": "6px"}),
+    ], style={"padding": "12px"})
+
+    # Card: flex row with PDF left, specs right
+    return html.Div([
+        html.Div(pdf_viewer, style={"flex": "0 0 40%", "padding": "12px"}),
+        html.Div(specs_panel, style={"flex": "1", "minWidth": "0"}),
+    ], style={
+        "display": "flex", "backgroundColor": CARD, "borderRadius": "12px",
+        "marginBottom": "12px", "border": f"1px solid {accent}22",
+        "overflow": "hidden",
+    })
+
+
+
 def _build_receipt_gallery():
     """Build a visual receipt gallery with embedded PDF viewers and parsed specs."""
-    import urllib.parse as _ul
-
-    def _make_receipt_card(inv, is_personal=False):
-        """Build a single receipt card with PDF viewer + specs."""
-        source = inv.get("source", "Unknown")
-        subfolder = _SOURCE_FOLDER_MAP.get(source, "keycomp")
-        raw_file = inv.get("file", "")
-
-        # Strip " (page X)" suffix for multi-page scanned receipts
-        clean_file = re.sub(r'\s*\(page\s*\d+\)$', '', raw_file)
-        encoded_file = _ul.quote(clean_file)
-
-        # Check if file exists on disk
-        file_path = os.path.join(BASE_DIR, "data", "invoices", subfolder, clean_file)
-        file_exists = os.path.isfile(file_path)
-
-        pdf_url = f"/api/receipt/{subfolder}/{encoded_file}"
-
-        # Left side: PDF viewer
-        if file_exists:
-            pdf_viewer = html.Iframe(
-                src=pdf_url,
-                style={
-                    "width": "100%", "height": "320px", "border": "none",
-                    "borderRadius": "8px", "backgroundColor": "#ffffff",
-                },
-            )
-        else:
-            pdf_viewer = html.Div(
-                [html.Span("PDF not found on disk", style={"color": GRAY, "fontSize": "13px"}),
-                 html.Br(),
-                 html.Span(raw_file, style={"color": DARKGRAY, "fontSize": "11px"})],
-                style={
-                    "width": "100%", "height": "320px", "display": "flex",
-                    "flexDirection": "column", "alignItems": "center",
-                    "justifyContent": "center", "backgroundColor": "#ffffff08",
-                    "borderRadius": "8px", "border": f"1px dashed {DARKGRAY}",
-                },
-            )
-
-        # Right side: Specs
-        order_num = inv.get("order_num", "N/A")
-        date_str = inv.get("date", "Unknown")
-        payment = inv.get("payment_method", "Unknown")
-        ship_addr = inv.get("ship_address", "")
-        if ship_addr.count(",") >= 2:
-            parts = ship_addr.split(",")
-            short_addr = parts[1].strip() + ", " + parts[2].strip().split(" ")[0]
-        else:
-            short_addr = ship_addr
-
-        accent = PINK if is_personal else CYAN
-
-        # Items table
-        item_rows = []
-        for it in inv.get("items", []):
-            item_rows.append(html.Tr([
-                html.Td(it["name"][:60] + ("..." if len(it["name"]) > 60 else ""),
-                         style={"color": WHITE, "fontSize": "11px", "padding": "3px 6px",
-                                "maxWidth": "280px", "overflow": "hidden", "textOverflow": "ellipsis"}),
-                html.Td(str(it["qty"]), style={"color": GRAY, "fontSize": "11px",
-                                                "textAlign": "center", "padding": "3px 6px"}),
-                html.Td(f"${it['price']:,.2f}", style={"color": WHITE, "fontSize": "11px",
-                                                        "textAlign": "right", "padding": "3px 6px"}),
-            ]))
-
-        specs_panel = html.Div([
-            # Order number
-            html.Div([
-                html.Span("Order #  ", style={"color": GRAY, "fontSize": "11px"}),
-                html.Span(order_num, style={"color": accent, "fontSize": "13px", "fontWeight": "bold"}),
-            ], style={"marginBottom": "6px"}),
-            # Date
-            html.Div([
-                html.Span("Date  ", style={"color": GRAY, "fontSize": "11px"}),
-                html.Span(date_str, style={"color": WHITE, "fontSize": "12px"}),
-            ], style={"marginBottom": "4px"}),
-            # Source
-            html.Div([
-                html.Span("Source  ", style={"color": GRAY, "fontSize": "11px"}),
-                html.Span(source, style={"color": TEAL, "fontSize": "12px"}),
-            ], style={"marginBottom": "4px"}),
-            # Payment
-            html.Div([
-                html.Span("Payment  ", style={"color": GRAY, "fontSize": "11px"}),
-                html.Span(payment, style={"color": WHITE, "fontSize": "12px"}),
-            ], style={"marginBottom": "4px"}),
-            # Ship to
-            html.Div([
-                html.Span("Ship to  ", style={"color": GRAY, "fontSize": "11px"}),
-                html.Span(short_addr, style={"color": CYAN, "fontSize": "12px"}),
-            ], style={"marginBottom": "8px"}) if short_addr else html.Div(),
-            # Items table
-            html.Table([
-                html.Thead(html.Tr([
-                    html.Th("Item", style={"textAlign": "left", "color": GRAY, "fontSize": "10px",
-                                           "padding": "3px 6px", "borderBottom": f"1px solid {DARKGRAY}"}),
-                    html.Th("Qty", style={"textAlign": "center", "color": GRAY, "fontSize": "10px",
-                                          "padding": "3px 6px", "borderBottom": f"1px solid {DARKGRAY}"}),
-                    html.Th("Price", style={"textAlign": "right", "color": GRAY, "fontSize": "10px",
-                                            "padding": "3px 6px", "borderBottom": f"1px solid {DARKGRAY}"}),
-                ])),
-                html.Tbody(item_rows),
-            ], style={"width": "100%", "borderCollapse": "collapse", "marginBottom": "8px"}),
-            # Totals
-            html.Div([
-                html.Div([
-                    html.Span("Subtotal ", style={"color": GRAY, "fontSize": "11px"}),
-                    html.Span(f"${inv.get('subtotal', 0):,.2f}", style={"color": WHITE, "fontSize": "12px"}),
-                ]),
-                html.Div([
-                    html.Span("Tax ", style={"color": GRAY, "fontSize": "11px"}),
-                    html.Span(f"${inv.get('tax', 0):,.2f}", style={"color": WHITE, "fontSize": "12px"}),
-                ]),
-                html.Div([
-                    html.Span("Total ", style={"color": GRAY, "fontSize": "11px", "fontWeight": "bold"}),
-                    html.Span(f"${inv.get('grand_total', 0):,.2f}",
-                              style={"color": ORANGE, "fontSize": "14px", "fontWeight": "bold"}),
-                ], style={"marginTop": "2px"}),
-            ], style={"borderTop": f"1px solid {DARKGRAY}", "paddingTop": "6px"}),
-        ], style={"padding": "12px"})
-
-        # Card: flex row with PDF left, specs right
-        return html.Div([
-            html.Div(pdf_viewer, style={"flex": "0 0 40%", "padding": "12px"}),
-            html.Div(specs_panel, style={"flex": "1", "minWidth": "0"}),
-        ], style={
-            "display": "flex", "backgroundColor": CARD, "borderRadius": "12px",
-            "marginBottom": "12px", "border": f"1px solid {accent}22",
-            "overflow": "hidden",
-        })
-
     # Sort invoices by date (newest first)
     sorted_invoices = sorted(INVOICES, key=lambda o: o.get("date", ""), reverse=True)
     try:
@@ -10222,6 +10223,7 @@ def _build_receipt_gallery():
         pass
 
     biz_cards = []
+    biz_search_data = []  # parallel list of search strings per card
     personal_cards = []
     for inv in sorted_invoices:
         is_personal = inv.get("source") == "Personal Amazon" or (
@@ -10231,8 +10233,23 @@ def _build_receipt_gallery():
             personal_cards.append(card)
         else:
             biz_cards.append(card)
+            # Build search string: order #, date, source, original names, display names
+            _onum = str(inv.get("order_num", ""))
+            _orig = " ".join(it.get("name", "") for it in inv.get("items", []))
+            _display = []
+            for it in inv.get("items", []):
+                _dkey = (_onum, it.get("name", ""))
+                _dets = _ITEM_DETAILS.get(_dkey, [])
+                for _d in _dets:
+                    _dn = _d.get("display_name", "")
+                    if _dn:
+                        _display.append(_dn)
+            biz_search_data.append(" ".join([
+                _onum, inv.get("date", ""), inv.get("source", ""),
+                inv.get("payment_method", ""), _orig, " ".join(_display),
+            ]).lower())
 
-    # Wrap biz cards for the search-filterable container
+    # Store search data in a hidden dcc.Store so the callback can filter
     all_biz = list(biz_cards)
 
     gallery_children = [
@@ -10254,6 +10271,9 @@ def _build_receipt_gallery():
             },
             debounce=True,
         ),
+        # Hidden store with search data + original cards for filtering
+        dcc.Store(id="receipt-gallery-search-data", data=biz_search_data),
+        dcc.Store(id="receipt-gallery-all-cards-count", data=len(biz_cards)),
         html.Div(id="receipt-gallery-cards", children=all_biz),
     ]
 
@@ -14289,13 +14309,53 @@ app.layout = serve_layout
 @app.callback(
     Output("receipt-gallery-cards", "children"),
     Input("receipt-gallery-search", "value"),
+    State("receipt-gallery-search-data", "data"),
+    State("receipt-gallery-cards", "children"),
     prevent_initial_call=True,
 )
-def filter_receipt_gallery(search):
-    """Filter receipt gallery cards by search text."""
-    if not search or not search.strip():
-        return _build_receipt_cards_filtered("")
-    return _build_receipt_cards_filtered(search.strip().lower())
+def filter_receipt_gallery(search, search_data, current_cards):
+    """Filter receipt gallery — reorder original cards, matches first."""
+    # Rebuild full cards from INVOICES every time (keeps PDFs intact)
+    sorted_invoices = sorted(INVOICES, key=lambda o: o.get("date", ""), reverse=True)
+    try:
+        sorted_invoices = sorted(INVOICES,
+            key=lambda o: pd.to_datetime(o.get("date", ""), format="%B %d, %Y", errors="coerce"),
+            reverse=True)
+    except Exception:
+        pass
+
+    biz_invoices = [inv for inv in sorted_invoices
+                    if inv.get("source") != "Personal Amazon"
+                    and "Gigi" not in inv.get("file", "")]
+
+    query = (search or "").strip().lower()
+    if not query:
+        # No search — rebuild all cards in original order
+        return [_make_receipt_card(inv) for inv in biz_invoices]
+
+    # Split into matches and non-matches, matches first
+    matches = []
+    non_matches = []
+    for i, inv in enumerate(biz_invoices):
+        sd = search_data[i] if search_data and i < len(search_data) else ""
+        if query in sd:
+            matches.append(inv)
+        else:
+            non_matches.append(inv)
+
+    cards = []
+    for inv in matches:
+        cards.append(_make_receipt_card(inv))
+    for inv in non_matches:
+        card = _make_receipt_card(inv)
+        # Dim non-matches
+        card.style = {**card.style, "opacity": "0.25"}
+        cards.append(card)
+
+    if not matches:
+        cards.insert(0, html.Div("No receipts match your search.",
+                                  style={"color": GRAY, "fontSize": "12px", "padding": "8px 0"}))
+    return cards
 
 
 # ── Dynamic Tab Rendering ────────────────────────────────────────────────────
