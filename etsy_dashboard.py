@@ -10328,23 +10328,36 @@ def _build_receipt_cards_filtered(query):
         if is_personal:
             continue
 
+        # Get display names from _ITEM_DETAILS for this receipt's items
+        order_num = inv.get("order_num", "N/A")
+        _display_names = []
+        for it in inv.get("items", []):
+            _key = (str(order_num), it.get("name", ""))
+            _dets = _ITEM_DETAILS.get(_key, [])
+            if _dets:
+                for _d in _dets:
+                    _dn = _d.get("display_name", "")
+                    if _dn:
+                        _display_names.append(_dn)
+            else:
+                _display_names.append(it.get("name", ""))
+
         if query:
             search_text = " ".join([
-                str(inv.get("order_num", "")),
+                str(order_num),
                 inv.get("date", ""),
                 inv.get("source", ""),
                 inv.get("payment_method", ""),
-                " ".join(it.get("name", "") for it in inv.get("items", [])),
+                " ".join(_display_names),
             ]).lower()
             if query not in search_text:
                 continue
 
-        # Build a simple card (reuse the gallery's card builder)
-        order_num = inv.get("order_num", "N/A")
+        # Build card using display names
         date_str = inv.get("date", "")
         source = inv.get("source", "")
         total = inv.get("grand_total", 0)
-        items_str = ", ".join(it.get("name", "")[:40] for it in inv.get("items", []))
+        items_str = ", ".join(n[:40] for n in _display_names)
 
         card = html.Div([
             html.Div([
