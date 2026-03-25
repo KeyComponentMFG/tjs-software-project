@@ -10232,24 +10232,8 @@ def _build_receipt_gallery():
         else:
             biz_cards.append(card)
 
-    # Tag each card with searchable data for filtering
-    all_biz = []
-    for i, inv in enumerate([inv for inv in sorted_invoices
-                              if inv.get("source") != "Personal Amazon"
-                              and "Gigi" not in inv.get("file", "")]):
-        search_text = " ".join([
-            str(inv.get("order_num", "")),
-            inv.get("date", ""),
-            inv.get("source", ""),
-            inv.get("payment_method", ""),
-            inv.get("ship_address", ""),
-            " ".join(it.get("name", "") for it in inv.get("items", [])),
-        ]).lower()
-        all_biz.append(html.Div(
-            biz_cards[i] if i < len(biz_cards) else html.Div(),
-            id={"type": "receipt-card", "index": i},
-            **{"data-search": search_text},
-        ))
+    # Wrap biz cards for the search-filterable container
+    all_biz = list(biz_cards)
 
     gallery_children = [
         html.H5(f"RECEIPT GALLERY  ({len(biz_cards)} business)", style={
