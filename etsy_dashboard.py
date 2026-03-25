@@ -851,11 +851,14 @@ if len(INV_ITEMS) > 0 and "_orig_name" not in INV_ITEMS.columns:
 # Rebuild _UPLOADED_INVENTORY (and _INVENTORY_UNIT_COST) from _ITEM_DETAILS only
 _UPLOADED_INVENTORY.clear()
 _INVENTORY_UNIT_COST.clear()
-# Build a price lookup from expanded INV_ITEMS: (order_num, name) → per-unit price
+# Build a price lookup from expanded INV_ITEMS: (order_num, name) → per-unit price WITH TAX
+# Uses total_with_tax / qty to include each item's proportional share of order tax + shipping
 _price_lookup: dict[tuple[str, str], float] = {}
 if len(INV_ITEMS) > 0:
     for _, _r in INV_ITEMS.iterrows():
-        _price_lookup[(_r["order_num"], _r["name"])] = float(_r.get("price", 0))
+        _item_qty = max(int(_r.get("qty", 1)), 1)
+        _item_total_tax = float(_r.get("total_with_tax", _r.get("price", 0) * _item_qty))
+        _price_lookup[(_r["order_num"], _r["name"])] = round(_item_total_tax / _item_qty, 2)
 # Track total spend per item for weighted average: {inv_key: total_cost}
 _inv_total_cost: dict[tuple[str, str, str], float] = {}
 for (_onum, _iname), _details in _ITEM_DETAILS.items():
@@ -15809,7 +15812,9 @@ def save_inv_qty_edits(n_clicks, table_data):
     _price_lkp: dict[tuple[str, str], float] = {}
     if len(INV_ITEMS) > 0:
         for _, _r in INV_ITEMS.iterrows():
-            _price_lkp[(_r["order_num"], _r["name"])] = float(_r.get("price", 0))
+            _iq = max(int(_r.get("qty", 1)), 1)
+            _itt = float(_r.get("total_with_tax", _r.get("price", 0) * _iq))
+            _price_lkp[(_r["order_num"], _r["name"])] = round(_itt / _iq, 2)
     _inv_tc: dict[tuple[str, str, str], float] = {}
     for (_onum, _iname), _dets in _ITEM_DETAILS.items():
         for _d in _dets:
@@ -17655,11 +17660,12 @@ def save_item_card(n_clicks, item_data, cat, name, name_pick, loc, qty, pack_typ
                     "cursor": "default", "fontWeight": "bold",
                     "marginTop": "18px", "opacity": "0.6"}
 
-    # Compute per-unit cost: original price / total detail qty
+    # Compute per-unit cost WITH TAX: total_with_tax / total detail qty
     orig_price = item_data.get("price", 0)
-    orig_qty = item_data.get("qty", 1)
+    orig_qty = max(item_data.get("qty", 1), 1)
+    orig_total_with_tax = item_data.get("total_with_tax", orig_price * orig_qty)
     total_detail_qty = sum(d["true_qty"] for d in details) or 1
-    per_unit_cost = round((orig_price * orig_qty) / total_detail_qty, 2)
+    per_unit_cost = round(orig_total_with_tax / total_detail_qty, 2)
 
     try:
         ok = _save_item_details(item_data["order_num"], item_data["name"], details)
