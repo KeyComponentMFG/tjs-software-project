@@ -10328,10 +10328,12 @@ def _build_receipt_cards_filtered(query):
         if is_personal:
             continue
 
-        # Get display names from _ITEM_DETAILS for this receipt's items
+        # Get both original Amazon names and renamed display names
         order_num = inv.get("order_num", "N/A")
+        _orig_names = []
         _display_names = []
         for it in inv.get("items", []):
+            _orig_names.append(it.get("name", ""))
             _key = (str(order_num), it.get("name", ""))
             _dets = _ITEM_DETAILS.get(_key, [])
             if _dets:
@@ -10348,28 +10350,34 @@ def _build_receipt_cards_filtered(query):
                 inv.get("date", ""),
                 inv.get("source", ""),
                 inv.get("payment_method", ""),
+                " ".join(_orig_names),
                 " ".join(_display_names),
             ]).lower()
             if query not in search_text:
                 continue
 
-        # Build card using display names
+        # Build card showing both original and renamed
         date_str = inv.get("date", "")
         source = inv.get("source", "")
         total = inv.get("grand_total", 0)
-        items_str = ", ".join(n[:40] for n in _display_names)
+        display_str = ", ".join(sorted(set(n for n in _display_names if n)))
+        orig_str = " | ".join(n[:50] for n in _orig_names)
 
         card = html.Div([
             html.Div([
                 html.Span(f"#{order_num}", style={"color": CYAN, "fontWeight": "bold", "fontSize": "13px"}),
                 html.Span(f"  {date_str}", style={"color": GRAY, "fontSize": "12px", "marginLeft": "8px"}),
+                html.Span(f"  {source}", style={"color": TEAL, "fontSize": "11px", "marginLeft": "8px"}),
                 html.Span(f"  ${total:,.2f}", style={"color": ORANGE, "fontWeight": "bold", "fontSize": "13px",
                                                        "marginLeft": "auto", "fontFamily": "monospace"}),
             ], style={"display": "flex", "alignItems": "center", "marginBottom": "4px"}),
-            html.Div(items_str[:120], style={"color": WHITE, "fontSize": "11px",
-                                               "overflow": "hidden", "textOverflow": "ellipsis",
-                                               "whiteSpace": "nowrap"}),
-            html.Div(source, style={"color": TEAL, "fontSize": "10px", "marginTop": "2px"}),
+            # Renamed inventory names
+            html.Div(display_str, style={"color": WHITE, "fontSize": "12px", "fontWeight": "bold",
+                                          "marginBottom": "2px"}),
+            # Original Amazon names
+            html.Div(orig_str[:150], style={"color": DARKGRAY, "fontSize": "10px",
+                                              "overflow": "hidden", "textOverflow": "ellipsis",
+                                              "whiteSpace": "nowrap"}),
         ], style={
             "backgroundColor": CARD, "borderRadius": "8px", "padding": "10px 14px",
             "marginBottom": "6px", "borderLeft": f"3px solid {CYAN}44",
