@@ -10280,19 +10280,7 @@ def _build_receipt_gallery():
     })
 
 
-# ── Receipt Gallery Search ────────────────────────────────────────────────
-@app.callback(
-    Output("receipt-gallery-cards", "children"),
-    Input("receipt-gallery-search", "value"),
-    prevent_initial_call=True,
-)
-def filter_receipt_gallery(search):
-    """Filter receipt gallery cards by search text."""
-    if not search or not search.strip():
-        # Rebuild all cards
-        return _build_receipt_cards_filtered("")
-    return _build_receipt_cards_filtered(search.strip().lower())
-
+# ── Receipt Gallery Search helper (callback registered after app creation) ──
 
 def _build_receipt_cards_filtered(query):
     """Build receipt card list filtered by search query."""
@@ -14295,6 +14283,19 @@ def serve_layout():
     })
 
 app.layout = serve_layout
+
+
+# ── Receipt Gallery Search ────────────────────────────────────────────────
+@app.callback(
+    Output("receipt-gallery-cards", "children"),
+    Input("receipt-gallery-search", "value"),
+    prevent_initial_call=True,
+)
+def filter_receipt_gallery(search):
+    """Filter receipt gallery cards by search text."""
+    if not search or not search.strip():
+        return _build_receipt_cards_filtered("")
+    return _build_receipt_cards_filtered(search.strip().lower())
 
 
 # ── Dynamic Tab Rendering ────────────────────────────────────────────────────
