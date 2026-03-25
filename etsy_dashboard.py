@@ -9908,13 +9908,14 @@ def _build_product_library():
                                              style={**_inp, "width": "280px", "height": "40px", "resize": "vertical"}),
                             ], style={"marginBottom": "6px"}),
 
-                            # Row 4: Notes
+                            # Row 4: Description / Assembly Instructions
                             html.Div([
-                                html.Label("Notes", style={"color": GRAY, "fontSize": "9px", "display": "block", "marginBottom": "2px"}),
-                                dcc.Input(id={"type": "pl-notes", "listing": _title},
-                                          type="text", placeholder="Any special instructions, issues, etc.",
-                                          value=_notes,
-                                          style={**_inp, "width": "280px"}),
+                                html.Label("Description / Assembly Instructions", style={"color": GRAY, "fontSize": "9px", "display": "block", "marginBottom": "2px"}),
+                                dcc.Textarea(id={"type": "pl-notes", "listing": _title},
+                                             placeholder="Parts needed, assembly steps, notes for Braden, anything...\ne.g. USB LED puck, 1x M3x25mm screw, super glue\nGlue top to base, screw in LED mount",
+                                             value=_notes,
+                                             style={**_inp, "width": "100%", "height": "70px", "resize": "vertical",
+                                                    "lineHeight": "1.4"}),
                             ]),
                         ], style={"padding": "6px 0"}),
                     ]),
