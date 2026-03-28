@@ -11848,8 +11848,27 @@ def etsy_sync_full():
         ledger = get_all_ledger_entries(shop_id, days_back=365)
 
         # Step 3: Build true P/L by matching ledger to orders
+        # Use raw_receipts for shipment timestamps, orders for display data
+        raw_receipts = result.get("raw_receipts", [])
+        # Merge: raw receipts have shipments/transactions, orders have display fields
+        # Build a combined list where each entry has both
+        combined = []
+        order_lookup = {o["Order ID"]: o for o in result["orders"]}
+        for rr in raw_receipts:
+            rid = str(rr.get("receipt_id", ""))
+            merged = order_lookup.get(rid, {}).copy()
+            merged["shipments"] = rr.get("shipments", [])
+            merged["transactions"] = rr.get("transactions", [])
+            merged["receipt_id"] = rid
+            combined.append(merged)
+        # Also include orders without raw receipts
+        raw_ids = {str(rr.get("receipt_id", "")) for rr in raw_receipts}
+        for o in result["orders"]:
+            if o["Order ID"] not in raw_ids:
+                combined.append(o)
+
         profit_data = build_order_profit_from_ledger(
-            result["orders"], ledger, result["items"]
+            combined, ledger, result["items"]
         )
 
         # Step 4: Save profit data to Supabase

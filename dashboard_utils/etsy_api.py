@@ -473,10 +473,13 @@ def get_all_ledger_entries(shop_id, days_back=365):
 def build_order_profit_from_ledger(all_receipts, all_ledger_entries, all_items):
     """Match ledger entries to orders and compute true P/L per order.
 
-    Args:
-        all_receipts: list of receipt dicts from API (has receipt_id, transactions)
-        all_ledger_entries: list of ledger entry dicts (has amounts, reference_ids)
-        all_items: list of item dicts (has Order ID, Transaction ID)
+    Matching strategy:
+    - receipt reference_type → direct receipt_id match
+    - transaction reference_type → transaction_id → receipt_id via items
+    - etsy reference_type (offsite ads) → receipt_id directly
+    - shop_payment/processing_fee → match by same-second timestamp to receipt entry
+    - listing (renew_sold_auto) → match by same-second timestamp to receipt entry
+    - shipping_label → match by timestamp to receipt's shipment notification timestamp
 
     Returns:
         list of order dicts with full financial breakdown
@@ -495,12 +498,46 @@ def build_order_profit_from_ledger(all_receipts, all_ledger_entries, all_items):
         rid = str(r.get("receipt_id", r.get("Order ID", "")))
         receipt_lookup[rid] = r
 
+    # Build shipment timestamp → receipt_id lookup for label matching
+    # Each receipt's shipment has a notification timestamp — match labels to this
+    ship_ts_to_receipt = {}
+    for r in all_receipts:
+        rid = str(r.get("receipt_id", r.get("Order ID", "")))
+        # Check raw receipt for shipments (from API sync)
+        # The sync stores shipped_timestamp in transactions
+        txns = r.get("transactions", [])
+        for t in txns if isinstance(txns, list) else []:
+            shipped_ts = t.get("shipped_timestamp")
+            if shipped_ts and isinstance(shipped_ts, (int, float)) and shipped_ts > 0:
+                ship_ts_to_receipt[int(shipped_ts)] = rid
+
+    # Also build from receipt-level data
+    for r in all_receipts:
+        rid = str(r.get("receipt_id", r.get("Order ID", "")))
+        shipments = r.get("shipments", [])
+        if isinstance(shipments, list):
+            for s in shipments:
+                ts = s.get("shipment_notification_timestamp", s.get("shipped_timestamp", 0))
+                if ts and isinstance(ts, (int, float)) and ts > 0:
+                    ship_ts_to_receipt[int(ts)] = rid
+
+    # Build timestamp → receipt_id index for same-second matching
+    ts_to_receipt = {}
+    for entry in all_ledger_entries:
+        if entry.get("reference_type") == "receipt":
+            ts = entry.get("created_timestamp", 0)
+            rid = str(entry.get("reference_id", ""))
+            if ts and rid:
+                ts_to_receipt[ts] = rid
+
     # Group ledger entries by order
-    # Each entry has reference_id and reference_type that tells us what it links to
-    order_financials = {}  # {receipt_id: {gross, processing, transaction, tax, ads, listing, label, ...}}
+    order_financials = {}
+
+    _unmatched_labels = 0
+    _matched_labels = 0
 
     for entry in all_ledger_entries:
-        amount = entry.get("amount", 0) / 100.0  # cents to dollars
+        amount = entry.get("amount", 0) / 100.0
         ledger_type = entry.get("ledger_type", "")
         ref_id = str(entry.get("reference_id", ""))
         ref_type = entry.get("reference_type", "")
@@ -508,58 +545,45 @@ def build_order_profit_from_ledger(all_receipts, all_ledger_entries, all_items):
 
         order_id = None
 
-        # Match to order based on reference_type
         if ref_type == "receipt":
             order_id = ref_id
-        elif ref_type == "etsy" and ledger_type == "offsite_ads_fee":
-            order_id = ref_id  # offsite ads reference_id IS the receipt_id
+        elif ref_type == "etsy":
+            # offsite ads, refunds — reference_id is receipt_id
+            order_id = ref_id
         elif ref_type == "transaction":
             order_id = txn_to_receipt.get(ref_id)
-        elif ref_type == "shop_payment" or ref_type == "processing_fee":
-            # Payment entries — find the receipt via payment lookup
-            # The payment reference_id is the payment_id, need to match via timestamp
-            # For now, skip — we get processing fee from the payment API already
-            # Try to match via nearby entries with same timestamp
-            for other in all_ledger_entries:
-                if (other.get("created_timestamp") == timestamp
-                        and other.get("reference_type") == "receipt"):
-                    order_id = str(other.get("reference_id", ""))
-                    break
+        elif ref_type in ("shop_payment", "processing_fee", "payment_adjustment"):
+            # Match by same-second timestamp to a receipt entry
+            order_id = ts_to_receipt.get(timestamp)
             if not order_id:
-                # Try matching via shop_payment → same timestamp entries
-                for other in all_ledger_entries:
-                    if (abs(other.get("created_timestamp", 0) - timestamp) < 2
-                            and other.get("reference_type") in ("receipt", "etsy")
-                            and other.get("reference_id")):
-                        order_id = str(other.get("reference_id", ""))
+                # Try ±1 second
+                for delta in (1, -1, 2, -2):
+                    order_id = ts_to_receipt.get(timestamp + delta)
+                    if order_id:
                         break
         elif ref_type == "listing":
-            # Listing fee — match to receipt via timestamp (listing renewed when sold)
-            for other in all_ledger_entries:
-                if (abs(other.get("created_timestamp", 0) - timestamp) < 5
-                        and other.get("reference_type") == "receipt"):
-                    order_id = str(other.get("reference_id", ""))
-                    break
+            # Listing renewal — match by same-second timestamp
+            order_id = ts_to_receipt.get(timestamp)
+            if not order_id:
+                for delta in (1, -1, 2, -2, 3, -3, 5, -5):
+                    order_id = ts_to_receipt.get(timestamp + delta)
+                    if order_id:
+                        break
         elif ref_type == "shipping_label":
-            # Shipping label — match to receipt via close timestamp
-            # Label is usually purchased within minutes/hours of order ship
+            # Match label to order via shipment timestamp
+            # The label purchase timestamp should be very close to the ship notification
             best_match = None
-            best_diff = 86400 * 7  # max 7 days
-            for other in all_ledger_entries:
-                if other.get("ledger_type") == "PAYMENT_GROSS":
-                    diff = abs(other.get("created_timestamp", 0) - timestamp)
-                    if diff < best_diff:
-                        # Find the receipt for this payment
-                        pay_ts = other.get("created_timestamp", 0)
-                        for r_entry in all_ledger_entries:
-                            if (r_entry.get("reference_type") == "receipt"
-                                    and abs(r_entry.get("created_timestamp", 0) - pay_ts) < 2):
-                                best_match = str(r_entry.get("reference_id", ""))
-                                best_diff = diff
-                                break
-            # Actually, simpler: match label to the most recent unshipped order before the label timestamp
-            # For now, use timestamp proximity
-            order_id = best_match
+            best_diff = 86400  # max 24 hours
+            for ship_ts, ship_receipt in ship_ts_to_receipt.items():
+                diff = abs(ship_ts - timestamp)
+                if diff < best_diff:
+                    best_diff = diff
+                    best_match = ship_receipt
+            if best_match:
+                order_id = best_match
+                _matched_labels += 1
+            else:
+                _unmatched_labels += 1
 
         if not order_id:
             continue
@@ -568,26 +592,31 @@ def build_order_profit_from_ledger(all_receipts, all_ledger_entries, all_items):
             order_financials[order_id] = {
                 "gross": 0, "processing_fee": 0, "transaction_fee": 0,
                 "sales_tax": 0, "offsite_ads": 0, "listing_fee": 0,
-                "shipping_label": 0, "other": 0,
+                "shipping_label": 0, "refund": 0, "other": 0,
             }
 
         fin = order_financials[order_id]
         if ledger_type == "PAYMENT_GROSS":
             fin["gross"] += amount
         elif ledger_type == "PAYMENT_PROCESSING_FEE":
-            fin["processing_fee"] += amount  # negative
+            fin["processing_fee"] += amount
         elif ledger_type == "transaction":
-            fin["transaction_fee"] += amount  # negative
+            fin["transaction_fee"] += amount
         elif ledger_type == "sales_tax":
-            fin["sales_tax"] += amount  # negative
+            fin["sales_tax"] += amount
         elif ledger_type == "offsite_ads_fee":
-            fin["offsite_ads"] += amount  # negative
+            fin["offsite_ads"] += amount
         elif ledger_type == "renew_sold_auto":
-            fin["listing_fee"] += amount  # negative
+            fin["listing_fee"] += amount
         elif ledger_type == "shipping_labels":
-            fin["shipping_label"] += amount  # negative
+            fin["shipping_label"] += amount
+        elif ledger_type in ("REFUND_GROSS", "REFUND_PROCESSING_FEE",
+                             "transaction_refund", "sales_tax_refund"):
+            fin["refund"] += amount
         else:
             fin["other"] += amount
+
+    _logger.info("Label matching: %d matched, %d unmatched", _matched_labels, _unmatched_labels)
 
     # Build final order list with full breakdown
     result_orders = []
