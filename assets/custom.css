@@ -278,6 +278,19 @@ a:hover { color: #33ddff; text-decoration: underline; }
     margin-bottom: 8px;
 }
 
+/* ── Order Cards ────────────────────────────────────────────────────── */
+details > summary { list-style: none; }
+details > summary::-webkit-details-marker { display: none; }
+details > summary::marker { display: none; content: ""; }
+
+details:hover {
+    border-color: #00d4ff22 !important;
+}
+details[open] {
+    border-color: #00d4ff33 !important;
+    box-shadow: 0 2px 12px #00d4ff08;
+}
+
 /* ── Responsive helpers ──────────────────────────────────────────────── */
 @media (max-width: 768px) {
     .tab-container { font-size: 12px; }

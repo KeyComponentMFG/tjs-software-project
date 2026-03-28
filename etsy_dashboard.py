@@ -13104,118 +13104,411 @@ def _build_per_order_profit_section():
     # Per-store summary — hidden until multiple stores have API data
     _store_summary = html.Div()
 
-    # Order detail table — use ledger data with full breakdown
-    _table_data = []
-    if _ledger_orders:
-        for _o in _ledger_orders:
-            _item = _o.get("Item Names", "")[:40]
-            _var = _o.get("Variations", "")
-            if _var:
-                _item = f"{_item} ({_var})"
+    # ── Order Cards — rich expandable view ──────────────────────────────────
+    # Load items data for variation details and listing IDs
+    _items_data = []
+    try:
+        from supabase_loader import get_config_value as _gcv_items
+        import json as _json_items
+        _raw_items = _gcv_items("order_csv_items_keycomponentmfg")
+        if _raw_items:
+            _items_data = _json_items.loads(_raw_items) if isinstance(_raw_items, str) else _raw_items
+    except Exception:
+        pass
 
-            _table_data.append({
-                "Order #": _o.get("Order ID", ""),
-                "Date": _o.get("Sale Date", ""),
-                "Buyer": _o.get("Buyer", "")[:16],
-                "Qty": _o.get("Qty", 1),
-                "Item": _item[:50],
-                "List $": _o.get("Listing Price", 0),
-                "Disc": round(-_o.get("Discount", 0), 2) if _o.get("Discount", 0) > 0 else None,
-                "Sale $": _o.get("Sale Price", 0),
-                "Ship In": _o.get("Buyer Shipping", 0) if _o.get("Buyer Shipping", 0) > 0 else None,
-                "Fees": _o.get("Total Etsy Fees", 0),
-                "Label": _o.get("Shipping Label", 0) if _o.get("Shipping Label", 0) > 0 else None,
-                "Ads": _o.get("Offsite Ads", 0) if _o.get("Offsite Ads", 0) > 0 else None,
-                "Net": _o.get("True Net", 0),
-                "Margin": _o.get("Margin %", 0),
-                "Status": _o.get("Status", "")[:4],
-            })
-    elif _api_orders_all:
-        for _o in _api_orders_all:
-            _table_data.append({
-                "Order #": _o.get("Order ID", ""),
-                "Date": _o.get("Sale Date", ""),
-                "Buyer": _o.get("Buyer", "")[:18],
-                "Qty": _o.get("Number of Items", 1),
-                "Item": _o.get("Item Names", "")[:60],
-                "Gross": _o.get("Order Value", 0),
-                "Fees": _o.get("Etsy Fees", 0),
-                "Label": 0,
-                "Ads": None,
-                "Tax": _o.get("Sales Tax", 0),
-                "True Net": _o.get("Etsy Net", 0),
-                "Fee%": _o.get("Fee %", 0),
-                "Status": _o.get("Status", ""),
-                "ST": _o.get("Ship State", "")[:2] if _o.get("Ship State") else "",
-            })
+    # Build items lookup: Order ID -> list of item dicts
+    _items_by_order = {}
+    for _it in _items_data:
+        _oid = str(_it.get("Order ID", ""))
+        if _oid:
+            _items_by_order.setdefault(_oid, []).append(_it)
 
-    _dt_columns = [
-        {"name": "Order #", "id": "Order #", "type": "text"},
-        {"name": "Date", "id": "Date", "type": "text"},
-        {"name": "Buyer", "id": "Buyer", "type": "text"},
-        {"name": "Qty", "id": "Qty", "type": "numeric"},
-        {"name": "Item", "id": "Item", "type": "text"},
-        {"name": "List $", "id": "List $", "type": "numeric", "format": {"specifier": "$,.2f"}},
-        {"name": "Disc", "id": "Disc", "type": "numeric", "format": {"specifier": "$,.2f"}},
-        {"name": "Sale $", "id": "Sale $", "type": "numeric", "format": {"specifier": "$,.2f"}},
-        {"name": "Ship In", "id": "Ship In", "type": "numeric", "format": {"specifier": "$,.2f"}},
-        {"name": "Fees", "id": "Fees", "type": "numeric", "format": {"specifier": "$,.2f"}},
-        {"name": "Label", "id": "Label", "type": "numeric", "format": {"specifier": "$,.2f"}},
-        {"name": "Ads", "id": "Ads", "type": "numeric", "format": {"specifier": "$,.2f"}},
-        {"name": "Net", "id": "Net", "type": "numeric", "format": {"specifier": "$,.2f"}},
-        {"name": "Margin", "id": "Margin", "type": "numeric", "format": {"specifier": ".1f"}},
-        {"name": "", "id": "Status", "type": "text"},
-    ]
+    # Use ledger orders or fall back to API orders
+    _all_orders_for_cards = _ledger_orders if _ledger_orders else _api_orders_all
 
-    _order_table = dash_table.DataTable(
-        id="per-order-profit-table",
-        columns=_dt_columns,
-        data=_table_data,
-        sort_action="native",
-        sort_mode="single",
-        page_size=50,
-        style_table={"overflowX": "auto"},
-        style_header={
-            "backgroundColor": "#0a0a18", "color": CYAN, "fontWeight": "bold",
-            "fontSize": "11px", "padding": "10px 10px",
-            "borderBottom": f"2px solid {CYAN}44", "borderTop": "none",
-            "textAlign": "right", "cursor": "pointer", "letterSpacing": "0.5px",
-        },
-        style_cell={
-            "backgroundColor": "#0f1525", "color": WHITE, "fontSize": "12px",
-            "fontFamily": "'Consolas', 'Monaco', monospace", "padding": "8px 10px",
-            "border": "none", "borderBottom": f"1px solid #ffffff06",
-            "textAlign": "right",
-        },
-        style_cell_conditional=[
-            {"if": {"column_id": "Order #"}, "textAlign": "left", "color": CYAN, "width": "82px"},
-            {"if": {"column_id": "Date"}, "textAlign": "left", "width": "72px", "color": GRAY},
-            {"if": {"column_id": "Buyer"}, "textAlign": "left", "width": "78px", "overflow": "hidden", "textOverflow": "ellipsis"},
-            {"if": {"column_id": "Qty"}, "width": "25px", "textAlign": "center"},
-            {"if": {"column_id": "Item"}, "textAlign": "left", "width": "155px",
-             "overflow": "hidden", "textOverflow": "ellipsis", "maxWidth": "155px"},
-            {"if": {"column_id": "List $"}, "width": "55px", "color": WHITE},
-            {"if": {"column_id": "Disc"}, "width": "42px", "color": ORANGE},
-            {"if": {"column_id": "Sale $"}, "width": "55px", "color": GREEN},
-            {"if": {"column_id": "Ship In"}, "width": "48px", "color": TEAL},
-            {"if": {"column_id": "Fees"}, "width": "45px", "color": RED},
-            {"if": {"column_id": "Label"}, "width": "45px", "color": BLUE},
-            {"if": {"column_id": "Ads"}, "width": "38px", "color": PURPLE},
-            {"if": {"column_id": "Net"}, "width": "55px", "color": CYAN, "fontWeight": "bold"},
-            {"if": {"column_id": "Margin"}, "width": "42px"},
-            {"if": {"column_id": "Status"}, "textAlign": "left", "width": "32px", "color": GRAY},
-        ],
-        style_data_conditional=[
-            {"if": {"filter_query": "{Net} < 0", "column_id": "Net"}, "color": RED, "fontWeight": "bold"},
-            {"if": {"filter_query": "{Net} >= 0", "column_id": "Net"}, "color": CYAN, "fontWeight": "bold"},
-            {"if": {"filter_query": "{Margin} < 30", "column_id": "Margin"}, "color": RED},
-            {"if": {"filter_query": "{Margin} >= 30 && {Margin} < 50", "column_id": "Margin"}, "color": ORANGE},
-            {"if": {"filter_query": "{Margin} >= 50", "column_id": "Margin"}, "color": GREEN},
-            {"if": {"row_index": "odd"}, "backgroundColor": "#0d1320"},
-        ],
-        page_action="native",
-        style_as_list_view=True,
+    # Sort newest first
+    _all_orders_for_cards.sort(
+        key=lambda x: x.get("Sale Date", "") or "", reverse=True
     )
+
+    # ── Helper: status badge ──
+    def _status_badge(status_str):
+        s = (status_str or "").strip().lower()
+        if "refund" in s or "return" in s:
+            _bg, _label = RED, "Refunded"
+        elif "ship" in s:
+            _bg, _label = BLUE, "Shipped"
+        elif "complet" in s:
+            _bg, _label = GREEN, "Completed"
+        elif "paid" in s or "open" in s:
+            _bg, _label = ORANGE, "Paid"
+        elif "cancel" in s:
+            _bg, _label = RED, "Cancelled"
+        else:
+            _bg, _label = DARKGRAY, status_str or "Unknown"
+        return html.Span(_label, style={
+            "backgroundColor": f"{_bg}30", "color": _bg, "border": f"1px solid {_bg}66",
+            "padding": "2px 8px", "borderRadius": "10px", "fontSize": "10px",
+            "fontWeight": "bold", "letterSpacing": "0.5px", "whiteSpace": "nowrap",
+        })
+
+    # ── Helper: financial waterfall line ──
+    def _fin_line(label, value, color=WHITE, bold=False, indent=False, is_fee=False):
+        if value is None or value == 0:
+            return None
+        _prefix = "-" if is_fee and value > 0 else ""
+        _display_val = abs(value) if is_fee else value
+        return html.Div([
+            html.Span(label, style={
+                "color": GRAY, "fontSize": "12px",
+                "paddingLeft": "12px" if indent else "0",
+            }),
+            html.Span(f"{_prefix}${abs(_display_val):,.2f}", style={
+                "color": color, "fontSize": "12px", "fontFamily": "monospace",
+                "fontWeight": "bold" if bold else "normal",
+            }),
+        ], style={
+            "display": "flex", "justifyContent": "space-between",
+            "padding": "3px 0", "alignItems": "center",
+        })
+
+    # ── Helper: build one order card ──
+    def _build_order_card(_o, _idx):
+        _oid = str(_o.get("Order ID", ""))
+        _date = _o.get("Sale Date", "")
+        _buyer = _o.get("Buyer", _o.get("Full Name", ""))
+        _status = _o.get("Status", "")
+        _qty = _o.get("Qty", _o.get("Number of Items", 1)) or 1
+        _item_names = _o.get("Item Names", _o.get("Item Name", ""))
+        _variations = _o.get("Variations", "")
+        _true_net = _o.get("True Net", _o.get("Etsy Net", 0)) or 0
+        _margin = _o.get("Margin %", 0) or 0
+
+        # Get image from _IMAGE_URLS if item name matches
+        _thumb = None
+        _item_display = _item_names or "Unknown Item"
+        # Try to find image from product library
+        for _img_name, _img_url in _IMAGE_URLS.items():
+            if _img_name and _item_display and _img_name.lower()[:20] in _item_display.lower():
+                _thumb = item_thumbnail(_img_url, size=44)
+                break
+        if not _thumb:
+            # Check items data for this order
+            _order_items = _items_by_order.get(_oid, [])
+            for _oi in _order_items:
+                _oi_name = _oi.get("Item Name", "")
+                for _img_name, _img_url in _IMAGE_URLS.items():
+                    if _img_name and _oi_name and _img_name.lower()[:20] in _oi_name.lower():
+                        _thumb = item_thumbnail(_img_url, size=44)
+                        break
+                if _thumb:
+                    break
+        if not _thumb:
+            _thumb = item_thumbnail(None, size=44)
+
+        # Variation display
+        _var_display = ""
+        if _variations:
+            _var_display = _variations
+        else:
+            _order_items = _items_by_order.get(_oid, [])
+            _vars_list = []
+            for _oi in _order_items:
+                _v = _oi.get("Variations", "")
+                if _v:
+                    _vars_list.append(_v)
+            if _vars_list:
+                _var_display = " | ".join(_vars_list)
+
+        # Net color
+        _net_color = CYAN if _true_net >= 0 else RED
+
+        # Stripe odd/even
+        _card_bg = CARD if _idx % 2 == 0 else "#1a2847"
+
+        # ── Summary row (always visible) ──
+        _summary = html.Div([
+            # Thumbnail
+            html.Div(_thumb, style={
+                "flexShrink": "0", "marginRight": "10px",
+            }),
+            # Item name + variations
+            html.Div([
+                html.Div(_item_display[:65], style={
+                    "color": WHITE, "fontSize": "12px", "fontWeight": "600",
+                    "overflow": "hidden", "textOverflow": "ellipsis", "whiteSpace": "nowrap",
+                    "maxWidth": "280px",
+                }),
+                html.Div(_var_display[:60] if _var_display else "", style={
+                    "color": GRAY, "fontSize": "10px", "marginTop": "2px",
+                    "overflow": "hidden", "textOverflow": "ellipsis", "whiteSpace": "nowrap",
+                }) if _var_display else html.Div(),
+            ], style={"flex": "1", "minWidth": "120px", "overflow": "hidden"}),
+            # Qty
+            html.Div([
+                html.Div(f"x{_qty}", style={
+                    "color": GRAY, "fontSize": "12px", "fontFamily": "monospace",
+                }),
+            ], style={"width": "30px", "textAlign": "center", "flexShrink": "0"}),
+            # Buyer
+            html.Div([
+                html.Div((_buyer or "")[:18], style={
+                    "color": WHITE, "fontSize": "11px",
+                    "overflow": "hidden", "textOverflow": "ellipsis", "whiteSpace": "nowrap",
+                }),
+            ], style={"width": "110px", "flexShrink": "0"}),
+            # Date
+            html.Div([
+                html.Div(_date or "", style={
+                    "color": GRAY, "fontSize": "11px", "fontFamily": "monospace",
+                }),
+            ], style={"width": "80px", "flexShrink": "0", "textAlign": "center"}),
+            # Status badge
+            html.Div([
+                _status_badge(_status),
+            ], style={"width": "80px", "flexShrink": "0", "textAlign": "center"}),
+            # True Net
+            html.Div([
+                html.Div(f"${_true_net:,.2f}", style={
+                    "color": _net_color, "fontSize": "14px", "fontWeight": "bold",
+                    "fontFamily": "monospace",
+                }),
+            ], style={"width": "80px", "flexShrink": "0", "textAlign": "right"}),
+        ], style={
+            "display": "flex", "alignItems": "center", "padding": "10px 14px",
+            "cursor": "pointer", "gap": "6px",
+        })
+
+        # ── Expanded detail ──
+        _listing_price = _o.get("Listing Price", _o.get("Order Value", 0)) or 0
+        _discount = _o.get("Discount", _o.get("Discount Amount", 0)) or 0
+        _sale_price = _o.get("Sale Price", 0) or 0
+        _buyer_shipping = _o.get("Buyer Shipping", _o.get("Shipping", 0)) or 0
+        _sales_tax = _o.get("Sales Tax", 0) or 0
+        _gross = _o.get("Gross", _o.get("Order Value", 0)) or 0
+        _txn_fee = _o.get("Transaction Fee", 0) or 0
+        _proc_fee = _o.get("Processing Fee", _o.get("Card Processing Fees", 0)) or 0
+        _listing_fee = _o.get("Listing Fee", 0) or 0
+        _offsite_ads = _o.get("Offsite Ads", 0) or 0
+        _total_fees = _o.get("Total Etsy Fees", _o.get("Etsy Fees", 0)) or 0
+        _label_cost = _o.get("Shipping Label", 0) or 0
+        _ship_pl = _o.get("Ship P/L", 0) or 0
+        _fee_pct = _o.get("Fee %", 0) or 0
+        _ship_state = _o.get("Ship State", "")
+        _ship_country = _o.get("Ship Country", "")
+        _tracking = _o.get("Tracking", "")
+
+        # Build waterfall lines
+        _waterfall_lines = [
+            _fin_line("Listing Price", _listing_price, WHITE),
+            _fin_line("Discount", -_discount, ORANGE) if _discount else None,
+            _fin_line("Sale Price", _sale_price, GREEN, bold=True),
+            html.Hr(style={"border": "none", "borderTop": f"1px solid {DARKGRAY}33", "margin": "4px 0"}),
+            _fin_line("Buyer Shipping", _buyer_shipping, TEAL),
+            _fin_line("Sales Tax (collected)", _sales_tax, GRAY),
+            _fin_line("Gross Payment", _gross, WHITE, bold=True),
+            html.Hr(style={"border": "none", "borderTop": f"1px solid {DARKGRAY}33", "margin": "4px 0"}),
+            html.Div("Etsy Fees", style={
+                "color": RED, "fontSize": "11px", "fontWeight": "bold",
+                "letterSpacing": "0.5px", "marginTop": "4px", "marginBottom": "2px",
+            }),
+            _fin_line("Transaction Fee (6.5%)", _txn_fee, RED, indent=True, is_fee=True),
+            _fin_line("Processing Fee (3%+$0.25)", _proc_fee, RED, indent=True, is_fee=True),
+            _fin_line("Listing Fee ($0.20)", _listing_fee, RED, indent=True, is_fee=True),
+            _fin_line("Offsite Ads (15%)", _offsite_ads, PURPLE, indent=True, is_fee=True),
+            _fin_line("Total Etsy Fees", _total_fees, RED, bold=True, is_fee=True),
+            html.Hr(style={"border": "none", "borderTop": f"1px solid {DARKGRAY}33", "margin": "4px 0"}),
+            _fin_line("Shipping Label", _label_cost, BLUE, is_fee=True),
+            _fin_line("Ship P/L", _ship_pl, GREEN if _ship_pl >= 0 else RED),
+            html.Hr(style={"border": "none", "borderTop": f"1px solid {CYAN}44", "margin": "6px 0"}),
+            _fin_line("TRUE NET", _true_net, CYAN if _true_net >= 0 else RED, bold=True),
+            html.Div([
+                html.Span("Margin", style={"color": GRAY, "fontSize": "12px"}),
+                html.Span(
+                    f"{_margin:.1f}%",
+                    style={
+                        "color": GREEN if _margin >= 50 else (ORANGE if _margin >= 30 else RED),
+                        "fontSize": "12px", "fontFamily": "monospace", "fontWeight": "bold",
+                    }
+                ),
+            ], style={"display": "flex", "justifyContent": "space-between", "padding": "3px 0"}),
+            html.Div([
+                html.Span("Fee Rate", style={"color": GRAY, "fontSize": "12px"}),
+                html.Span(f"{_fee_pct:.1f}%", style={
+                    "color": ORANGE, "fontSize": "12px", "fontFamily": "monospace",
+                }),
+            ], style={"display": "flex", "justifyContent": "space-between", "padding": "3px 0"}) if _fee_pct else None,
+        ]
+        # Filter out None lines
+        _waterfall_lines = [l for l in _waterfall_lines if l is not None]
+
+        # Buyer / shipping info
+        _info_items = []
+        if _buyer:
+            _info_items.append(html.Div([
+                html.Span("Buyer: ", style={"color": GRAY, "fontSize": "11px"}),
+                html.Span(_buyer, style={"color": WHITE, "fontSize": "11px"}),
+            ]))
+        if _ship_state or _ship_country:
+            _loc = ", ".join(filter(None, [_ship_state, _ship_country]))
+            _info_items.append(html.Div([
+                html.Span("Ships to: ", style={"color": GRAY, "fontSize": "11px"}),
+                html.Span(_loc, style={"color": WHITE, "fontSize": "11px"}),
+            ]))
+        if _tracking:
+            _info_items.append(html.Div([
+                html.Span("Tracking: ", style={"color": GRAY, "fontSize": "11px"}),
+                html.Span(str(_tracking), style={"color": TEAL, "fontSize": "11px", "fontFamily": "monospace"}),
+            ]))
+        # Show individual items if multiple
+        _order_items = _items_by_order.get(_oid, [])
+        if len(_order_items) > 1:
+            for _oi_idx, _oi in enumerate(_order_items):
+                _oi_name = _oi.get("Item Name", "")[:50]
+                _oi_qty = _oi.get("Quantity", 1)
+                _oi_price = _oi.get("Price", 0)
+                _oi_var = _oi.get("Variations", "")
+                _oi_line = f"{_oi_name}"
+                if _oi_var:
+                    _oi_line += f" ({_oi_var})"
+                _info_items.append(html.Div([
+                    html.Span(f"Item {_oi_idx + 1}: ", style={"color": GRAY, "fontSize": "11px"}),
+                    html.Span(_oi_line, style={"color": WHITE, "fontSize": "11px"}),
+                    html.Span(f" x{_oi_qty} @ ${_oi_price:,.2f}" if _oi_price else f" x{_oi_qty}",
+                              style={"color": TEAL, "fontSize": "11px", "fontFamily": "monospace", "marginLeft": "6px"}),
+                ]))
+        _info_items.append(html.Div([
+            html.Span("Order ID: ", style={"color": GRAY, "fontSize": "11px"}),
+            html.Span(f"#{_oid}", style={"color": CYAN, "fontSize": "11px", "fontFamily": "monospace"}),
+        ]))
+
+        _detail = html.Div([
+            # Two column layout: waterfall left, info right
+            html.Div([
+                # Left: Financial waterfall
+                html.Div([
+                    html.Div("Financial Breakdown", style={
+                        "color": CYAN, "fontSize": "11px", "fontWeight": "bold",
+                        "letterSpacing": "1px", "marginBottom": "8px",
+                        "borderBottom": f"1px solid {CYAN}33", "paddingBottom": "4px",
+                    }),
+                    *_waterfall_lines,
+                ], style={
+                    "flex": "1", "minWidth": "220px", "padding": "12px 16px",
+                    "backgroundColor": "#0a0f1e", "borderRadius": "6px",
+                }),
+                # Right: Buyer/shipping info
+                html.Div([
+                    html.Div("Order Info", style={
+                        "color": CYAN, "fontSize": "11px", "fontWeight": "bold",
+                        "letterSpacing": "1px", "marginBottom": "8px",
+                        "borderBottom": f"1px solid {CYAN}33", "paddingBottom": "4px",
+                    }),
+                    *_info_items,
+                ], style={
+                    "flex": "1", "minWidth": "200px", "padding": "12px 16px",
+                    "backgroundColor": "#0a0f1e", "borderRadius": "6px",
+                    "display": "flex", "flexDirection": "column", "gap": "4px",
+                }),
+            ], style={
+                "display": "flex", "gap": "12px", "flexWrap": "wrap",
+                "padding": "0 14px 14px 14px",
+            }),
+        ])
+
+        return html.Details([
+            html.Summary(_summary, style={
+                "listStyle": "none", "outline": "none",
+            }),
+            _detail,
+        ], style={
+            "backgroundColor": _card_bg, "borderRadius": "6px",
+            "border": f"1px solid #ffffff08", "overflow": "hidden",
+            "marginBottom": "4px", "transition": "all 0.15s ease",
+        })
+
+    # ── Build order cards with pagination (25 per page) ──
+    _PAGE_SIZE = 25
+    _total_orders = len(_all_orders_for_cards)
+    _visible_orders = _all_orders_for_cards[:_PAGE_SIZE]
+
+    _order_cards = [_build_order_card(_o, _i) for _i, _o in enumerate(_visible_orders)]
+
+    # Build remaining pages as hidden groups for "Load More"
+    _remaining_pages = []
+    for _pg_start in range(_PAGE_SIZE, _total_orders, _PAGE_SIZE):
+        _pg_end = min(_pg_start + _PAGE_SIZE, _total_orders)
+        _pg_cards = [_build_order_card(_o, _i + _pg_start) for _i, _o in enumerate(_all_orders_for_cards[_pg_start:_pg_end])]
+        _remaining_pages.append(html.Div(
+            _pg_cards,
+            id=f"order-page-{_pg_start // _PAGE_SIZE}",
+            style={"display": "none"},
+        ))
+
+    # Search/filter bar
+    _search_bar = html.Div([
+        dcc.Input(
+            id="order-card-search",
+            type="text",
+            placeholder="Search by buyer, order #, or item name...",
+            debounce=True,
+            style={
+                "flex": "1", "fontSize": "12px", "backgroundColor": "#0a0f1e",
+                "color": WHITE, "border": f"1px solid {DARKGRAY}44", "borderRadius": "6px",
+                "padding": "8px 12px", "minWidth": "200px", "outline": "none",
+            },
+        ),
+        html.Div(f"{_total_orders} orders", style={
+            "color": GRAY, "fontSize": "11px", "padding": "8px 0", "whiteSpace": "nowrap",
+        }),
+    ], style={
+        "display": "flex", "gap": "12px", "alignItems": "center",
+        "marginBottom": "12px", "padding": "0 2px",
+    })
+
+    # Column headers for the summary rows
+    _col_headers = html.Div([
+        html.Div("", style={"width": "54px", "flexShrink": "0"}),  # thumbnail
+        html.Div("Item", style={"flex": "1", "minWidth": "120px"}),
+        html.Div("Qty", style={"width": "30px", "textAlign": "center", "flexShrink": "0"}),
+        html.Div("Buyer", style={"width": "110px", "flexShrink": "0"}),
+        html.Div("Date", style={"width": "80px", "flexShrink": "0", "textAlign": "center"}),
+        html.Div("Status", style={"width": "80px", "flexShrink": "0", "textAlign": "center"}),
+        html.Div("True Net", style={"width": "80px", "flexShrink": "0", "textAlign": "right"}),
+    ], style={
+        "display": "flex", "alignItems": "center", "padding": "6px 14px",
+        "color": GRAY, "fontSize": "10px", "fontWeight": "bold",
+        "letterSpacing": "1px", "textTransform": "uppercase",
+        "borderBottom": f"1px solid {CYAN}22", "gap": "6px",
+    })
+
+    # "Load More" button — always render with ID so callback doesn't error
+    _load_more_visible = _total_orders > _PAGE_SIZE
+    _load_more_btn = html.Button(
+        f"Load More ({_total_orders - _PAGE_SIZE} remaining)" if _load_more_visible else "All loaded",
+        id="order-cards-load-more",
+        n_clicks=0,
+        style={
+            "width": "100%", "padding": "10px", "fontSize": "12px",
+            "backgroundColor": f"{CYAN}12", "color": CYAN,
+            "border": f"1px solid {CYAN}44", "borderRadius": "6px",
+            "cursor": "pointer", "fontWeight": "bold", "letterSpacing": "0.5px",
+            "marginTop": "8px",
+            "display": "block" if _load_more_visible else "none",
+        },
+    )
+
+    _order_cards_container = html.Div([
+        _search_bar,
+        _col_headers,
+        html.Div(
+            _order_cards,
+            id="order-cards-visible",
+            style={"maxHeight": "800px", "overflowY": "auto", "overflowX": "hidden"},
+        ),
+        html.Div(_remaining_pages, id="order-cards-hidden"),
+        _load_more_btn,
+    ], style={"marginTop": "8px"})
 
     # Build refund cost editor for cancelled/refunded orders
     _refund_editor_rows = []
@@ -13291,7 +13584,7 @@ def _build_per_order_profit_section():
             ], style={"maxHeight": "400px", "overflowY": "auto"}),
         ], style={"marginTop": "12px"})
 
-    _display_count = len(_table_data) if _table_data else len(_filtered)
+    _display_count = len(_all_orders_for_cards) if _all_orders_for_cards else len(_filtered)
 
     return html.Div([
         html.H3("\U0001f4e6 ORDER DETAIL", style={
@@ -13303,10 +13596,10 @@ def _build_per_order_profit_section():
         _kpi_row,
         _store_summary,
         html.Div([
-            html.Div(f"All Orders ({_display_count}) — click column headers to sort", style={
+            html.Div(f"All Orders ({_display_count}) — click any order to expand details", style={
                 "color": CYAN, "fontSize": "13px", "fontWeight": "bold", "padding": "8px 0",
             }),
-            _order_table,
+            _order_cards_container,
         ], style={"marginTop": "8px"}),
         _refund_editor,
         # Label assignment editor — manually link labels to orders
@@ -13346,6 +13639,248 @@ def _build_per_order_profit_section():
             ]) if _label_order_map else html.Div("No manual assignments yet.", style={"color": DARKGRAY, "fontSize": "11px"}),
         ], style={"marginTop": "12px"}),
     ])
+
+
+# ── Order Card Search + Load More Callbacks ──────────────────────────────────
+
+@app.callback(
+    Output("order-cards-visible", "children"),
+    Output("order-cards-hidden", "style"),
+    Output("order-cards-load-more", "style"),
+    Input("order-card-search", "value"),
+    Input("order-cards-load-more", "n_clicks"),
+    prevent_initial_call=True,
+)
+def _filter_order_cards(search_val, load_more_clicks):
+    """Filter order cards by search term or load all on 'Load More'."""
+    ctx = callback_context
+    trigger_id = ctx.triggered[0]["prop_id"].split(".")[0] if ctx.triggered else ""
+
+    # Load ledger data
+    _ledger_orders = []
+    _items_data = []
+    try:
+        from supabase_loader import get_config_value as _gcv_cb
+        import json as _json_cb
+        _raw = _gcv_cb("order_profit_ledger_keycomponentmfg")
+        if _raw:
+            _ledger_orders = _json_cb.loads(_raw) if isinstance(_raw, str) else _raw
+        _raw_it = _gcv_cb("order_csv_items_keycomponentmfg")
+        if _raw_it:
+            _items_data = _json_cb.loads(_raw_it) if isinstance(_raw_it, str) else _raw_it
+    except Exception:
+        pass
+
+    if not _ledger_orders:
+        raise dash.exceptions.PreventUpdate
+
+    # Sort newest first
+    _ledger_orders.sort(key=lambda x: x.get("Sale Date", "") or "", reverse=True)
+
+    # Build items lookup
+    _items_by_order = {}
+    for _it in _items_data:
+        _oid = str(_it.get("Order ID", ""))
+        if _oid:
+            _items_by_order.setdefault(_oid, []).append(_it)
+
+    # Filter if search term provided
+    _filtered = _ledger_orders
+    if search_val and search_val.strip():
+        _q = search_val.strip().lower()
+        _filtered = [
+            o for o in _ledger_orders
+            if _q in str(o.get("Buyer", "")).lower()
+            or _q in str(o.get("Order ID", "")).lower()
+            or _q in str(o.get("Item Names", "")).lower()
+            or _q in str(o.get("Variations", "")).lower()
+        ]
+
+    # If load more was clicked, show all; otherwise cap at 25
+    _show_all = trigger_id == "order-cards-load-more" and (load_more_clicks or 0) > 0
+    _visible = _filtered if (_show_all or search_val) else _filtered[:25]
+
+    # Reuse the card builder — inline version for callback
+    def _status_badge_cb(status_str):
+        s = (status_str or "").strip().lower()
+        if "refund" in s or "return" in s:
+            _bg, _label = RED, "Refunded"
+        elif "ship" in s:
+            _bg, _label = BLUE, "Shipped"
+        elif "complet" in s:
+            _bg, _label = GREEN, "Completed"
+        elif "paid" in s or "open" in s:
+            _bg, _label = ORANGE, "Paid"
+        elif "cancel" in s:
+            _bg, _label = RED, "Cancelled"
+        else:
+            _bg, _label = DARKGRAY, status_str or "Unknown"
+        return html.Span(_label, style={
+            "backgroundColor": f"{_bg}30", "color": _bg, "border": f"1px solid {_bg}66",
+            "padding": "2px 8px", "borderRadius": "10px", "fontSize": "10px",
+            "fontWeight": "bold", "letterSpacing": "0.5px", "whiteSpace": "nowrap",
+        })
+
+    def _fin_line_cb(label, value, color=WHITE, bold=False, indent=False, is_fee=False):
+        if value is None or value == 0:
+            return None
+        _prefix = "-" if is_fee and value > 0 else ""
+        _display_val = abs(value) if is_fee else value
+        return html.Div([
+            html.Span(label, style={"color": GRAY, "fontSize": "12px", "paddingLeft": "12px" if indent else "0"}),
+            html.Span(f"{_prefix}${abs(_display_val):,.2f}", style={
+                "color": color, "fontSize": "12px", "fontFamily": "monospace",
+                "fontWeight": "bold" if bold else "normal",
+            }),
+        ], style={"display": "flex", "justifyContent": "space-between", "padding": "3px 0", "alignItems": "center"})
+
+    def _build_card_cb(_o, _idx):
+        _oid = str(_o.get("Order ID", ""))
+        _date = _o.get("Sale Date", "")
+        _buyer = _o.get("Buyer", "")
+        _status = _o.get("Status", "")
+        _qty = _o.get("Qty", 1) or 1
+        _item_names = _o.get("Item Names", "")
+        _variations = _o.get("Variations", "")
+        _true_net = _o.get("True Net", 0) or 0
+        _margin = _o.get("Margin %", 0) or 0
+        _net_color = CYAN if _true_net >= 0 else RED
+        _card_bg = CARD if _idx % 2 == 0 else "#1a2847"
+
+        # Thumbnail
+        _thumb = None
+        _item_display = _item_names or "Unknown Item"
+        for _img_name, _img_url in _IMAGE_URLS.items():
+            if _img_name and _item_display and _img_name.lower()[:20] in _item_display.lower():
+                _thumb = item_thumbnail(_img_url, size=44)
+                break
+        if not _thumb:
+            _order_items = _items_by_order.get(_oid, [])
+            for _oi in _order_items:
+                for _img_name, _img_url in _IMAGE_URLS.items():
+                    if _img_name and _oi.get("Item Name", "") and _img_name.lower()[:20] in _oi["Item Name"].lower():
+                        _thumb = item_thumbnail(_img_url, size=44)
+                        break
+                if _thumb:
+                    break
+        if not _thumb:
+            _thumb = item_thumbnail(None, size=44)
+
+        # Variation display
+        _var_display = _variations
+        if not _var_display:
+            _order_items = _items_by_order.get(_oid, [])
+            _vars = [_oi.get("Variations", "") for _oi in _order_items if _oi.get("Variations")]
+            _var_display = " | ".join(_vars)
+
+        _summary = html.Div([
+            html.Div(_thumb, style={"flexShrink": "0", "marginRight": "10px"}),
+            html.Div([
+                html.Div(_item_display[:65], style={
+                    "color": WHITE, "fontSize": "12px", "fontWeight": "600",
+                    "overflow": "hidden", "textOverflow": "ellipsis", "whiteSpace": "nowrap", "maxWidth": "280px",
+                }),
+                html.Div(_var_display[:60] if _var_display else "", style={
+                    "color": GRAY, "fontSize": "10px", "marginTop": "2px",
+                }) if _var_display else html.Div(),
+            ], style={"flex": "1", "minWidth": "120px", "overflow": "hidden"}),
+            html.Div(f"x{_qty}", style={"color": GRAY, "fontSize": "12px", "fontFamily": "monospace", "width": "30px", "textAlign": "center", "flexShrink": "0"}),
+            html.Div((_buyer or "")[:18], style={"color": WHITE, "fontSize": "11px", "width": "110px", "flexShrink": "0", "overflow": "hidden", "textOverflow": "ellipsis", "whiteSpace": "nowrap"}),
+            html.Div(_date or "", style={"color": GRAY, "fontSize": "11px", "fontFamily": "monospace", "width": "80px", "flexShrink": "0", "textAlign": "center"}),
+            html.Div(_status_badge_cb(_status), style={"width": "80px", "flexShrink": "0", "textAlign": "center"}),
+            html.Div(f"${_true_net:,.2f}", style={"color": _net_color, "fontSize": "14px", "fontWeight": "bold", "fontFamily": "monospace", "width": "80px", "flexShrink": "0", "textAlign": "right"}),
+        ], style={"display": "flex", "alignItems": "center", "padding": "10px 14px", "cursor": "pointer", "gap": "6px"})
+
+        # Expanded detail
+        _listing_price = _o.get("Listing Price", 0) or 0
+        _discount = _o.get("Discount", 0) or 0
+        _sale_price = _o.get("Sale Price", 0) or 0
+        _buyer_shipping = _o.get("Buyer Shipping", 0) or 0
+        _sales_tax = _o.get("Sales Tax", 0) or 0
+        _gross = _o.get("Gross", 0) or 0
+        _txn_fee = _o.get("Transaction Fee", 0) or 0
+        _proc_fee = _o.get("Processing Fee", 0) or 0
+        _listing_fee = _o.get("Listing Fee", 0) or 0
+        _offsite_ads = _o.get("Offsite Ads", 0) or 0
+        _total_fees = _o.get("Total Etsy Fees", 0) or 0
+        _label_cost = _o.get("Shipping Label", 0) or 0
+        _ship_pl = _o.get("Ship P/L", 0) or 0
+        _fee_pct = _o.get("Fee %", 0) or 0
+        _ship_state = _o.get("Ship State", "")
+        _ship_country = _o.get("Ship Country", "")
+        _tracking = _o.get("Tracking", "")
+
+        _wf = [l for l in [
+            _fin_line_cb("Listing Price", _listing_price, WHITE),
+            _fin_line_cb("Discount", -_discount, ORANGE) if _discount else None,
+            _fin_line_cb("Sale Price", _sale_price, GREEN, bold=True),
+            html.Hr(style={"border": "none", "borderTop": f"1px solid {DARKGRAY}33", "margin": "4px 0"}),
+            _fin_line_cb("Buyer Shipping", _buyer_shipping, TEAL),
+            _fin_line_cb("Sales Tax", _sales_tax, GRAY),
+            _fin_line_cb("Gross Payment", _gross, WHITE, bold=True),
+            html.Hr(style={"border": "none", "borderTop": f"1px solid {DARKGRAY}33", "margin": "4px 0"}),
+            html.Div("Etsy Fees", style={"color": RED, "fontSize": "11px", "fontWeight": "bold", "letterSpacing": "0.5px", "marginTop": "4px", "marginBottom": "2px"}),
+            _fin_line_cb("Transaction Fee", _txn_fee, RED, indent=True, is_fee=True),
+            _fin_line_cb("Processing Fee", _proc_fee, RED, indent=True, is_fee=True),
+            _fin_line_cb("Listing Fee", _listing_fee, RED, indent=True, is_fee=True),
+            _fin_line_cb("Offsite Ads", _offsite_ads, PURPLE, indent=True, is_fee=True),
+            _fin_line_cb("Total Etsy Fees", _total_fees, RED, bold=True, is_fee=True),
+            html.Hr(style={"border": "none", "borderTop": f"1px solid {DARKGRAY}33", "margin": "4px 0"}),
+            _fin_line_cb("Shipping Label", _label_cost, BLUE, is_fee=True),
+            _fin_line_cb("Ship P/L", _ship_pl, GREEN if _ship_pl >= 0 else RED),
+            html.Hr(style={"border": "none", "borderTop": f"1px solid {CYAN}44", "margin": "6px 0"}),
+            _fin_line_cb("TRUE NET", _true_net, CYAN if _true_net >= 0 else RED, bold=True),
+            html.Div([
+                html.Span("Margin", style={"color": GRAY, "fontSize": "12px"}),
+                html.Span(f"{_margin:.1f}%", style={"color": GREEN if _margin >= 50 else (ORANGE if _margin >= 30 else RED), "fontSize": "12px", "fontFamily": "monospace", "fontWeight": "bold"}),
+            ], style={"display": "flex", "justifyContent": "space-between", "padding": "3px 0"}),
+        ] if l is not None]
+
+        _info = []
+        if _buyer:
+            _info.append(html.Div([html.Span("Buyer: ", style={"color": GRAY, "fontSize": "11px"}), html.Span(_buyer, style={"color": WHITE, "fontSize": "11px"})]))
+        if _ship_state or _ship_country:
+            _info.append(html.Div([html.Span("Ships to: ", style={"color": GRAY, "fontSize": "11px"}), html.Span(", ".join(filter(None, [_ship_state, _ship_country])), style={"color": WHITE, "fontSize": "11px"})]))
+        if _tracking:
+            _info.append(html.Div([html.Span("Tracking: ", style={"color": GRAY, "fontSize": "11px"}), html.Span(str(_tracking), style={"color": TEAL, "fontSize": "11px", "fontFamily": "monospace"})]))
+        _info.append(html.Div([html.Span("Order ID: ", style={"color": GRAY, "fontSize": "11px"}), html.Span(f"#{_oid}", style={"color": CYAN, "fontSize": "11px", "fontFamily": "monospace"})]))
+
+        _detail = html.Div([html.Div([
+            html.Div([
+                html.Div("Financial Breakdown", style={"color": CYAN, "fontSize": "11px", "fontWeight": "bold", "letterSpacing": "1px", "marginBottom": "8px", "borderBottom": f"1px solid {CYAN}33", "paddingBottom": "4px"}),
+                *_wf,
+            ], style={"flex": "1", "minWidth": "220px", "padding": "12px 16px", "backgroundColor": "#0a0f1e", "borderRadius": "6px"}),
+            html.Div([
+                html.Div("Order Info", style={"color": CYAN, "fontSize": "11px", "fontWeight": "bold", "letterSpacing": "1px", "marginBottom": "8px", "borderBottom": f"1px solid {CYAN}33", "paddingBottom": "4px"}),
+                *_info,
+            ], style={"flex": "1", "minWidth": "200px", "padding": "12px 16px", "backgroundColor": "#0a0f1e", "borderRadius": "6px", "display": "flex", "flexDirection": "column", "gap": "4px"}),
+        ], style={"display": "flex", "gap": "12px", "flexWrap": "wrap", "padding": "0 14px 14px 14px"})])
+
+        return html.Details([
+            html.Summary(_summary, style={"listStyle": "none", "outline": "none"}),
+            _detail,
+        ], style={
+            "backgroundColor": _card_bg, "borderRadius": "6px",
+            "border": f"1px solid #ffffff08", "overflow": "hidden",
+            "marginBottom": "4px",
+        })
+
+    _cards = [_build_card_cb(_o, _i) for _i, _o in enumerate(_visible)]
+
+    # Hide load more if searching or already loaded all
+    _hide_load_more = {"display": "none"}
+    _show_load_more = {
+        "width": "100%", "padding": "10px", "fontSize": "12px",
+        "backgroundColor": f"{CYAN}12", "color": CYAN,
+        "border": f"1px solid {CYAN}44", "borderRadius": "6px",
+        "cursor": "pointer", "fontWeight": "bold", "letterSpacing": "0.5px",
+        "marginTop": "8px",
+    }
+
+    _hidden_style = {"display": "none"}
+    _btn_style = _hide_load_more if (search_val or _show_all) else _show_load_more
+
+    return _cards, _hidden_style, _btn_style
 
 
 # ── Refund Cost Override Callback ────────────────────────────────────────────
