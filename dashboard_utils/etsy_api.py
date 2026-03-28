@@ -580,18 +580,19 @@ def build_order_profit_from_ledger(all_receipts, all_ledger_entries, all_items, 
             fin["gross"] += amount
         elif ledger_type == "PAYMENT_PROCESSING_FEE":
             fin["processing_fee"] += amount
-        elif ledger_type == "transaction":
+        elif ledger_type in ("transaction", "transaction_quantity"):
             fin["transaction_fee"] += amount
         elif ledger_type == "sales_tax":
             fin["sales_tax"] += amount
         elif ledger_type == "offsite_ads_fee":
             fin["offsite_ads"] += amount
-        elif ledger_type == "renew_sold_auto":
+        elif ledger_type in ("renew_sold_auto", "renew_sold"):
             fin["listing_fee"] += amount
-        elif ledger_type == "shipping_labels":
+        elif ledger_type in ("shipping_labels", "shipping_label_usps_adjustment"):
             fin["shipping_label"] += amount
         elif ledger_type in ("REFUND_GROSS", "REFUND_PROCESSING_FEE",
-                             "transaction_refund", "sales_tax_refund"):
+                             "transaction_refund", "sales_tax_refund",
+                             "renew_sold_auto_refund"):
             fin["refund"] += amount
         else:
             fin["other"] += amount
