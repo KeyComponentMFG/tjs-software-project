@@ -149,9 +149,10 @@ def _get_headers():
     # Strip any "Bearer " prefix if the token was stored with it
     if token.startswith("Bearer "):
         token = token[7:]
+    # Etsy v3 requires x-api-key as "keystring:shared_secret"
     return {
         "Authorization": f"Bearer {token}",
-        "x-api-key": ETSY_API_KEY,
+        "x-api-key": f"{ETSY_API_KEY}:{ETSY_SHARED_SECRET}",
     }
 
 
@@ -209,16 +210,29 @@ def disconnect():
 
 # ── API Calls ─────────────────────────────────────────────────────────────────
 
+def _get_user_id():
+    """Extract user ID from the access token (first segment before the dot)."""
+    token = _tokens.get("access_token", "")
+    if token.startswith("Bearer "):
+        token = token[7:]
+    if "." in token:
+        return token.split(".")[0]
+    return None
+
+
 def get_shop_id():
     """Get the shop ID for the authenticated user."""
     if _tokens.get("shop_id"):
         return _tokens["shop_id"]
 
-    # Try /application/users/me/shops first (personal access)
-    for endpoint in [
-        f"{ETSY_BASE_URL}/application/users/me/shops",
-        f"{ETSY_BASE_URL}/application/shops",
-    ]:
+    user_id = _get_user_id()
+    endpoints = []
+    if user_id:
+        endpoints.append(f"{ETSY_BASE_URL}/application/users/{user_id}/shops")
+    endpoints.append(f"{ETSY_BASE_URL}/application/users/me/shops")
+    endpoints.append(f"{ETSY_BASE_URL}/application/shops")
+
+    for endpoint in endpoints:
         try:
             resp = requests.get(endpoint, headers=_get_headers())
             _logger.info("get_shop_id tried %s: status=%s body=%s", endpoint, resp.status_code, resp.text[:300])
