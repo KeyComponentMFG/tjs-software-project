@@ -11867,9 +11867,22 @@ def etsy_sync_full():
             if o["Order ID"] not in raw_ids:
                 combined.append(o)
 
+        # Step 3b: Fetch REAL payment data from Etsy payment API
+        # This gives us amount_net — the EXACT amount Etsy pays you per order
+        from dashboard_utils.etsy_api import _fetch_all_payments
+        receipt_ids = [str(rr.get("receipt_id", "")) for rr in raw_receipts if rr.get("receipt_id")]
+        payment_data = _fetch_all_payments(shop_id, receipt_ids)
+        # Rekey by receipt_id string
+        payment_by_receipt = {}
+        for rid_str, pmt in payment_data.items():
+            payment_by_receipt[rid_str] = pmt
+
         profit_data = build_order_profit_from_ledger(
-            combined, ledger, result["items"]
+            combined, ledger, result["items"], payment_data=payment_by_receipt
         )
+
+        # Count verified vs unverified
+        verified = sum(1 for o in profit_data if o.get("_payment_verified"))
 
         # Step 4: Save profit data to Supabase
         client = _get_supabase_client()
@@ -11884,7 +11897,9 @@ def etsy_sync_full():
             "success": True,
             "receipts": len(result["orders"]),
             "ledger_entries": len(ledger),
+            "payments_fetched": len(payment_data),
             "orders_with_profit": len(profit_data),
+            "payment_verified": verified,
             "sample": profit_data[0] if profit_data else None,
         })
     except Exception as e:

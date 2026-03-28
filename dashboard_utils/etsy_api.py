@@ -470,7 +470,7 @@ def get_all_ledger_entries(shop_id, days_back=365):
     return all_entries
 
 
-def build_order_profit_from_ledger(all_receipts, all_ledger_entries, all_items):
+def build_order_profit_from_ledger(all_receipts, all_ledger_entries, all_items, payment_data=None):
     """Match ledger entries to orders and compute true P/L per order.
 
     Matching strategy:
@@ -638,7 +638,28 @@ def build_order_profit_from_ledger(all_receipts, all_ledger_entries, all_items):
         if not buyer_shipping:
             buyer_shipping = 0
         ship_pl = buyer_shipping - label_cost
-        true_net = fin["gross"] - abs(fin["sales_tax"]) - total_fees - label_cost
+
+        # Use REAL payment API amount_net if available (authoritative from Etsy)
+        # Fall back to calculated net from ledger entries
+        pmt = payment_data.get(order_id, {}) if payment_data else {}
+        if pmt and pmt.get("amount_net"):
+            pmt_net_val = pmt["amount_net"]
+            if isinstance(pmt_net_val, dict):
+                etsy_net = pmt_net_val.get("amount", 0) / pmt_net_val.get("divisor", 100)
+            else:
+                etsy_net = float(pmt_net_val) / 100.0
+            # Etsy net is BEFORE shipping label — subtract label for true net
+            true_net = etsy_net - label_cost
+            # Calculate real total fees from payment data
+            if pmt.get("amount_fees"):
+                pmt_fees_val = pmt["amount_fees"]
+                if isinstance(pmt_fees_val, dict):
+                    real_fees = abs(pmt_fees_val.get("amount", 0) / pmt_fees_val.get("divisor", 100))
+                else:
+                    real_fees = abs(float(pmt_fees_val) / 100.0)
+                total_fees = real_fees
+        else:
+            true_net = fin["gross"] - abs(fin["sales_tax"]) - total_fees - label_cost
 
         # Full waterfall: Listing Price → Discount → Sale Price → etc.
         listing_price = receipt.get("Order Value", 0) or 0
@@ -673,6 +694,7 @@ def build_order_profit_from_ledger(all_receipts, all_ledger_entries, all_items):
             "Ship Country": receipt.get("Ship Country", ""),
             "Tracking": receipt.get("Tracking", ""),
             "_store": receipt.get("_store", "keycomponentmfg"),
+            "_payment_verified": bool(pmt),
         })
 
     result_orders.sort(key=lambda x: x.get("Sale Date", ""), reverse=True)
