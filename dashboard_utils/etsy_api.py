@@ -693,7 +693,7 @@ def build_order_profit_from_ledger(all_receipts, all_ledger_entries, all_items, 
             "Ship Country": receipt.get("Ship Country", ""),
             "Tracking": receipt.get("Tracking", ""),
             "_store": receipt.get("_store", "keycomponentmfg"),
-            "_payment_verified": bool(pmt),
+            "_payment_verified": False,
         })
 
     result_orders.sort(key=lambda x: x.get("Sale Date", ""), reverse=True)
