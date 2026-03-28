@@ -12891,37 +12891,36 @@ def _build_ship_type():
 def _build_per_order_profit_section():
     """Build the per-order detail section for the Financials tab.
 
-    Shows real order data (order #, date, store, items, value).
-    Label matching columns disabled until Etsy API provides real links.
+    Uses Etsy API data (with fee breakdown) when available,
+    falls back to old CSV/ORDER_PROFITS data.
     """
-    if not ORDER_PROFITS:
+    # Check for API data first
+    _has_api = False
+    try:
+        from supabase_loader import get_config_value as _gcv_check
+        import json as _json_check
+        _raw_check = _gcv_check("order_csv_orders_keycomponentmfg")
+        if _raw_check:
+            _all_check = _json_check.loads(_raw_check) if isinstance(_raw_check, str) else _raw_check
+            _api_check = [o for o in _all_check if o.get("_source") == "etsy_api" and "Etsy Fees" in o]
+            _has_api = len(_api_check) > 0
+    except Exception:
+        pass
+
+    if not _has_api and not ORDER_PROFITS:
         return html.Div([
-            html.H3("\U0001f4b0 PER-ORDER PROFIT", style={
-                "color": ORANGE, "margin": "30px 0 6px 0", "fontSize": "14px",
-                "letterSpacing": "1.5px", "borderTop": f"2px solid {ORANGE}33", "paddingTop": "14px",
+            html.H3("\U0001f4e6 ORDER DETAIL", style={
+                "color": CYAN, "margin": "30px 0 6px 0", "fontSize": "14px",
+                "letterSpacing": "1.5px", "borderTop": f"2px solid {CYAN}33", "paddingTop": "14px",
             }),
-            html.P("Upload Etsy order CSVs in Data Hub to enable per-order profit tracking.",
+            html.P("Connect Etsy API or upload order CSVs in Data Hub to see order details.",
                    style={"color": GRAY, "fontSize": "12px"}),
         ])
 
-    s = ORDER_PROFIT_SUMMARY
     _store_filter = DATA["Store"].iloc[0] if "Store" in DATA.columns and _DATA_ALL is not None and len(DATA) > 0 and len(DATA) < len(_DATA_ALL) else None
-
-    # Filter to current store if a store filter is active
-    if _store_filter:
+    _filtered = ORDER_PROFITS if ORDER_PROFITS else []
+    if _store_filter and _filtered:
         _filtered = [r for r in ORDER_PROFITS if r["store"] == _store_filter]
-    else:
-        _filtered = ORDER_PROFITS
-
-    if not _filtered:
-        return html.Div([
-            html.H3("\U0001f4b0 PER-ORDER PROFIT", style={
-                "color": ORANGE, "margin": "30px 0 6px 0", "fontSize": "14px",
-                "letterSpacing": "1.5px", "borderTop": f"2px solid {ORANGE}33", "paddingTop": "14px",
-            }),
-            html.P("No order data for this store. Upload order CSVs in Data Hub.",
-                   style={"color": GRAY, "fontSize": "12px"}),
-        ])
 
     _total_revenue = sum(r["order_value"] for r in _filtered)
     _total_ship_charged = sum(r["shipping_charged"] for r in _filtered)
