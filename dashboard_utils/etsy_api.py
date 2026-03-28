@@ -604,20 +604,39 @@ def build_order_profit_from_ledger(all_receipts, all_ledger_entries, all_items, 
             fin["gross"] += amount
         elif ledger_type == "PAYMENT_PROCESSING_FEE":
             fin["processing_fee"] += amount
-        elif ledger_type in ("transaction", "transaction_quantity"):
+        elif ledger_type in ("transaction", "transaction_quantity",
+                             "shipping_transaction"):
+            # transaction = 6.5% on item price
+            # transaction_quantity = additional fee for qty > 1
+            # shipping_transaction = 6.5% on shipping price
             fin["transaction_fee"] += amount
         elif ledger_type == "sales_tax":
             fin["sales_tax"] += amount
-        elif ledger_type == "offsite_ads_fee":
+        elif ledger_type in ("offsite_ads_fee",):
             fin["offsite_ads"] += amount
         elif ledger_type in ("renew_sold_auto", "renew_sold"):
             fin["listing_fee"] += amount
-        elif ledger_type in ("shipping_labels", "shipping_label_usps_adjustment"):
+        elif ledger_type in ("shipping_labels", "shipping_label_usps_adjustment",
+                             "shipping_label_insurance",
+                             "shipping_label_globegistics_adjustment",
+                             "shipping_labels_usps_return"):
+            # shipping_labels = postage cost
+            # shipping_label_insurance = insured mail fee
+            # shipping_label_usps_adjustment = USPS postage correction
+            # shipping_label_globegistics_adjustment = international adjustment
+            # shipping_labels_usps_return = return label
             fin["shipping_label"] += amount
         elif ledger_type in ("REFUND_GROSS", "REFUND_PROCESSING_FEE",
                              "transaction_refund", "sales_tax_refund",
-                             "renew_sold_auto_refund"):
+                             "renew_sold_auto_refund",
+                             "transaction_quantity_refund",
+                             "shipping_transaction_refund",
+                             "offsite_ads_fee_refund",
+                             "shipping_label_refund",
+                             "shipping_label_usps_adjustment_credit"):
             fin["refund"] += amount
+        elif ledger_type in ("SELLER_DRIVEN_TRAFFIC_CREDIT",):
+            fin["other"] += amount  # Etsy promotional credit
         else:
             fin["other"] += amount
 
