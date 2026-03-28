@@ -421,26 +421,48 @@ def get_all_ledger_entries(shop_id, days_back=365):
     """
     all_entries = []
     now = int(time.time())
-    chunk_size = 30 * 86400  # 30 days in seconds
-    earliest = now - (days_back * 86400)
+    chunk_days = 30
+    chunk_size = chunk_days * 86400
 
+    # Calculate how many windows we need
+    total_seconds = days_back * 86400
     window_end = now
-    while window_end > earliest:
-        window_start = max(window_end - chunk_size, earliest)
+
+    while window_end > (now - total_seconds):
+        window_start = window_end - chunk_size
+        if window_start < (now - total_seconds):
+            window_start = now - total_seconds
+
         offset = 0
         limit = 100
+        window_count = 0
 
         while True:
-            data = get_ledger_entries(shop_id, window_start, window_end, limit=limit, offset=offset)
-            if not data or not data.get("results"):
+            try:
+                resp = requests.get(
+                    f"{ETSY_BASE_URL}/application/shops/{shop_id}/payment-account/ledger-entries",
+                    headers=_get_headers(),
+                    params={"limit": limit, "offset": offset,
+                            "min_created": int(window_start), "max_created": int(window_end)},
+                )
+                if resp.status_code != 200:
+                    _logger.warning("Ledger fetch failed: %s %s", resp.status_code, resp.text[:200])
+                    break
+                data = resp.json()
+                results = data.get("results", [])
+                if not results:
+                    break
+                all_entries.extend(results)
+                window_count += len(results)
+                if len(results) < limit:
+                    break
+                offset += limit
+                time.sleep(0.25)
+            except Exception as e:
+                _logger.warning("Ledger fetch error: %s", e)
                 break
-            all_entries.extend(data["results"])
-            if len(data["results"]) < limit:
-                break
-            offset += limit
-            time.sleep(0.25)  # rate limit
 
-        _logger.info("Ledger window %d-%d: %d entries so far", window_start, window_end, len(all_entries))
+        _logger.info("Ledger window: %d entries (total: %d)", window_count, len(all_entries))
         window_end = window_start
         time.sleep(0.25)
 
