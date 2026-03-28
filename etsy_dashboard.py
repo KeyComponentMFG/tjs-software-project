@@ -13235,10 +13235,9 @@ def _build_per_order_profit_section():
                style={"color": GRAY, "margin": "0 0 14px 0", "fontSize": "12px"}),
         _kpi_row,
         _store_summary,
-        html.Details([
-            html.Summary(f"Order Detail ({_display_count} orders) — click column headers to sort", style={
-                "color": ORANGE, "fontSize": "13px", "fontWeight": "bold",
-                "cursor": "pointer", "padding": "8px 0",
+        html.Div([
+            html.Div(f"All Orders ({_display_count}) — click column headers to sort", style={
+                "color": CYAN, "fontSize": "13px", "fontWeight": "bold", "padding": "8px 0",
             }),
             _order_table,
         ], style={"marginTop": "8px"}),
