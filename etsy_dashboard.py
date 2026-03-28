@@ -12997,34 +12997,49 @@ def _build_per_order_profit_section():
     if _store_filter and _filtered:
         _filtered = [r for r in ORDER_PROFITS if r["store"] == _store_filter]
 
-    # Load API orders for KPIs and table — single source of truth
-    _api_orders_all = []
-    _api_items_all = []
+    # Load ledger-based profit data — single source of truth
+    _ledger_orders = []
     try:
         from supabase_loader import get_config_value as _gcv_kpi
         import json as _json_kpi
-        _raw_kpi = _gcv_kpi("order_csv_orders_keycomponentmfg")
-        if _raw_kpi:
-            _api_orders_all = _json_kpi.loads(_raw_kpi) if isinstance(_raw_kpi, str) else _raw_kpi
-            _api_orders_all = [o for o in _api_orders_all if o.get("_source") == "etsy_api" and "Etsy Fees" in o]
-        _raw_items = _gcv_kpi("order_csv_items_keycomponentmfg")
-        if _raw_items:
-            _api_items_all = _json_kpi.loads(_raw_items) if isinstance(_raw_items, str) else _raw_items
+        _raw_ledger = _gcv_kpi("order_profit_ledger_keycomponentmfg")
+        if _raw_ledger:
+            _ledger_orders = _json_kpi.loads(_raw_ledger) if isinstance(_raw_ledger, str) else _raw_ledger
     except Exception:
         pass
 
-    # Use API data if available, otherwise fall back to ORDER_PROFITS
-    if _api_orders_all:
+    # Fall back to API orders if no ledger data
+    _api_orders_all = []
+    if not _ledger_orders:
+        try:
+            _raw_kpi = _gcv_kpi("order_csv_orders_keycomponentmfg")
+            if _raw_kpi:
+                _api_orders_all = _json_kpi.loads(_raw_kpi) if isinstance(_raw_kpi, str) else _raw_kpi
+                _api_orders_all = [o for o in _api_orders_all if o.get("_source") == "etsy_api"]
+        except Exception:
+            pass
+
+    # Compute KPIs from best available data
+    if _ledger_orders:
+        _total_revenue = sum(o.get("Gross", 0) for o in _ledger_orders)
+        _total_fees = sum(o.get("Total Etsy Fees", 0) for o in _ledger_orders)
+        _total_labels = sum(o.get("Shipping Label", 0) for o in _ledger_orders)
+        _total_tax = sum(o.get("Sales Tax", 0) for o in _ledger_orders)
+        _total_net = sum(o.get("True Net", 0) for o in _ledger_orders)
+        _order_count = len(_ledger_orders)
+    elif _api_orders_all:
         _total_revenue = sum(o.get("Order Value", 0) for o in _api_orders_all)
         _total_fees = sum(o.get("Etsy Fees", 0) for o in _api_orders_all)
+        _total_labels = 0
+        _total_tax = 0
         _total_net = sum(o.get("Etsy Net", 0) for o in _api_orders_all)
-        _total_discount = sum(o.get("Discount Amount", 0) for o in _api_orders_all)
         _order_count = len(_api_orders_all)
     else:
         _total_revenue = sum(r["order_value"] for r in _filtered) if _filtered else 0
         _total_fees = 0
+        _total_labels = 0
+        _total_tax = 0
         _total_net = 0
-        _total_discount = 0
         _order_count = len(_filtered) if _filtered else 0
 
     _avg_value = _total_revenue / _order_count if _order_count else 0
@@ -13038,98 +13053,80 @@ def _build_per_order_profit_section():
     }
     _kpi_row = html.Div([
         html.Div([
-            html.Div(f"{_order_count}", style={"color": WHITE, "fontSize": "20px", "fontWeight": "bold", "fontFamily": "monospace"}),
-            html.Div("Orders", style={"color": GRAY, "fontSize": "11px", "marginTop": "4px"}),
+            html.Div(f"{_order_count}", style={"color": WHITE, "fontSize": "18px", "fontWeight": "bold", "fontFamily": "monospace"}),
+            html.Div("Orders", style={"color": GRAY, "fontSize": "10px", "marginTop": "4px"}),
         ], style=_kpi_style),
         html.Div([
-            html.Div(f"${_total_revenue:,.0f}", style={"color": GREEN, "fontSize": "20px", "fontWeight": "bold", "fontFamily": "monospace"}),
-            html.Div("Gross Revenue", style={"color": GRAY, "fontSize": "11px", "marginTop": "4px"}),
+            html.Div(f"${_total_revenue:,.0f}", style={"color": GREEN, "fontSize": "18px", "fontWeight": "bold", "fontFamily": "monospace"}),
+            html.Div("Gross", style={"color": GRAY, "fontSize": "10px", "marginTop": "4px"}),
         ], style=_kpi_style),
         html.Div([
-            html.Div(f"${_total_fees:,.0f}" if _total_fees else "—", style={"color": RED, "fontSize": "20px", "fontWeight": "bold", "fontFamily": "monospace"}),
-            html.Div("Etsy Fees", style={"color": GRAY, "fontSize": "11px", "marginTop": "4px"}),
+            html.Div(f"${_total_fees:,.0f}" if _total_fees else "—", style={"color": RED, "fontSize": "18px", "fontWeight": "bold", "fontFamily": "monospace"}),
+            html.Div("Etsy Fees", style={"color": GRAY, "fontSize": "10px", "marginTop": "4px"}),
         ], style=_kpi_style),
         html.Div([
-            html.Div(f"${_total_net:,.0f}" if _total_net else "—", style={"color": CYAN, "fontSize": "20px", "fontWeight": "bold", "fontFamily": "monospace"}),
-            html.Div("Net (Before Hard Cost)", style={"color": GRAY, "fontSize": "11px", "marginTop": "4px"}),
+            html.Div(f"${_total_labels:,.0f}" if _total_labels else "—", style={"color": BLUE, "fontSize": "18px", "fontWeight": "bold", "fontFamily": "monospace"}),
+            html.Div("Shipping Labels", style={"color": GRAY, "fontSize": "10px", "marginTop": "4px"}),
         ], style=_kpi_style),
         html.Div([
-            html.Div(f"{_margin:.1f}%" if _margin else "—", style={"color": GREEN if _margin > 50 else ORANGE, "fontSize": "20px", "fontWeight": "bold", "fontFamily": "monospace"}),
-            html.Div("Margin", style={"color": GRAY, "fontSize": "11px", "marginTop": "4px"}),
+            html.Div(f"${_total_net:,.0f}" if _total_net else "—", style={"color": CYAN, "fontSize": "18px", "fontWeight": "bold", "fontFamily": "monospace"}),
+            html.Div("True Net", style={"color": GRAY, "fontSize": "10px", "marginTop": "4px"}),
         ], style=_kpi_style),
         html.Div([
-            html.Div(f"${_avg_net:,.2f}", style={"color": TEAL, "fontSize": "20px", "fontWeight": "bold", "fontFamily": "monospace"}),
-            html.Div("Avg Net/Order", style={"color": GRAY, "fontSize": "11px", "marginTop": "4px"}),
+            html.Div(f"{_margin:.1f}%" if _margin else "—", style={"color": GREEN if _margin > 50 else ORANGE, "fontSize": "18px", "fontWeight": "bold", "fontFamily": "monospace"}),
+            html.Div("Margin", style={"color": GRAY, "fontSize": "10px", "marginTop": "4px"}),
         ], style=_kpi_style),
-    ], style={"display": "flex", "gap": "8px", "flexWrap": "wrap", "marginBottom": "16px"})
+        html.Div([
+            html.Div(f"${_avg_net:,.2f}", style={"color": TEAL, "fontSize": "18px", "fontWeight": "bold", "fontFamily": "monospace"}),
+            html.Div("Avg Net/Order", style={"color": GRAY, "fontSize": "10px", "marginTop": "4px"}),
+        ], style=_kpi_style),
+    ], style={"display": "flex", "gap": "6px", "flexWrap": "wrap", "marginBottom": "16px"})
 
     # Per-store summary — hidden until multiple stores have API data
     _store_summary = html.Div()
 
-    # Order detail table — use API data loaded above
+    # Order detail table — use ledger data with full breakdown
     _table_data = []
-    if _api_orders_all:
-        # Build item lookup for variations
-        _items_by_order = {}
-        for _it in _api_items_all:
-            _oid = _it.get("Order ID", "")
-            if _oid not in _items_by_order:
-                _items_by_order[_oid] = []
-            _items_by_order[_oid].append(_it)
-
-        for _o in _api_orders_all:
-            _oid = _o.get("Order ID", "")
-            _order_items = _items_by_order.get(_oid, [])
-
-            # Build variation string
-            _var_parts = []
-            _total_qty = 0
-            for _it in _order_items:
-                _total_qty += _it.get("Quantity", 1)
-                _var = _it.get("Variations", "")
-                if _var:
-                    for _v in _var.split(", "):
-                        if ": " in _v:
-                            _prop, _val = _v.split(": ", 1)
-                            _var_parts.append(_val if _prop == "Custom Property" else _val)
-            _var_str = " / ".join(_var_parts) if _var_parts else ""
-
-            _item_display = _o.get("Item Names", "")[:40]
-            if _var_str:
-                _item_display = f"{_item_display} ({_var_str})"
+    if _ledger_orders:
+        for _o in _ledger_orders:
+            _item = _o.get("Item Names", "")[:40]
+            _var = _o.get("Variations", "")
+            if _var:
+                _item = f"{_item} ({_var})"
 
             _table_data.append({
-                "Order #": _oid,
+                "Order #": _o.get("Order ID", ""),
                 "Date": _o.get("Sale Date", ""),
-                "Buyer": _o.get("Buyer", "")[:20],
-                "Qty": _total_qty or _o.get("Number of Items", 1),
-                "Item": _item_display[:65],
-                "Value": _o.get("Order Value", 0),
-                "Discount": round(-_o.get("Discount Amount", 0), 2) if _o.get("Discount Amount", 0) > 0 else None,
+                "Buyer": _o.get("Buyer", "")[:18],
+                "Qty": _o.get("Qty", 1),
+                "Item": _item[:60],
+                "Gross": _o.get("Gross", 0),
+                "Fees": _o.get("Total Etsy Fees", 0),
+                "Label": _o.get("Shipping Label", 0),
+                "Ads": _o.get("Offsite Ads", 0) if _o.get("Offsite Ads", 0) > 0 else None,
                 "Tax": _o.get("Sales Tax", 0),
-                "Fees": _o.get("Etsy Fees", 0),
-                "Net": _o.get("Etsy Net", 0),
-                "Fee %": _o.get("Fee %", 0),
+                "True Net": _o.get("True Net", 0),
+                "Fee%": _o.get("Fee %", 0),
                 "Status": _o.get("Status", ""),
-                "State": _o.get("Ship State", ""),
+                "ST": _o.get("Ship State", "")[:2] if _o.get("Ship State") else "",
             })
-    else:
-        # Fall back to ORDER_PROFITS
-        for _op in _filtered:
+    elif _api_orders_all:
+        for _o in _api_orders_all:
             _table_data.append({
-                "Order #": str(_op["order_id"]),
-                "Date": _op.get("sale_date", _op.get("ship_date", "")),
-                "Buyer": _op.get("buyer", "")[:20],
-                "Qty": 1,
-                "Item": _op["items"][:65],
-                "Value": round(_op["order_value"], 2),
-                "Discount": None,
-                "Tax": 0,
-                "Fees": None,
-                "Net": round(_op.get("order_net", 0), 2),
-                "Fee %": None,
-                "Status": "",
-                "State": _op.get("ship_state", ""),
+                "Order #": _o.get("Order ID", ""),
+                "Date": _o.get("Sale Date", ""),
+                "Buyer": _o.get("Buyer", "")[:18],
+                "Qty": _o.get("Number of Items", 1),
+                "Item": _o.get("Item Names", "")[:60],
+                "Gross": _o.get("Order Value", 0),
+                "Fees": _o.get("Etsy Fees", 0),
+                "Label": 0,
+                "Ads": None,
+                "Tax": _o.get("Sales Tax", 0),
+                "True Net": _o.get("Etsy Net", 0),
+                "Fee%": _o.get("Fee %", 0),
+                "Status": _o.get("Status", ""),
+                "ST": _o.get("Ship State", "")[:2] if _o.get("Ship State") else "",
             })
 
     _dt_columns = [
@@ -13138,14 +13135,15 @@ def _build_per_order_profit_section():
         {"name": "Buyer", "id": "Buyer", "type": "text"},
         {"name": "Qty", "id": "Qty", "type": "numeric"},
         {"name": "Item", "id": "Item", "type": "text"},
-        {"name": "Value", "id": "Value", "type": "numeric", "format": {"specifier": "$,.2f"}},
-        {"name": "Disc.", "id": "Discount", "type": "numeric", "format": {"specifier": "$,.2f"}},
-        {"name": "Tax", "id": "Tax", "type": "numeric", "format": {"specifier": "$,.2f"}},
+        {"name": "Gross", "id": "Gross", "type": "numeric", "format": {"specifier": "$,.2f"}},
         {"name": "Fees", "id": "Fees", "type": "numeric", "format": {"specifier": "$,.2f"}},
-        {"name": "Net", "id": "Net", "type": "numeric", "format": {"specifier": "$,.2f"}},
-        {"name": "Fee%", "id": "Fee %", "type": "numeric", "format": {"specifier": ".1f"}},
+        {"name": "Label", "id": "Label", "type": "numeric", "format": {"specifier": "$,.2f"}},
+        {"name": "Ads", "id": "Ads", "type": "numeric", "format": {"specifier": "$,.2f"}},
+        {"name": "Tax", "id": "Tax", "type": "numeric", "format": {"specifier": "$,.2f"}},
+        {"name": "True Net", "id": "True Net", "type": "numeric", "format": {"specifier": "$,.2f"}},
+        {"name": "Fee%", "id": "Fee%", "type": "numeric", "format": {"specifier": ".1f"}},
         {"name": "Status", "id": "Status", "type": "text"},
-        {"name": "ST", "id": "State", "type": "text"},
+        {"name": "ST", "id": "ST", "type": "text"},
     ]
 
     _order_table = dash_table.DataTable(
@@ -13169,20 +13167,21 @@ def _build_per_order_profit_section():
             "textAlign": "right",
         },
         style_cell_conditional=[
-            {"if": {"column_id": "Order #"}, "textAlign": "left", "color": CYAN, "width": "90px"},
-            {"if": {"column_id": "Date"}, "textAlign": "left", "width": "78px", "color": GRAY},
-            {"if": {"column_id": "Buyer"}, "textAlign": "left", "width": "100px", "overflow": "hidden", "textOverflow": "ellipsis"},
-            {"if": {"column_id": "Qty"}, "width": "30px", "textAlign": "center"},
-            {"if": {"column_id": "Item"}, "textAlign": "left", "width": "200px",
-             "overflow": "hidden", "textOverflow": "ellipsis", "maxWidth": "200px"},
-            {"if": {"column_id": "Value"}, "width": "65px", "color": GREEN},
-            {"if": {"column_id": "Discount"}, "width": "50px", "color": ORANGE},
-            {"if": {"column_id": "Tax"}, "width": "45px", "color": GRAY},
+            {"if": {"column_id": "Order #"}, "textAlign": "left", "color": CYAN, "width": "85px"},
+            {"if": {"column_id": "Date"}, "textAlign": "left", "width": "75px", "color": GRAY},
+            {"if": {"column_id": "Buyer"}, "textAlign": "left", "width": "90px", "overflow": "hidden", "textOverflow": "ellipsis"},
+            {"if": {"column_id": "Qty"}, "width": "28px", "textAlign": "center"},
+            {"if": {"column_id": "Item"}, "textAlign": "left", "width": "180px",
+             "overflow": "hidden", "textOverflow": "ellipsis", "maxWidth": "180px"},
+            {"if": {"column_id": "Gross"}, "width": "60px", "color": GREEN},
             {"if": {"column_id": "Fees"}, "width": "50px", "color": RED},
-            {"if": {"column_id": "Net"}, "width": "65px", "color": CYAN, "fontWeight": "bold"},
-            {"if": {"column_id": "Fee %"}, "width": "40px", "color": GRAY},
-            {"if": {"column_id": "Status"}, "textAlign": "left", "width": "60px"},
-            {"if": {"column_id": "State"}, "textAlign": "left", "width": "25px", "color": GRAY},
+            {"if": {"column_id": "Label"}, "width": "50px", "color": BLUE},
+            {"if": {"column_id": "Ads"}, "width": "40px", "color": PURPLE},
+            {"if": {"column_id": "Tax"}, "width": "45px", "color": GRAY},
+            {"if": {"column_id": "True Net"}, "width": "65px", "color": CYAN, "fontWeight": "bold"},
+            {"if": {"column_id": "Fee%"}, "width": "38px", "color": GRAY},
+            {"if": {"column_id": "Status"}, "textAlign": "left", "width": "55px"},
+            {"if": {"column_id": "ST"}, "textAlign": "left", "width": "22px", "color": GRAY},
         ],
         style_data_conditional=[
             {"if": {"filter_query": "{True P/L} >= 0", "column_id": "True P/L"}, "color": GREEN, "fontWeight": "bold"},
