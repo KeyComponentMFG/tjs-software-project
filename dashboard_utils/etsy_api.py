@@ -521,12 +521,33 @@ def build_order_profit_from_ledger(all_receipts, all_ledger_entries, all_items, 
             if ts and rid:
                 ts_to_receipt[ts] = rid
 
-    # Group ledger entries by order
+    # Group ledger entries by order — TWO PASSES:
+    # Pass 1: match shipping_labels to orders and build label_id → order_id lookup
+    # Pass 2: match everything else (including adjustments via label_id lookup)
     order_financials = {}
+    _label_id_to_order = {}  # maps shipping label reference_id → order_id
 
     _unmatched_labels = 0
     _matched_labels = 0
 
+    # Pass 1: only process shipping_labels to build the lookup
+    for entry in all_ledger_entries:
+        if entry.get("reference_type") != "shipping_label":
+            continue
+        if entry.get("ledger_type") != "shipping_labels":
+            continue
+        ref_id = str(entry.get("reference_id", ""))
+        timestamp = entry.get("created_timestamp", 0)
+        exact = ship_ts_to_receipt.get(timestamp)
+        if not exact:
+            for delta in (1, -1):
+                exact = ship_ts_to_receipt.get(timestamp + delta)
+                if exact:
+                    break
+        if exact and ref_id:
+            _label_id_to_order[ref_id] = exact
+
+    # Pass 2: process ALL entries
     for entry in all_ledger_entries:
         amount = entry.get("amount", 0) / 100.0
         ledger_type = entry.get("ledger_type", "")
@@ -548,22 +569,25 @@ def build_order_profit_from_ledger(all_receipts, all_ledger_entries, all_items, 
             # transaction fees — reference_id is transaction_id, look up receipt via items
             order_id = txn_to_receipt.get(ref_id)
         elif ref_type == "shipping_label":
-            # EXACT match: label created_timestamp == transaction shipped_timestamp
-            # Etsy sets both to the same second when you purchase a label
-            exact = ship_ts_to_receipt.get(timestamp)
-            if exact:
-                order_id = exact
-                _matched_labels += 1
-            else:
-                # Try ±1 second for minor clock drift
-                for delta in (1, -1):
-                    exact = ship_ts_to_receipt.get(timestamp + delta)
-                    if exact:
-                        order_id = exact
-                        _matched_labels += 1
-                        break
+            # For shipping_labels: exact-second timestamp match
+            # For shipping_label_usps_adjustment: use label_id → order_id lookup
+            if ledger_type == "shipping_labels":
+                exact = ship_ts_to_receipt.get(timestamp)
+                if exact:
+                    order_id = exact
+                    _matched_labels += 1
                 else:
-                    _unmatched_labels += 1
+                    for delta in (1, -1):
+                        exact = ship_ts_to_receipt.get(timestamp + delta)
+                        if exact:
+                            order_id = exact
+                            _matched_labels += 1
+                            break
+                    else:
+                        _unmatched_labels += 1
+            else:
+                # Adjustments (insurance, postage corrections) — match via label_id
+                order_id = _label_id_to_order.get(ref_id)
 
         if not order_id:
             continue
