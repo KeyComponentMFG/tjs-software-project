@@ -11929,23 +11929,20 @@ def etsy_sync_payments():
             if not pmt:
                 continue
 
-            # SIMPLE APPROACH: The ledger already has every entry for this order.
-            # The order's financials (fin dict) IS the sum of all ledger entries.
-            # Just use those sums directly — they ARE Etsy's accounting.
-            #
-            # fin["gross"] = PAYMENT_GROSS (positive)
-            # fin["processing_fee"] = PAYMENT_PROCESSING_FEE (negative)
-            # fin["transaction_fee"] = transaction fees (negative)
-            # fin["offsite_ads"] = offsite ads (negative)
-            # fin["listing_fee"] = listing renewal (negative)
-            # fin["shipping_label"] = label costs (negative)
-            # fin["refund"] = refund gross + refund fee credits (net negative)
-            # fin["other"] = anything else
-            #
-            # Sum of ALL = what actually impacted your Etsy balance for this order.
-            # That IS the True Net. No formula needed.
+            def _pmt_dollars(field):
+                v = pmt.get(field, {})
+                if isinstance(v, dict) and v.get("amount") is not None:
+                    return v.get("amount", 0) / v.get("divisor", 100)
+                return None
 
-            # But we also want the refund amount for display
+            # Use adjusted_net for refunded orders, amount_net for normal
+            adjusted_net = _pmt_dollars("adjusted_net")
+            original_net = _pmt_dollars("amount_net")
+            payment_net = adjusted_net if adjusted_net is not None else original_net
+            if payment_net is None:
+                continue
+
+            # Refund amount for display
             refund_total = 0
             for adj in pmt.get("payment_adjustments", []):
                 adj_amt = adj.get("total_adjustment_amount", 0)
@@ -11953,8 +11950,18 @@ def etsy_sync_payments():
                     refund_total += adj_amt / 100.0
             order["Refund"] = round(refund_total, 2)
 
-            # The order already has True Net from the ledger sum.
-            # Don't override it — the ledger is the source of truth.
+            # TRUE NET = payment_net - transaction_fee - offsite_ads - labels
+            # Verified: amount_net($34.55) - txn($2.34) - ads($0) - label($6.60) = $25.61 = Etsy
+            txn_fee = order.get("Transaction Fee", 0)
+            ads = order.get("Offsite Ads", 0)
+            label = order.get("Shipping Label", 0)
+            true_net = payment_net - txn_fee - ads - label
+
+            order["True Net"] = round(true_net, 2)
+            order["Total Etsy Fees"] = round(abs(_pmt_dollars("amount_fees") or 0) + txn_fee + ads, 2)
+            order["Processing Fee"] = round(abs(_pmt_dollars("amount_fees") or 0), 2)
+            sale_price = order.get("Sale Price", 0)
+            order["Margin %"] = round(true_net / sale_price * 100, 1) if sale_price else 0
             order["_payment_verified"] = True
             updated += 1
 

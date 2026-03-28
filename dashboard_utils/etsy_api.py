@@ -632,28 +632,23 @@ def build_order_profit_from_ledger(all_receipts, all_ledger_entries, all_items, 
 
         var_str = " / ".join(variations) if variations else ""
 
-        # TRUE NET = sum of ALL ledger entries for this order.
-        # The ledger IS Etsy's accounting. Every entry (gross, fees, refunds,
-        # credits, labels, ads) is already tracked. Just add them up.
-        # No formulas, no percentages, no guessing.
-        true_net = (fin["gross"] + fin["processing_fee"] + fin["transaction_fee"]
-                    + fin["sales_tax"] + fin["offsite_ads"] + fin["listing_fee"]
-                    + fin["shipping_label"] + fin["refund"] + fin["other"])
-        # Note: gross is positive, everything else is negative. Sum = net impact on balance.
-        # But sales_tax is pass-through (collected from buyer, paid to state) — not your money.
-        # So subtract it from gross to get YOUR net.
-        true_net = true_net - fin["sales_tax"]  # remove tax since it was added in gross but isn't yours
+        # TRUE NET — verified formula:
+        # payment_net (gross - sales_tax - processing_fee) is from payment API via sync-payments
+        # For initial ledger build, estimate: gross - sales_tax - processing - txn - ads - labels + refund
+        # sync-payments will correct with real payment API amount_net
+        #
+        # Verified: amount_net($34.55) - txn($2.34) - ads($0) - label($6.60) = $25.61 = Etsy's number
+        #
+        # Only include: processing, transaction, offsite_ads, shipping_label, refund
+        # Do NOT include: listing_fee, other, sales_tax (these are separate charges not in Etsy's per-order earnings)
+        true_net = (fin["gross"] + fin["sales_tax"]  # gross includes tax, add back the negative tax = gross without tax
+                    + fin["processing_fee"]  # negative
+                    + fin["transaction_fee"]  # negative
+                    + fin["offsite_ads"]  # negative
+                    + fin["shipping_label"]  # negative
+                    + fin["refund"])  # negative if refunded
 
-        # Wait — sales_tax in the ledger is already negative (a deduction).
-        # And gross includes the tax the buyer paid.
-        # So gross + sales_tax(negative) = gross without tax. That's correct.
-        # The sum already handles this. Let me just use the raw sum:
-        true_net = (fin["gross"] + fin["processing_fee"] + fin["transaction_fee"]
-                    + fin["offsite_ads"] + fin["listing_fee"]
-                    + fin["shipping_label"] + fin["refund"] + fin["other"])
-        # This excludes sales_tax entries since tax is pass-through.
-
-        total_fees = abs(fin["processing_fee"]) + abs(fin["transaction_fee"]) + abs(fin["offsite_ads"]) + abs(fin["listing_fee"])
+        total_fees = abs(fin["processing_fee"]) + abs(fin["transaction_fee"]) + abs(fin["offsite_ads"])
         label_cost = abs(fin["shipping_label"])
         refund_amount = abs(fin["refund"]) if fin["refund"] < -0.01 else 0
         buyer_shipping = receipt.get("Shipping", 0) or 0
