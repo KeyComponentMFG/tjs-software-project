@@ -1,5 +1,6 @@
 """Overview tab — Business health at a glance."""
 
+import json
 from dash import dcc, html
 from dashboard_utils.theme import *
 
@@ -23,6 +24,113 @@ def _build_pl_row(label, amount_str, color, bold=False, border=False):
                                       "fontSize": "14px" if bold else "13px",
                                       "fontWeight": "bold" if bold else "normal"}),
     ], style=row_style)]
+
+
+def _build_order_queue(ed):
+    """Build the live order queue — orders paid but not shipped."""
+    try:
+        from supabase_loader import get_config_value
+        raw_orders = get_config_value("order_csv_orders_keycomponentmfg")
+        raw_items = get_config_value("order_csv_items_keycomponentmfg")
+
+        if not raw_orders:
+            return html.Div()
+
+        orders = json.loads(raw_orders) if isinstance(raw_orders, str) else raw_orders
+        items = json.loads(raw_items) if isinstance(raw_items, str) else (raw_items or [])
+
+        # Find pending orders (paid, not shipped)
+        pending = [o for o in orders if o.get("Status") == "Paid" and not o.get("Date Shipped")]
+
+        if not pending:
+            return html.Div()
+
+        # Build item lookup by order ID (API items have variations)
+        items_by_order = {}
+        for it in items:
+            oid = it.get("Order ID", "")
+            if oid not in items_by_order:
+                items_by_order[oid] = []
+            items_by_order[oid].append(it)
+
+        # Sort by oldest first (need to ship soonest)
+        pending.sort(key=lambda o: o.get("Sale Date", ""))
+
+        # Build order rows
+        order_rows = []
+        total_value = 0
+        for o in pending:
+            oid = o.get("Order ID", "")
+            buyer = o.get("Buyer", o.get("Full Name", ""))
+            value = o.get("Order Value", 0)
+            sale_date = o.get("Sale Date", "")
+            state = o.get("Ship State", "")
+            total_value += value
+
+            # Get items with variations
+            order_items = items_by_order.get(oid, [])
+            item_parts = []
+            for it in order_items:
+                name = it.get("Item Name", "")[:40]
+                qty = it.get("Quantity", 1)
+                var = it.get("Variations", "")
+
+                # Parse variations into readable format
+                var_parts = []
+                if var:
+                    for v in var.split(", "):
+                        if ": " in v:
+                            prop, val = v.split(": ", 1)
+                            # Skip "Custom Property" label, just show the value
+                            if prop == "Custom Property":
+                                var_parts.append(val)
+                            else:
+                                var_parts.append(val)
+                var_str = " / ".join(var_parts) if var_parts else ""
+
+                qty_str = f"{qty}x " if qty > 1 else ""
+                if var_str:
+                    item_parts.append(f"{qty_str}{name} ({var_str})")
+                else:
+                    item_parts.append(f"{qty_str}{name}")
+
+            items_display = " + ".join(item_parts) if item_parts else o.get("Item Names", "")[:60]
+
+            order_rows.append(html.Div([
+                html.Div([
+                    html.Span(f"#{oid}", style={"color": CYAN, "fontWeight": "bold", "fontSize": "12px",
+                                                  "width": "100px", "flexShrink": "0"}),
+                    html.Span(sale_date, style={"color": GRAY, "fontSize": "11px", "width": "80px", "flexShrink": "0"}),
+                    html.Span(items_display, style={"color": WHITE, "fontSize": "12px", "flex": "1",
+                                                      "overflow": "hidden", "textOverflow": "ellipsis",
+                                                      "whiteSpace": "nowrap"}),
+                    html.Span(buyer, style={"color": GRAY, "fontSize": "11px", "width": "120px",
+                                             "textAlign": "right", "flexShrink": "0",
+                                             "overflow": "hidden", "textOverflow": "ellipsis"}),
+                    html.Span(state, style={"color": DARKGRAY, "fontSize": "11px", "width": "30px",
+                                             "textAlign": "right", "flexShrink": "0"}),
+                    html.Span(f"${value:,.2f}", style={"color": GREEN, "fontFamily": "monospace",
+                                                         "fontSize": "12px", "fontWeight": "bold",
+                                                         "width": "70px", "textAlign": "right", "flexShrink": "0"}),
+                ], style={"display": "flex", "alignItems": "center", "gap": "8px"}),
+            ], style={"padding": "6px 0", "borderBottom": f"1px solid {DARKGRAY}22"}))
+
+        return html.Div([
+            html.Div([
+                html.Span("\U0001f4e6", style={"fontSize": "18px", "marginRight": "8px"}),
+                html.Span(f"ORDERS TO SHIP", style={"color": ORANGE, "fontWeight": "bold",
+                                                       "fontSize": "14px", "letterSpacing": "1px"}),
+                html.Span(f"  {len(pending)} orders  •  ${total_value:,.2f}",
+                          style={"color": GRAY, "fontSize": "12px", "marginLeft": "8px"}),
+            ], style={"marginBottom": "8px"}),
+            html.Div(order_rows, style={"maxHeight": "220px", "overflowY": "auto"}),
+        ], style={
+            "backgroundColor": CARD, "padding": "14px 16px", "borderRadius": "10px",
+            "borderLeft": f"4px solid {ORANGE}", "marginBottom": "12px",
+        })
+
+    except Exception as e:
+        return html.Div()
 
 
 def build_tab1_overview():
@@ -60,6 +168,9 @@ def build_tab1_overview():
                             f"Best Buy CC ({money(ed.bb_cc_available)} avail)",
                             f"Best Buy Citi CC -- {money(ed.bb_cc_available)} available of {money(ed.bb_cc_limit)} limit.", status="verified"),
         ], style={"display": "flex", "gap": "8px", "marginBottom": "14px", "flexWrap": "wrap"}),
+
+        # Live Order Queue — paid but not shipped
+        _build_order_queue(ed),
 
         # Dashboard Health / To-Do panel (hidden in strict mode — composite estimate)
         ed._build_health_checks() if not _sm else html.Div(),
