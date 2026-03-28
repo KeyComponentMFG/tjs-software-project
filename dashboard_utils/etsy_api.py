@@ -640,6 +640,11 @@ def build_order_profit_from_ledger(all_receipts, all_ledger_entries, all_items):
         ship_pl = buyer_shipping - label_cost
         true_net = fin["gross"] - abs(fin["sales_tax"]) - total_fees - label_cost
 
+        # Full waterfall: Listing Price → Discount → Sale Price → etc.
+        listing_price = receipt.get("Order Value", 0) or 0
+        discount = receipt.get("Discount Amount", receipt.get("Discount", 0)) or 0
+        sale_price = listing_price - discount
+
         result_orders.append({
             "Order ID": order_id,
             "Sale Date": receipt.get("Sale Date", ""),
@@ -647,19 +652,22 @@ def build_order_profit_from_ledger(all_receipts, all_ledger_entries, all_items):
             "Qty": total_qty or receipt.get("Number of Items", 1),
             "Item Names": item_names[:60] if item_names else receipt.get("Item Names", ""),
             "Variations": var_str,
-            "Gross": round(fin["gross"], 2),
-            "Processing Fee": round(abs(fin["processing_fee"]), 2),
-            "Transaction Fee": round(abs(fin["transaction_fee"]), 2),
-            "Offsite Ads": round(abs(fin["offsite_ads"]), 2),
-            "Listing Fee": round(abs(fin["listing_fee"]), 2),
-            "Total Etsy Fees": round(total_fees, 2),
+            "Listing Price": round(listing_price, 2),
+            "Discount": round(discount, 2),
+            "Sale Price": round(sale_price, 2),
             "Buyer Shipping": round(buyer_shipping, 2),
+            "Sales Tax": round(abs(fin["sales_tax"]), 2),
+            "Gross": round(fin["gross"], 2),
+            "Transaction Fee": round(abs(fin["transaction_fee"]), 2),
+            "Processing Fee": round(abs(fin["processing_fee"]), 2),
+            "Listing Fee": round(abs(fin["listing_fee"]), 2),
+            "Offsite Ads": round(abs(fin["offsite_ads"]), 2),
+            "Total Etsy Fees": round(total_fees, 2),
             "Shipping Label": round(label_cost, 2),
             "Ship P/L": round(ship_pl, 2),
-            "Sales Tax": round(abs(fin["sales_tax"]), 2),
-            "Discount": receipt.get("Discount Amount", receipt.get("Discount", 0)),
             "True Net": round(true_net, 2),
             "Fee %": round(total_fees / fin["gross"] * 100, 1) if fin["gross"] else 0,
+            "Margin %": round(true_net / sale_price * 100, 1) if sale_price else 0,
             "Status": receipt.get("Status", ""),
             "Ship State": receipt.get("Ship State", ""),
             "Ship Country": receipt.get("Ship Country", ""),
