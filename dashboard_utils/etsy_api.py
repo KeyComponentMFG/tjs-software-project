@@ -62,7 +62,7 @@ def get_auth_url(redirect_uri):
     _pkce_state["verifier"] = verifier
     _pkce_state["state"] = state
 
-    scopes = "transactions_r shops_r listings_r receipts_r"
+    scopes = "transactions_r shops_r listings_r email_r"
 
     import urllib.parse
     params = urllib.parse.urlencode({
