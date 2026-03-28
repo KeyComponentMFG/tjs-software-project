@@ -449,8 +449,13 @@ def _fetch_all_payments(shop_id, receipt_ids):
     return payments
 
 
-def sync_all_orders(shop_id, store_slug="keycomponentmfg", fetch_payments=True):
+def sync_all_orders(shop_id, store_slug="keycomponentmfg"):
     """Pull all receipts from Etsy API and normalize into order + item format.
+
+    Calculates per-order fees using Etsy's known fee structure:
+    - Transaction fee: 6.5% of (item price + buyer shipping)
+    - Processing fee: 3% + $0.25 per payment
+    - Listing fee: $0.20 per item
 
     Returns dict with:
         orders: list of order dicts (same shape as CSV upload + fee data)
@@ -464,11 +469,8 @@ def sync_all_orders(shop_id, store_slug="keycomponentmfg", fetch_payments=True):
     if not all_receipts:
         return {"orders": [], "items": [], "raw_receipts": [], "stats": {"total": 0}}
 
-    # Fetch payment data for all receipts (gives us fee breakdown)
-    payment_data = {}
-    if fetch_payments:
-        receipt_ids = [r.get("receipt_id") for r in all_receipts if r.get("receipt_id")]
-        payment_data = _fetch_all_payments(shop_id, receipt_ids)
+    # We calculate fees from known Etsy fee structure instead of
+    # fetching 465 individual payment records (which times out)
 
     orders = []
     items = []
@@ -564,21 +566,19 @@ def sync_all_orders(shop_id, store_slug="keycomponentmfg", fetch_payments=True):
                     "_source": "etsy_api",
                 })
 
-            # Payment data (fees, net)
-            pmt = payment_data.get(str(receipt_id), {})
-            def _pmt_amt(field):
-                v = pmt.get(field, {})
-                if isinstance(v, dict):
-                    return v.get("amount", 0) / v.get("divisor", 100)
-                return 0
-
-            etsy_fees = _pmt_amt("amount_fees")
-            etsy_net = _pmt_amt("amount_net")
-            etsy_gross = _pmt_amt("amount_gross")
-
-            # Profit before hard costs = what Etsy pays you - shipping label
-            # (shipping label cost not in API yet — would need to match via tracking)
-            profit_before_hardcost = etsy_net  # this is after ALL Etsy deductions
+            # Calculate Etsy fees from known fee structure
+            # Transaction fee: 6.5% of (item subtotal + buyer shipping)
+            _subtotal = _amt("subtotal")
+            transaction_fee = round((_subtotal + shipping_cost) * 0.065, 2)
+            # Processing fee: 3% + $0.25 of grandtotal
+            processing_fee = round(grandtotal * 0.03 + 0.25, 2)
+            # Listing fee: $0.20 per unique listing
+            listing_fee = round(len(txns) * 0.20, 2)
+            # Total Etsy fees
+            etsy_fees = round(transaction_fee + processing_fee + listing_fee, 2)
+            # Net after all Etsy deductions (before hard costs)
+            etsy_net = round(grandtotal - tax - etsy_fees, 2)
+            profit_before_hardcost = etsy_net
 
             # Order-level record
             orders.append({
@@ -591,12 +591,14 @@ def sync_all_orders(shop_id, store_slug="keycomponentmfg", fetch_payments=True):
                 "Shipping": round(shipping_cost, 2),
                 "Sales Tax": round(tax, 2),
                 "Order Total": round(grandtotal, 2),
-                "Etsy Fees": round(etsy_fees, 2),
-                "Etsy Net": round(etsy_net, 2),
-                "Etsy Gross": round(etsy_gross, 2),
-                "Order Net": round(etsy_net, 2),
-                "Profit Before Hard Cost": round(profit_before_hardcost, 2),
-                "Card Processing Fees": 0,
+                "Transaction Fee": transaction_fee,
+                "Processing Fee": processing_fee,
+                "Listing Fee": listing_fee,
+                "Etsy Fees": etsy_fees,
+                "Etsy Net": etsy_net,
+                "Order Net": etsy_net,
+                "Profit Before Hard Cost": profit_before_hardcost,
+                "Fee %": round(etsy_fees / grandtotal * 100, 1) if grandtotal else 0,
                 "Ship State": ship_state,
                 "Ship Country": ship_country,
                 "Buyer": buyer_name,
