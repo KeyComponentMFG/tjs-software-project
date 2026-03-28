@@ -11887,9 +11887,8 @@ def etsy_sync_full():
             "success": True,
             "receipts": len(result["orders"]),
             "ledger_entries": len(ledger),
-            "payments_fetched": len(payment_data),
             "orders_with_profit": len(profit_data),
-            "payment_verified": verified,
+            "note": "Run /api/etsy/sync-payments next for exact True Net",
             "sample": profit_data[0] if profit_data else None,
         })
     except Exception as e:
