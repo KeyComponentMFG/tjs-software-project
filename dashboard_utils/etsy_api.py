@@ -641,6 +641,10 @@ def build_order_profit_from_ledger(all_receipts, all_ledger_entries, all_items):
 
         total_fees = abs(fin["processing_fee"]) + abs(fin["transaction_fee"]) + abs(fin["offsite_ads"]) + abs(fin["listing_fee"])
         label_cost = abs(fin["shipping_label"])
+        buyer_shipping = receipt.get("Shipping", 0)
+        if not buyer_shipping:
+            buyer_shipping = 0
+        ship_pl = buyer_shipping - label_cost
         true_net = fin["gross"] - abs(fin["sales_tax"]) - total_fees - label_cost
 
         result_orders.append({
@@ -656,13 +660,16 @@ def build_order_profit_from_ledger(all_receipts, all_ledger_entries, all_items):
             "Offsite Ads": round(abs(fin["offsite_ads"]), 2),
             "Listing Fee": round(abs(fin["listing_fee"]), 2),
             "Total Etsy Fees": round(total_fees, 2),
+            "Buyer Shipping": round(buyer_shipping, 2),
             "Shipping Label": round(label_cost, 2),
+            "Ship P/L": round(ship_pl, 2),
             "Sales Tax": round(abs(fin["sales_tax"]), 2),
-            "Discount": receipt.get("Discount Amount", 0),
+            "Discount": receipt.get("Discount Amount", receipt.get("Discount", 0)),
             "True Net": round(true_net, 2),
             "Fee %": round(total_fees / fin["gross"] * 100, 1) if fin["gross"] else 0,
             "Status": receipt.get("Status", ""),
             "Ship State": receipt.get("Ship State", ""),
+            "Ship Country": receipt.get("Ship Country", ""),
             "Tracking": receipt.get("Tracking", ""),
             "_store": receipt.get("_store", "keycomponentmfg"),
         })
