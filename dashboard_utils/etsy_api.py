@@ -239,10 +239,21 @@ def get_shop_id():
 def debug_api_call(endpoint):
     """Make a raw API call and return the response for debugging."""
     try:
-        resp = requests.get(f"{ETSY_BASE_URL}{endpoint}", headers=_get_headers())
-        return {"status": resp.status_code, "body": resp.json() if resp.status_code == 200 else resp.text[:500]}
+        headers = _get_headers()
+        # Mask tokens for debug output
+        debug_headers = {
+            "x-api-key": headers.get("x-api-key", "")[:8] + "..." if headers.get("x-api-key") else "MISSING",
+            "Authorization": "Bearer " + headers.get("Authorization", "")[:15] + "..." if "Bearer" in headers.get("Authorization", "") else "MISSING",
+        }
+        resp = requests.get(f"{ETSY_BASE_URL}{endpoint}", headers=headers)
+        return {
+            "status": resp.status_code,
+            "body": resp.json() if resp.status_code == 200 else resp.text[:500],
+            "headers_sent": debug_headers,
+            "api_key_env_set": bool(ETSY_API_KEY),
+        }
     except Exception as e:
-        return {"error": str(e)}
+        return {"error": str(e), "api_key_env_set": bool(ETSY_API_KEY)}
 
 
 def get_shop_info(shop_id):
