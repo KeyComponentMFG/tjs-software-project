@@ -13289,7 +13289,7 @@ def _build_per_order_profit_section():
             "maxWidth": "200px",
         },
         style_cell_conditional=[
-            {"if": {"column_id": "Order #"}, "width": "110px"},
+            {"if": {"column_id": "Order #"}, "width": "110px", "color": CYAN, "cursor": "pointer"},
             {"if": {"column_id": "Date"}, "width": "90px"},
             {"if": {"column_id": "Buyer"}, "width": "120px", "fontFamily": "inherit"},
             {"if": {"column_id": "Qty"}, "width": "40px", "textAlign": "center"},
@@ -13372,8 +13372,12 @@ def _build_per_order_profit_section():
             "color": CYAN, "margin": "30px 0 6px 0", "fontSize": "14px",
             "letterSpacing": "1.5px", "borderTop": f"2px solid {CYAN}33", "paddingTop": "14px",
         }),
-        html.P(f"Per-order profit breakdown. True Net = amount_net - txn_fee - offsite_ads - shipping_label",
+        html.P(f"Per-order profit breakdown — click order # to copy",
                style={"color": GRAY, "margin": "0 0 14px 0", "fontSize": "12px"}),
+        # Hidden clipboard component
+        dcc.Clipboard(id="order-clipboard", style={"display": "none"}),
+        html.Div(id="order-copy-toast", style={"position": "fixed", "top": "20px", "right": "20px",
+                                                  "zIndex": "9999"}),
         _kpi_row,
         _search_bar,
         _order_table,
@@ -13384,6 +13388,28 @@ def _build_per_order_profit_section():
 # ── REMOVED OLD CODE: order cards, refund editor, label assignment editor ──
 # All replaced by clean DataTable above. Dummy IDs preserved for callback compat.
 _REMOVED_OLD_ORDER_SECTION = True
+# ── Copy Order Number on Click ────────────────────────────────────────────────
+@app.callback(
+    Output("order-clipboard", "content"),
+    Output("order-copy-toast", "children"),
+    Input("order-detail-table", "active_cell"),
+    State("order-detail-table", "data"),
+    prevent_initial_call=True,
+)
+def copy_order_number(active_cell, data):
+    if not active_cell or active_cell.get("column_id") != "Order #":
+        raise dash.exceptions.PreventUpdate
+    row = active_cell.get("row", 0)
+    if row < len(data):
+        order_num = data[row].get("Order #", "")
+        toast = html.Div(f"Copied: {order_num}", style={
+            "backgroundColor": GREEN, "color": WHITE, "padding": "8px 16px",
+            "borderRadius": "6px", "fontSize": "13px", "fontWeight": "bold",
+        })
+        return order_num, toast
+    raise dash.exceptions.PreventUpdate
+
+
 # ── Refund Cost Override Callback ────────────────────────────────────────────
 
 @app.callback(
