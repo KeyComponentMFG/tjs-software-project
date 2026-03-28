@@ -11763,6 +11763,41 @@ def etsy_debug():
     return flask.jsonify(result)
 
 
+@server.route("/api/etsy/sync")
+def etsy_sync_orders():
+    """Pull all orders from Etsy API and save to Supabase."""
+    from dashboard_utils.etsy_api import is_connected, _tokens, sync_all_orders, save_synced_orders
+
+    if not is_connected():
+        return flask.jsonify({"error": "Not connected to Etsy. Visit /api/etsy/connect first."}), 401
+
+    shop_id = _tokens.get("shop_id")
+    if not shop_id:
+        return flask.jsonify({"error": "No shop_id found. Visit /api/etsy/status to fetch it."}), 400
+
+    try:
+        result = sync_all_orders(shop_id, store_slug="keycomponentmfg")
+        stats = result["stats"]
+
+        # Save to Supabase
+        saved = save_synced_orders(result["orders"], result["items"], "keycomponentmfg")
+
+        # Trigger per-order profit recompute
+        try:
+            _compute_per_order_profit()
+        except Exception:
+            pass
+
+        return flask.jsonify({
+            "success": True,
+            "saved_to_supabase": saved,
+            "stats": stats,
+            "sample_order": result["orders"][0] if result["orders"] else None,
+        })
+    except Exception as e:
+        return flask.jsonify({"error": str(e)}), 500
+
+
 @server.route("/api/etsy/disconnect")
 def etsy_disconnect():
     """Disconnect Etsy API — clears stored tokens."""

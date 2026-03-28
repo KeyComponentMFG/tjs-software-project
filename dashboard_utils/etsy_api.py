@@ -386,5 +386,186 @@ def get_shipping_labels(shop_id, receipt_id):
     return None
 
 
+# ── Order Sync ────────────────────────────────────────────────────────────────
+
+def sync_all_orders(shop_id, store_slug="keycomponentmfg"):
+    """Pull all receipts from Etsy API and normalize into order + item format.
+
+    Returns dict with:
+        orders: list of order dicts (same shape as CSV upload)
+        items: list of item dicts (same shape as CSV upload)
+        raw_receipts: list of raw Etsy receipt dicts
+        stats: {total, new, existing, errors}
+    """
+    _logger.info("Starting full order sync for shop %s (%s)", shop_id, store_slug)
+
+    all_receipts = get_all_receipts(shop_id)
+    if not all_receipts:
+        return {"orders": [], "items": [], "raw_receipts": [], "stats": {"total": 0}}
+
+    orders = []
+    items = []
+
+    for r in all_receipts:
+        try:
+            receipt_id = r.get("receipt_id")
+            created = r.get("created_timestamp", 0)
+
+            # Parse amounts (Etsy returns {amount: cents, divisor: 100})
+            def _amt(field):
+                v = r.get(field, {})
+                if isinstance(v, dict):
+                    return v.get("amount", 0) / v.get("divisor", 100)
+                return float(v) if v else 0
+
+            total_price = _amt("total_price")
+            shipping_cost = _amt("total_shipping_cost")
+            tax = _amt("total_tax_cost")
+            discount = _amt("discount_amt")
+            grandtotal = _amt("grandtotal")
+
+            # Shipment info (label cost + tracking)
+            shipments = r.get("shipments", [])
+            tracking_code = ""
+            carrier = ""
+            ship_date = ""
+            if shipments:
+                s = shipments[0]
+                tracking_code = s.get("tracking_code", "")
+                carrier = s.get("carrier_name", "")
+                if s.get("ship_date") or s.get("shipped_timestamp"):
+                    ts = s.get("shipped_timestamp") or s.get("ship_date")
+                    if isinstance(ts, (int, float)) and ts > 0:
+                        from datetime import datetime
+                        ship_date = datetime.fromtimestamp(ts).strftime("%m/%d/%Y")
+
+            # Sale date
+            sale_date = ""
+            if created:
+                from datetime import datetime
+                sale_date = datetime.fromtimestamp(created).strftime("%m/%d/%Y")
+
+            # Buyer info
+            buyer_name = r.get("name", "")
+            ship_state = r.get("state", "")
+            ship_country = r.get("country_iso", "")
+            status = r.get("status", "")
+
+            # Transactions (line items)
+            txns = r.get("transactions", [])
+            item_names = []
+            num_items = 0
+
+            for t in txns:
+                t_price = t.get("price", {})
+                if isinstance(t_price, dict):
+                    item_price = t_price.get("amount", 0) / t_price.get("divisor", 100)
+                else:
+                    item_price = float(t_price) if t_price else 0
+
+                t_ship = t.get("shipping_cost", {})
+                if isinstance(t_ship, dict):
+                    item_ship = t_ship.get("amount", 0) / t_ship.get("divisor", 100)
+                else:
+                    item_ship = float(t_ship) if t_ship else 0
+
+                item_title = t.get("title", "")
+                item_qty = t.get("quantity", 1)
+                item_names.append(item_title)
+                num_items += item_qty
+
+                # Variations (size, color, etc.)
+                variations = t.get("variations", [])
+                var_str = ", ".join(f"{v.get('formatted_name', '')}: {v.get('formatted_value', '')}"
+                                    for v in variations) if variations else ""
+
+                # Product data (more detailed variations)
+                product_data = t.get("product_data", [])
+                product_vars = ", ".join(f"{p.get('property_name', '')}: {p['values'][0]}"
+                                          for p in product_data if p.get("values")) if product_data else ""
+
+                items.append({
+                    "Order ID": str(receipt_id),
+                    "Transaction ID": str(t.get("transaction_id", "")),
+                    "Listing ID": str(t.get("listing_id", "")),
+                    "Item Name": item_title,
+                    "Quantity": item_qty,
+                    "Price": round(item_price, 2),
+                    "Shipping": round(item_ship, 2),
+                    "Variations": product_vars or var_str,
+                    "_store": store_slug,
+                    "_source": "etsy_api",
+                })
+
+            # Order-level record
+            orders.append({
+                "Order ID": str(receipt_id),
+                "Sale Date": sale_date,
+                "Date Shipped": ship_date,
+                "Number of Items": num_items,
+                "Order Value": round(total_price, 2),
+                "Discount Amount": round(discount, 2),
+                "Shipping": round(shipping_cost, 2),
+                "Sales Tax": round(tax, 2),
+                "Order Total": round(grandtotal, 2),
+                "Order Net": round(grandtotal - tax, 2),  # approximate — Etsy doesn't give net directly
+                "Card Processing Fees": 0,  # not available from receipt API
+                "Ship State": ship_state,
+                "Ship Country": ship_country,
+                "Buyer": buyer_name,
+                "Full Name": buyer_name,
+                "Status": status,
+                "Tracking": tracking_code,
+                "Carrier": carrier,
+                "Item Names": " | ".join(item_names),
+                "_store": store_slug,
+                "_source": "etsy_api",
+            })
+
+        except Exception as e:
+            _logger.warning("Error processing receipt %s: %s", r.get("receipt_id"), e)
+
+    stats = {
+        "total_receipts": len(all_receipts),
+        "orders_parsed": len(orders),
+        "items_parsed": len(items),
+    }
+    _logger.info("Sync complete: %d receipts → %d orders, %d items", len(all_receipts), len(orders), len(items))
+
+    return {
+        "orders": orders,
+        "items": items,
+        "raw_receipts": all_receipts,
+        "stats": stats,
+    }
+
+
+def save_synced_orders(orders, items, store_slug="keycomponentmfg"):
+    """Save API-synced orders and items to Supabase config (same as CSV upload)."""
+    try:
+        from supabase_loader import _get_supabase_client
+        client = _get_supabase_client()
+        if not client:
+            return False
+
+        # Save orders
+        client.table("config").upsert({
+            "key": f"order_csv_orders_{store_slug}",
+            "value": json.dumps(orders),
+        }, on_conflict="key").execute()
+
+        # Save items
+        client.table("config").upsert({
+            "key": f"order_csv_items_{store_slug}",
+            "value": json.dumps(items),
+        }, on_conflict="key").execute()
+
+        _logger.info("Saved %d orders and %d items for %s to Supabase", len(orders), len(items), store_slug)
+        return True
+    except Exception as e:
+        _logger.error("Failed to save synced orders: %s", e)
+        return False
+
+
 # ── Load tokens on import ─────────────────────────────────────────────────────
 _load_tokens()
