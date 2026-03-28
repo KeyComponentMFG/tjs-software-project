@@ -11690,7 +11690,8 @@ def api_ceo_dismiss():
 def etsy_connect():
     """Start Etsy OAuth flow — redirects to Etsy authorization page."""
     from dashboard_utils.etsy_api import get_auth_url
-    redirect_uri = flask.request.host_url.rstrip("/") + "/api/etsy/callback"
+    # Force https — Railway proxies via HTTP internally but the public URL is HTTPS
+    redirect_uri = flask.request.host_url.rstrip("/").replace("http://", "https://") + "/api/etsy/callback"
     url = get_auth_url(redirect_uri)
     return flask.redirect(url)
 
@@ -11714,7 +11715,7 @@ def etsy_callback():
         return "Error: State mismatch — possible CSRF attack. Try connecting again.", 400
 
     try:
-        redirect_uri = flask.request.host_url.rstrip("/") + "/api/etsy/callback"
+        redirect_uri = flask.request.host_url.rstrip("/").replace("http://", "https://") + "/api/etsy/callback"
         exchange_code(code, redirect_uri)
         shop_id = get_shop_id()
         return flask.redirect("/?etsy_connected=true")
