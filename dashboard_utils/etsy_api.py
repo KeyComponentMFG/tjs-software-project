@@ -398,17 +398,218 @@ def get_receipt_payments(shop_id, receipt_id):
     return None
 
 
-def get_ledger_entries(shop_id, limit=100, offset=0):
+def get_ledger_entries(shop_id, min_created, max_created, limit=100, offset=0):
     """Fetch shop payment account ledger entries (all fees, payments, deposits)."""
     resp = requests.get(
         f"{ETSY_BASE_URL}/application/shops/{shop_id}/payment-account/ledger-entries",
         headers=_get_headers(),
-        params={"limit": limit, "offset": offset},
+        params={"limit": limit, "offset": offset, "min_created": int(min_created), "max_created": int(max_created)},
     )
     if resp.status_code == 200:
         return resp.json()
     _logger.info("get_ledger_entries: %s %s", resp.status_code, resp.text[:200])
     return None
+
+
+def get_all_ledger_entries(shop_id, days_back=365):
+    """Fetch ALL ledger entries for the shop, paginating through all results.
+
+    Returns list of all ledger entry dicts.
+    """
+    max_created = int(time.time())
+    min_created = max_created - (days_back * 86400)
+
+    all_entries = []
+    offset = 0
+    limit = 100
+
+    while True:
+        data = get_ledger_entries(shop_id, min_created, max_created, limit=limit, offset=offset)
+        if not data or not data.get("results"):
+            break
+        all_entries.extend(data["results"])
+        _logger.info("Fetched %d ledger entries (total: %d)", len(data["results"]), len(all_entries))
+        if len(data["results"]) < limit:
+            break
+        offset += limit
+        # Rate limit
+        if offset % 400 == 0:
+            time.sleep(0.5)
+
+    return all_entries
+
+
+def build_order_profit_from_ledger(all_receipts, all_ledger_entries, all_items):
+    """Match ledger entries to orders and compute true P/L per order.
+
+    Args:
+        all_receipts: list of receipt dicts from API (has receipt_id, transactions)
+        all_ledger_entries: list of ledger entry dicts (has amounts, reference_ids)
+        all_items: list of item dicts (has Order ID, Transaction ID)
+
+    Returns:
+        list of order dicts with full financial breakdown
+    """
+    # Build lookup: transaction_id → receipt_id (order ID)
+    txn_to_receipt = {}
+    for item in all_items:
+        txn_id = str(item.get("Transaction ID", ""))
+        order_id = str(item.get("Order ID", ""))
+        if txn_id and order_id:
+            txn_to_receipt[txn_id] = order_id
+
+    # Build lookup: receipt_id → receipt data
+    receipt_lookup = {}
+    for r in all_receipts:
+        rid = str(r.get("receipt_id", r.get("Order ID", "")))
+        receipt_lookup[rid] = r
+
+    # Group ledger entries by order
+    # Each entry has reference_id and reference_type that tells us what it links to
+    order_financials = {}  # {receipt_id: {gross, processing, transaction, tax, ads, listing, label, ...}}
+
+    for entry in all_ledger_entries:
+        amount = entry.get("amount", 0) / 100.0  # cents to dollars
+        ledger_type = entry.get("ledger_type", "")
+        ref_id = str(entry.get("reference_id", ""))
+        ref_type = entry.get("reference_type", "")
+        timestamp = entry.get("created_timestamp", 0)
+
+        order_id = None
+
+        # Match to order based on reference_type
+        if ref_type == "receipt":
+            order_id = ref_id
+        elif ref_type == "etsy" and ledger_type == "offsite_ads_fee":
+            order_id = ref_id  # offsite ads reference_id IS the receipt_id
+        elif ref_type == "transaction":
+            order_id = txn_to_receipt.get(ref_id)
+        elif ref_type == "shop_payment" or ref_type == "processing_fee":
+            # Payment entries — find the receipt via payment lookup
+            # The payment reference_id is the payment_id, need to match via timestamp
+            # For now, skip — we get processing fee from the payment API already
+            # Try to match via nearby entries with same timestamp
+            for other in all_ledger_entries:
+                if (other.get("created_timestamp") == timestamp
+                        and other.get("reference_type") == "receipt"):
+                    order_id = str(other.get("reference_id", ""))
+                    break
+            if not order_id:
+                # Try matching via shop_payment → same timestamp entries
+                for other in all_ledger_entries:
+                    if (abs(other.get("created_timestamp", 0) - timestamp) < 2
+                            and other.get("reference_type") in ("receipt", "etsy")
+                            and other.get("reference_id")):
+                        order_id = str(other.get("reference_id", ""))
+                        break
+        elif ref_type == "listing":
+            # Listing fee — match to receipt via timestamp (listing renewed when sold)
+            for other in all_ledger_entries:
+                if (abs(other.get("created_timestamp", 0) - timestamp) < 5
+                        and other.get("reference_type") == "receipt"):
+                    order_id = str(other.get("reference_id", ""))
+                    break
+        elif ref_type == "shipping_label":
+            # Shipping label — match to receipt via close timestamp
+            # Label is usually purchased within minutes/hours of order ship
+            best_match = None
+            best_diff = 86400 * 7  # max 7 days
+            for other in all_ledger_entries:
+                if other.get("ledger_type") == "PAYMENT_GROSS":
+                    diff = abs(other.get("created_timestamp", 0) - timestamp)
+                    if diff < best_diff:
+                        # Find the receipt for this payment
+                        pay_ts = other.get("created_timestamp", 0)
+                        for r_entry in all_ledger_entries:
+                            if (r_entry.get("reference_type") == "receipt"
+                                    and abs(r_entry.get("created_timestamp", 0) - pay_ts) < 2):
+                                best_match = str(r_entry.get("reference_id", ""))
+                                best_diff = diff
+                                break
+            # Actually, simpler: match label to the most recent unshipped order before the label timestamp
+            # For now, use timestamp proximity
+            order_id = best_match
+
+        if not order_id:
+            continue
+
+        if order_id not in order_financials:
+            order_financials[order_id] = {
+                "gross": 0, "processing_fee": 0, "transaction_fee": 0,
+                "sales_tax": 0, "offsite_ads": 0, "listing_fee": 0,
+                "shipping_label": 0, "other": 0,
+            }
+
+        fin = order_financials[order_id]
+        if ledger_type == "PAYMENT_GROSS":
+            fin["gross"] += amount
+        elif ledger_type == "PAYMENT_PROCESSING_FEE":
+            fin["processing_fee"] += amount  # negative
+        elif ledger_type == "transaction":
+            fin["transaction_fee"] += amount  # negative
+        elif ledger_type == "sales_tax":
+            fin["sales_tax"] += amount  # negative
+        elif ledger_type == "offsite_ads_fee":
+            fin["offsite_ads"] += amount  # negative
+        elif ledger_type == "renew_sold_auto":
+            fin["listing_fee"] += amount  # negative
+        elif ledger_type == "shipping_labels":
+            fin["shipping_label"] += amount  # negative
+        else:
+            fin["other"] += amount
+
+    # Build final order list with full breakdown
+    result_orders = []
+    for order_id, fin in order_financials.items():
+        receipt = receipt_lookup.get(order_id, {})
+
+        # Get item info
+        order_items_list = [i for i in all_items if str(i.get("Order ID", "")) == order_id]
+        item_names = " | ".join(i.get("Item Name", "") for i in order_items_list)
+        variations = []
+        total_qty = 0
+        for it in order_items_list:
+            total_qty += it.get("Quantity", 1)
+            var = it.get("Variations", "")
+            if var:
+                for v in var.split(", "):
+                    if ": " in v:
+                        prop, val = v.split(": ", 1)
+                        variations.append(val if prop == "Custom Property" else val)
+
+        var_str = " / ".join(variations) if variations else ""
+
+        total_fees = abs(fin["processing_fee"]) + abs(fin["transaction_fee"]) + abs(fin["offsite_ads"]) + abs(fin["listing_fee"])
+        label_cost = abs(fin["shipping_label"])
+        true_net = fin["gross"] - abs(fin["sales_tax"]) - total_fees - label_cost
+
+        result_orders.append({
+            "Order ID": order_id,
+            "Sale Date": receipt.get("Sale Date", ""),
+            "Buyer": receipt.get("Buyer", receipt.get("Full Name", "")),
+            "Qty": total_qty or receipt.get("Number of Items", 1),
+            "Item Names": item_names[:60] if item_names else receipt.get("Item Names", ""),
+            "Variations": var_str,
+            "Gross": round(fin["gross"], 2),
+            "Processing Fee": round(abs(fin["processing_fee"]), 2),
+            "Transaction Fee": round(abs(fin["transaction_fee"]), 2),
+            "Offsite Ads": round(abs(fin["offsite_ads"]), 2),
+            "Listing Fee": round(abs(fin["listing_fee"]), 2),
+            "Total Etsy Fees": round(total_fees, 2),
+            "Shipping Label": round(label_cost, 2),
+            "Sales Tax": round(abs(fin["sales_tax"]), 2),
+            "Discount": receipt.get("Discount Amount", 0),
+            "True Net": round(true_net, 2),
+            "Fee %": round(total_fees / fin["gross"] * 100, 1) if fin["gross"] else 0,
+            "Status": receipt.get("Status", ""),
+            "Ship State": receipt.get("Ship State", ""),
+            "Tracking": receipt.get("Tracking", ""),
+            "_store": receipt.get("_store", "keycomponentmfg"),
+        })
+
+    result_orders.sort(key=lambda x: x.get("Sale Date", ""), reverse=True)
+    _logger.info("Built profit data for %d orders from %d ledger entries", len(result_orders), len(all_ledger_entries))
+    return result_orders
 
 
 def get_ledger_entry_payments(shop_id, ledger_entry_ids):

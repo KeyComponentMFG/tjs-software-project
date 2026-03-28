@@ -11813,12 +11813,6 @@ def etsy_sync_orders():
         # Save to Supabase
         saved = save_synced_orders(result["orders"], result["items"], "keycomponentmfg")
 
-        # Trigger per-order profit recompute
-        try:
-            _compute_per_order_profit()
-        except Exception:
-            pass
-
         return flask.jsonify({
             "success": True,
             "saved_to_supabase": saved,
@@ -11827,6 +11821,56 @@ def etsy_sync_orders():
         })
     except Exception as e:
         return flask.jsonify({"error": str(e)}), 500
+
+
+@server.route("/api/etsy/sync-full")
+def etsy_sync_full():
+    """Full sync: receipts + ledger → true per-order P/L with all fees and shipping labels."""
+    from dashboard_utils.etsy_api import (
+        is_connected, _tokens, sync_all_orders, save_synced_orders,
+        get_all_ledger_entries, build_order_profit_from_ledger,
+    )
+    from supabase_loader import _get_supabase_client
+
+    if not is_connected():
+        return flask.jsonify({"error": "Not connected to Etsy. Visit /api/etsy/connect first."}), 401
+
+    shop_id = _tokens.get("shop_id")
+    if not shop_id:
+        return flask.jsonify({"error": "No shop_id found."}), 400
+
+    try:
+        # Step 1: Pull all receipts + items
+        result = sync_all_orders(shop_id, store_slug="keycomponentmfg")
+        save_synced_orders(result["orders"], result["items"], "keycomponentmfg")
+
+        # Step 2: Pull all ledger entries (fees, labels, payments)
+        ledger = get_all_ledger_entries(shop_id, days_back=365)
+
+        # Step 3: Build true P/L by matching ledger to orders
+        profit_data = build_order_profit_from_ledger(
+            result["orders"], ledger, result["items"]
+        )
+
+        # Step 4: Save profit data to Supabase
+        client = _get_supabase_client()
+        if client:
+            import json as _json_sync
+            client.table("config").upsert({
+                "key": "order_profit_ledger_keycomponentmfg",
+                "value": _json_sync.dumps(profit_data),
+            }, on_conflict="key").execute()
+
+        return flask.jsonify({
+            "success": True,
+            "receipts": len(result["orders"]),
+            "ledger_entries": len(ledger),
+            "orders_with_profit": len(profit_data),
+            "sample": profit_data[0] if profit_data else None,
+        })
+    except Exception as e:
+        import traceback
+        return flask.jsonify({"error": str(e), "traceback": traceback.format_exc()}), 500
 
 
 @server.route("/api/etsy/disconnect")
