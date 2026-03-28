@@ -639,25 +639,29 @@ def build_order_profit_from_ledger(all_receipts, all_ledger_entries, all_items, 
             buyer_shipping = 0
         ship_pl = buyer_shipping - label_cost
 
-        # Use REAL payment API amount_net if available (authoritative from Etsy)
-        # Fall back to calculated net from ledger entries
+        # TRUE NET calculation:
+        # Payment API amount_net = Sale Price - Processing Fee ONLY
+        # True Net = Payment Net - Transaction Fee - Offsite Ads - All Labels
+        # (Listing fee is NOT counted by Etsy in per-order earnings)
         pmt = payment_data.get(order_id, {}) if payment_data else {}
         if pmt and pmt.get("amount_net"):
             pmt_net_val = pmt["amount_net"]
             if isinstance(pmt_net_val, dict):
-                etsy_net = pmt_net_val.get("amount", 0) / pmt_net_val.get("divisor", 100)
+                payment_net = pmt_net_val.get("amount", 0) / pmt_net_val.get("divisor", 100)
             else:
-                etsy_net = float(pmt_net_val) / 100.0
-            # Etsy net is BEFORE shipping label — subtract label for true net
-            true_net = etsy_net - label_cost
-            # Calculate real total fees from payment data
+                payment_net = float(pmt_net_val) / 100.0
+            # Get real processing fee from payment
             if pmt.get("amount_fees"):
                 pmt_fees_val = pmt["amount_fees"]
                 if isinstance(pmt_fees_val, dict):
-                    real_fees = abs(pmt_fees_val.get("amount", 0) / pmt_fees_val.get("divisor", 100))
+                    processing_fee_real = abs(pmt_fees_val.get("amount", 0) / pmt_fees_val.get("divisor", 100))
                 else:
-                    real_fees = abs(float(pmt_fees_val) / 100.0)
-                total_fees = real_fees
+                    processing_fee_real = abs(float(pmt_fees_val) / 100.0)
+                fin["processing_fee"] = -processing_fee_real
+            # True Net = Payment Net - Transaction Fee - Offsite Ads - Labels
+            true_net = payment_net - abs(fin["transaction_fee"]) - abs(fin["offsite_ads"]) - label_cost
+            # Recalculate total fees to match Etsy's view (no listing fee)
+            total_fees = abs(fin["processing_fee"]) + abs(fin["transaction_fee"]) + abs(fin["offsite_ads"])
         else:
             true_net = fin["gross"] - abs(fin["sales_tax"]) - total_fees - label_cost
 
