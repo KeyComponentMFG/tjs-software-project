@@ -11935,36 +11935,44 @@ def etsy_sync_payments():
                     return v.get("amount", 0) / v.get("divisor", 100)
                 return None
 
-            # Use adjusted_net if refund happened, otherwise amount_net
-            # adjusted_net = what Etsy ACTUALLY keeps after refunds
-            adjusted_net = _pmt_dollars("adjusted_net")
-            original_net = _pmt_dollars("amount_net")
-            payment_net = adjusted_net if adjusted_net is not None else original_net
-            if payment_net is None:
-                continue
-
-            # Get fees (adjusted if refund, otherwise original)
-            adjusted_fees = _pmt_dollars("adjusted_fees")
-            original_fees = _pmt_dollars("amount_fees")
-            real_proc_fee = abs(adjusted_fees if adjusted_fees is not None else (original_fees or 0))
-            order["Processing Fee"] = round(real_proc_fee, 2)
-
-            # Refund amount
+            # Refund amount from payment_adjustments
             refund_total = 0
+            refund_fee_credits = 0
             for adj in pmt.get("payment_adjustments", []):
                 adj_amt = adj.get("total_adjustment_amount", 0)
+                fee_adj = adj.get("total_fee_adjustment_amount", 0)
                 if adj_amt:
                     refund_total += adj_amt / 100.0
+                if fee_adj:
+                    refund_fee_credits += fee_adj / 100.0
             order["Refund"] = round(refund_total, 2)
 
-            # True Net = Payment Net (after refund) - Transaction Fee - Offsite Ads - Labels
+            # Get original and adjusted values
+            original_net = _pmt_dollars("amount_net") or 0
+            original_fees = _pmt_dollars("amount_fees") or 0
+            original_gross = _pmt_dollars("amount_gross") or 0
+
+            # TRUE NET = Sum of ALL financial impacts on this order:
+            # What buyer paid (gross)
+            # - What Etsy took (fees: processing + transaction + ads)
+            # - What you paid for labels
+            # - What you refunded
+            # + Fee credits from refund
+            # This matches Etsy's own calculation exactly.
+            label = order.get("Shipping Label", 0)
             txn_fee = order.get("Transaction Fee", 0)
             ads = order.get("Offsite Ads", 0)
-            label = order.get("Shipping Label", 0)
-            true_net = payment_net - txn_fee - ads - label
 
+            # Start with what Etsy collected from buyer (minus tax — tax is pass-through)
+            sales_tax = order.get("Sales Tax", 0)
+            buyer_total = original_gross - sales_tax
+
+            # Subtract all costs
+            true_net = buyer_total - abs(original_fees) - txn_fee - ads - label - refund_total + refund_fee_credits
+
+            order["Processing Fee"] = round(abs(original_fees), 2)
             order["True Net"] = round(true_net, 2)
-            order["Total Etsy Fees"] = round(real_proc_fee + txn_fee + ads, 2)
+            order["Total Etsy Fees"] = round(abs(original_fees) + txn_fee + ads, 2)
             sale_price = order.get("Sale Price", 0)
             order["Margin %"] = round(true_net / sale_price * 100, 1) if sale_price else 0
             order["_payment_verified"] = True
