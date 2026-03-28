@@ -536,30 +536,17 @@ def build_order_profit_from_ledger(all_receipts, all_ledger_entries, all_items, 
 
         order_id = None
 
+        # ONLY match entries with DIRECT reference_id links to orders.
+        # NO timestamp proximity matching — it assigns to wrong orders.
         if ref_type == "receipt":
+            # sales_tax — reference_id IS the receipt_id
             order_id = ref_id
         elif ref_type == "etsy":
-            # offsite ads, refunds — reference_id is receipt_id
+            # offsite_ads, refund tax — reference_id IS the receipt_id
             order_id = ref_id
         elif ref_type == "transaction":
+            # transaction fees — reference_id is transaction_id, look up receipt via items
             order_id = txn_to_receipt.get(ref_id)
-        elif ref_type in ("shop_payment", "processing_fee", "payment_adjustment"):
-            # Match by same-second timestamp to a receipt entry
-            order_id = ts_to_receipt.get(timestamp)
-            if not order_id:
-                # Try ±1 second
-                for delta in (1, -1, 2, -2):
-                    order_id = ts_to_receipt.get(timestamp + delta)
-                    if order_id:
-                        break
-        elif ref_type == "listing":
-            # Listing renewal — match by same-second timestamp
-            order_id = ts_to_receipt.get(timestamp)
-            if not order_id:
-                for delta in (1, -1, 2, -2, 3, -3, 5, -5):
-                    order_id = ts_to_receipt.get(timestamp + delta)
-                    if order_id:
-                        break
         elif ref_type == "shipping_label":
             # EXACT match: label created_timestamp == transaction shipped_timestamp
             # Etsy sets both to the same second when you purchase a label
@@ -632,23 +619,25 @@ def build_order_profit_from_ledger(all_receipts, all_ledger_entries, all_items, 
 
         var_str = " / ".join(variations) if variations else ""
 
-        # TRUE NET — verified formula:
-        # payment_net (gross - sales_tax - processing_fee) is from payment API via sync-payments
-        # For initial ledger build, estimate: gross - sales_tax - processing - txn - ads - labels + refund
-        # sync-payments will correct with real payment API amount_net
+        # TRUE NET — only uses DIRECT-MATCHED ledger entries:
+        # transaction_fee: matched via transaction_id → items table (reliable)
+        # offsite_ads: matched via receipt reference_id (reliable)
+        # shipping_label: matched via exact-second timestamp (reliable)
+        # refund: matched via receipt/etsy reference_id (reliable)
         #
-        # Verified: amount_net($34.55) - txn($2.34) - ads($0) - label($6.60) = $25.61 = Etsy's number
+        # Processing fee is NOT matched here — comes from payment API via sync-payments
+        # Listing fee is NOT included — Etsy doesn't count it in per-order earnings
         #
-        # Only include: processing, transaction, offsite_ads, shipping_label, refund
-        # Do NOT include: listing_fee, other, sales_tax (these are separate charges not in Etsy's per-order earnings)
-        true_net = (fin["gross"] + fin["sales_tax"]  # gross includes tax, add back the negative tax = gross without tax
-                    + fin["processing_fee"]  # negative
-                    + fin["transaction_fee"]  # negative
-                    + fin["offsite_ads"]  # negative
-                    + fin["shipping_label"]  # negative
-                    + fin["refund"])  # negative if refunded
+        # Initial estimate (sync-payments will correct with real amount_net):
+        # gross + sales_tax(negative) = buyer paid minus tax
+        # Then subtract only directly-matched deductions
+        true_net = (fin["gross"] + fin["sales_tax"]
+                    + fin["transaction_fee"]
+                    + fin["offsite_ads"]
+                    + fin["shipping_label"]
+                    + fin["refund"])
 
-        total_fees = abs(fin["processing_fee"]) + abs(fin["transaction_fee"]) + abs(fin["offsite_ads"])
+        total_fees = abs(fin["transaction_fee"]) + abs(fin["offsite_ads"])
         label_cost = abs(fin["shipping_label"])
         refund_amount = abs(fin["refund"]) if fin["refund"] < -0.01 else 0
         buyer_shipping = receipt.get("Shipping", 0) or 0

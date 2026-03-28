@@ -11935,31 +11935,51 @@ def etsy_sync_payments():
                     return v.get("amount", 0) / v.get("divisor", 100)
                 return None
 
-            # Use adjusted_net for refunded orders, amount_net for normal
-            adjusted_net = _pmt_dollars("adjusted_net")
             original_net = _pmt_dollars("amount_net")
-            payment_net = adjusted_net if adjusted_net is not None else original_net
-            if payment_net is None:
+            if original_net is None:
                 continue
 
             # Refund amount for display
-            refund_total = 0
+            refund_to_buyer = 0
             for adj in pmt.get("payment_adjustments", []):
                 adj_amt = adj.get("total_adjustment_amount", 0)
                 if adj_amt:
-                    refund_total += adj_amt / 100.0
-            order["Refund"] = round(refund_total, 2)
+                    refund_to_buyer += adj_amt / 100.0
+            order["Refund"] = round(refund_to_buyer, 2)
 
-            # TRUE NET = payment_net - transaction_fee - offsite_ads - labels
-            # Verified: amount_net($34.55) - txn($2.34) - ads($0) - label($6.60) = $25.61 = Etsy
+            has_refund = refund_to_buyer > 0
+            label = order.get("Shipping Label", 0)
             txn_fee = order.get("Transaction Fee", 0)
             ads = order.get("Offsite Ads", 0)
-            label = order.get("Shipping Label", 0)
-            true_net = payment_net - txn_fee - ads - label
+            proc_fee = abs(_pmt_dollars("amount_fees") or 0)
+
+            if has_refund:
+                # REFUNDED ORDER: use adjusted_net which already accounts for
+                # the refund, adjusted processing fee, and all fee credits.
+                # Only subtract txn_fee, ads, and labels that are NOT refunded.
+                adjusted_net = _pmt_dollars("adjusted_net")
+                adjusted_fees = _pmt_dollars("adjusted_fees")
+                if adjusted_net is not None:
+                    # adjusted_net = what Etsy keeps after refund + adjusted proc fee
+                    # Still need to subtract txn (net of refund credit) + ads + labels
+                    # The ledger transaction_refund credit is in fin["refund"], not fin["transaction_fee"]
+                    # So txn_fee is still the ORIGINAL. We need the NET txn fee.
+                    # Get it from the ledger: fin["transaction_fee"] + transaction_refund credits
+                    # Actually, the ledger refund entries include transaction_refund which is positive
+                    # So the NET impact of all txn entries = fin["transaction_fee"] (negative orig) + transaction_refund in fin["refund"]
+                    # Simplest: adjusted_net - ads - labels, and trust adjusted_net handles all fee adjustments
+                    true_net = adjusted_net - ads - label
+                    proc_fee = abs(adjusted_fees) if adjusted_fees is not None else proc_fee
+                else:
+                    true_net = original_net - txn_fee - ads - label - refund_to_buyer
+            else:
+                # NORMAL ORDER: amount_net - txn - ads - labels
+                # Verified: $34.55 - $2.34 - $0 - $6.60 = $25.61 = Etsy ✓
+                true_net = original_net - txn_fee - ads - label
 
             order["True Net"] = round(true_net, 2)
-            order["Total Etsy Fees"] = round(abs(_pmt_dollars("amount_fees") or 0) + txn_fee + ads, 2)
-            order["Processing Fee"] = round(abs(_pmt_dollars("amount_fees") or 0), 2)
+            order["Processing Fee"] = round(proc_fee, 2)
+            order["Total Etsy Fees"] = round(proc_fee + txn_fee + ads, 2)
             sale_price = order.get("Sale Price", 0)
             order["Margin %"] = round(true_net / sale_price * 100, 1) if sale_price else 0
             order["_payment_verified"] = True
