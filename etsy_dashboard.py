@@ -13019,37 +13019,8 @@ def _build_per_order_profit_section():
         ], style=_kpi_style),
     ], style={"display": "flex", "gap": "8px", "flexWrap": "wrap", "marginBottom": "16px"})
 
-    # Per-store summary if showing all stores
+    # Per-store summary — hidden until multiple stores have API data
     _store_summary = html.Div()
-    if not _store_filter:
-        _store_rows = []
-        for _sk, _sl in [("keycomponentmfg", "KeyComponentMFG"), ("aurvio", "Aurvio"), ("lunalinks", "Luna&Links")]:
-            _sp = [r for r in ORDER_PROFITS if r["store"] == _sk]
-            if _sp:
-                _sp_profit = sum(r["order_profit"] for r in _sp)
-                _sp_rev = sum(r["order_value"] for r in _sp)
-                _sp_margin = (_sp_profit / _sp_rev * 100) if _sp_rev else 0
-                _sc = STORE_COLORS.get(_sk, TEAL)
-                _store_rows.append(html.Tr([
-                    html.Td(_sl, style={"color": _sc, "fontWeight": "bold", "padding": "6px 12px", "fontSize": "12px"}),
-                    html.Td(f"{len(_sp)}", style={"color": WHITE, "padding": "6px 12px", "fontSize": "12px", "textAlign": "center"}),
-                    html.Td(f"${_sp_profit:,.2f}", style={"color": GREEN, "padding": "6px 12px", "fontSize": "12px", "fontFamily": "monospace", "textAlign": "right"}),
-                    html.Td(f"${_sp_profit/len(_sp):,.2f}", style={"color": CYAN, "padding": "6px 12px", "fontSize": "12px", "fontFamily": "monospace", "textAlign": "right"}),
-                    html.Td(f"{_sp_margin:.1f}%", style={"color": ORANGE, "padding": "6px 12px", "fontSize": "12px", "fontFamily": "monospace", "textAlign": "right"}),
-                ]))
-        if _store_rows:
-            _store_summary = html.Div([
-                html.Table([
-                    html.Thead(html.Tr([
-                        html.Th("Store", style={"color": GRAY, "padding": "6px 12px", "fontSize": "11px", "textAlign": "left"}),
-                        html.Th("Orders", style={"color": GRAY, "padding": "6px 12px", "fontSize": "11px", "textAlign": "center"}),
-                        html.Th("Profit", style={"color": GRAY, "padding": "6px 12px", "fontSize": "11px", "textAlign": "right"}),
-                        html.Th("Avg/Order", style={"color": GRAY, "padding": "6px 12px", "fontSize": "11px", "textAlign": "right"}),
-                        html.Th("Margin", style={"color": GRAY, "padding": "6px 12px", "fontSize": "11px", "textAlign": "right"}),
-                    ])),
-                    html.Tbody(_store_rows),
-                ], style={"width": "100%", "borderCollapse": "collapse"}),
-            ], style={"marginBottom": "16px"})
 
     # Order detail table — use API data loaded above
     _table_data = []
