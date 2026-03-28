@@ -13389,11 +13389,12 @@ _REMOVED_OLD_ORDER_SECTION = True
 # ── Copy Order Number on Click ────────────────────────────────────────────────
 app.clientside_callback(
     """
-    function(active_cell, data) {
+    function(active_cell, derived_data) {
         if (!active_cell || active_cell.column_id !== "Order #") {
             return window.dash_clientside.no_update;
         }
         var row = active_cell.row;
+        var data = derived_data || [];
         if (row >= 0 && row < data.length) {
             var orderNum = String(data[row]["Order #"] || "");
             if (orderNum && navigator.clipboard) {
@@ -13414,7 +13415,7 @@ app.clientside_callback(
     """,
     Output("order-copy-toast", "data-dummy"),
     Input("order-detail-table", "active_cell"),
-    State("order-detail-table", "data"),
+    State("order-detail-table", "derived_virtual_data"),
     prevent_initial_call=True,
 )
 
