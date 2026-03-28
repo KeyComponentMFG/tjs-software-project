@@ -11684,6 +11684,71 @@ def api_ceo_dismiss():
     return flask.redirect("/")
 
 
+# ── Etsy API OAuth Routes ────────────────────────────────────────────────────
+
+@server.route("/api/etsy/connect")
+def etsy_connect():
+    """Start Etsy OAuth flow — redirects to Etsy authorization page."""
+    from dashboard_utils.etsy_api import get_auth_url
+    redirect_uri = flask.request.host_url.rstrip("/") + "/api/etsy/callback"
+    url = get_auth_url(redirect_uri)
+    return flask.redirect(url)
+
+
+@server.route("/api/etsy/callback")
+def etsy_callback():
+    """Handle Etsy OAuth callback — exchange code for tokens."""
+    from dashboard_utils.etsy_api import exchange_code, get_shop_id, _pkce_state
+
+    code = flask.request.args.get("code")
+    state = flask.request.args.get("state")
+    error = flask.request.args.get("error")
+
+    if error:
+        return f"Etsy authorization denied: {error}", 400
+
+    if not code:
+        return "Error: No authorization code received", 400
+
+    if state != _pkce_state.get("state"):
+        return "Error: State mismatch — possible CSRF attack. Try connecting again.", 400
+
+    try:
+        redirect_uri = flask.request.host_url.rstrip("/") + "/api/etsy/callback"
+        exchange_code(code, redirect_uri)
+        shop_id = get_shop_id()
+        return flask.redirect("/?etsy_connected=true")
+    except Exception as e:
+        return f"Error connecting to Etsy: {e}", 500
+
+
+@server.route("/api/etsy/status")
+def etsy_status():
+    """Check Etsy API connection status."""
+    from dashboard_utils.etsy_api import is_connected, _tokens, get_shop_info
+    connected = is_connected()
+    shop_info = None
+    if connected and _tokens.get("shop_id"):
+        try:
+            shop_info = get_shop_info(_tokens["shop_id"])
+        except Exception:
+            pass
+    return flask.jsonify({
+        "connected": connected,
+        "shop_id": _tokens.get("shop_id"),
+        "shop_name": shop_info.get("shop_name") if shop_info else None,
+        "has_refresh_token": bool(_tokens.get("refresh_token")),
+    })
+
+
+@server.route("/api/etsy/disconnect")
+def etsy_disconnect():
+    """Disconnect Etsy API — clears stored tokens."""
+    from dashboard_utils.etsy_api import disconnect
+    disconnect()
+    return flask.redirect("/")
+
+
 # ── Tax Forms Tab — extracted to dashboard_utils/pages/tax_forms.py ──────────
 # build_tab5_tax_forms() is imported at the top of this file.
 
