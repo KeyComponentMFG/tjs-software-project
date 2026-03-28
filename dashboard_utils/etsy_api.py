@@ -427,11 +427,33 @@ def get_ledger_entry_payments(shop_id, ledger_entry_ids):
 
 # ── Order Sync ────────────────────────────────────────────────────────────────
 
-def sync_all_orders(shop_id, store_slug="keycomponentmfg"):
+def _fetch_all_payments(shop_id, receipt_ids):
+    """Fetch payment data for all receipts, respecting rate limits.
+
+    Returns dict of {receipt_id: payment_data}.
+    """
+    payments = {}
+    batch_count = 0
+    for rid in receipt_ids:
+        try:
+            data = get_receipt_payments(shop_id, rid)
+            if data and data.get("results"):
+                payments[str(rid)] = data["results"][0]
+            batch_count += 1
+            # Respect 5 QPS rate limit
+            if batch_count % 4 == 0:
+                time.sleep(0.25)
+        except Exception as e:
+            _logger.warning("Payment fetch failed for receipt %s: %s", rid, e)
+    _logger.info("Fetched payments for %d/%d receipts", len(payments), len(receipt_ids))
+    return payments
+
+
+def sync_all_orders(shop_id, store_slug="keycomponentmfg", fetch_payments=True):
     """Pull all receipts from Etsy API and normalize into order + item format.
 
     Returns dict with:
-        orders: list of order dicts (same shape as CSV upload)
+        orders: list of order dicts (same shape as CSV upload + fee data)
         items: list of item dicts (same shape as CSV upload)
         raw_receipts: list of raw Etsy receipt dicts
         stats: {total, new, existing, errors}
@@ -441,6 +463,12 @@ def sync_all_orders(shop_id, store_slug="keycomponentmfg"):
     all_receipts = get_all_receipts(shop_id)
     if not all_receipts:
         return {"orders": [], "items": [], "raw_receipts": [], "stats": {"total": 0}}
+
+    # Fetch payment data for all receipts (gives us fee breakdown)
+    payment_data = {}
+    if fetch_payments:
+        receipt_ids = [r.get("receipt_id") for r in all_receipts if r.get("receipt_id")]
+        payment_data = _fetch_all_payments(shop_id, receipt_ids)
 
     orders = []
     items = []
@@ -536,6 +564,22 @@ def sync_all_orders(shop_id, store_slug="keycomponentmfg"):
                     "_source": "etsy_api",
                 })
 
+            # Payment data (fees, net)
+            pmt = payment_data.get(str(receipt_id), {})
+            def _pmt_amt(field):
+                v = pmt.get(field, {})
+                if isinstance(v, dict):
+                    return v.get("amount", 0) / v.get("divisor", 100)
+                return 0
+
+            etsy_fees = _pmt_amt("amount_fees")
+            etsy_net = _pmt_amt("amount_net")
+            etsy_gross = _pmt_amt("amount_gross")
+
+            # Profit before hard costs = what Etsy pays you - shipping label
+            # (shipping label cost not in API yet — would need to match via tracking)
+            profit_before_hardcost = etsy_net  # this is after ALL Etsy deductions
+
             # Order-level record
             orders.append({
                 "Order ID": str(receipt_id),
@@ -547,8 +591,12 @@ def sync_all_orders(shop_id, store_slug="keycomponentmfg"):
                 "Shipping": round(shipping_cost, 2),
                 "Sales Tax": round(tax, 2),
                 "Order Total": round(grandtotal, 2),
-                "Order Net": round(grandtotal - tax, 2),  # approximate — Etsy doesn't give net directly
-                "Card Processing Fees": 0,  # not available from receipt API
+                "Etsy Fees": round(etsy_fees, 2),
+                "Etsy Net": round(etsy_net, 2),
+                "Etsy Gross": round(etsy_gross, 2),
+                "Order Net": round(etsy_net, 2),
+                "Profit Before Hard Cost": round(profit_before_hardcost, 2),
+                "Card Processing Fees": 0,
                 "Ship State": ship_state,
                 "Ship Country": ship_country,
                 "Buyer": buyer_name,
@@ -556,6 +604,8 @@ def sync_all_orders(shop_id, store_slug="keycomponentmfg"):
                 "Status": status,
                 "Tracking": tracking_code,
                 "Carrier": carrier,
+                "Is Gift": r.get("is_gift", False),
+                "Gift Message": r.get("gift_message", ""),
                 "Item Names": " | ".join(item_names),
                 "_store": store_slug,
                 "_source": "etsy_api",
