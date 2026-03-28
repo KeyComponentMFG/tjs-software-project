@@ -207,19 +207,42 @@ def get_shop_id():
     if _tokens.get("shop_id"):
         return _tokens["shop_id"]
 
-    resp = requests.get(
+    # Try /application/users/me/shops first (personal access)
+    for endpoint in [
+        f"{ETSY_BASE_URL}/application/users/me/shops",
         f"{ETSY_BASE_URL}/application/shops",
-        headers=_get_headers(),
-    )
-    if resp.status_code == 200:
-        shops = resp.json().get("results", [])
-        if shops:
-            _tokens["shop_id"] = shops[0]["shop_id"]
-            _save_tokens()
-            _logger.info("Found shop ID: %s (%s)", _tokens["shop_id"], shops[0].get("shop_name", ""))
-            return _tokens["shop_id"]
-    _logger.warning("Could not get shop ID: %s", resp.status_code)
+    ]:
+        try:
+            resp = requests.get(endpoint, headers=_get_headers())
+            _logger.info("get_shop_id tried %s: status=%s body=%s", endpoint, resp.status_code, resp.text[:300])
+            if resp.status_code == 200:
+                data = resp.json()
+                shops = data.get("results", [])
+                if not shops and isinstance(data, dict) and data.get("shop_id"):
+                    # Single shop response
+                    _tokens["shop_id"] = data["shop_id"]
+                    _save_tokens()
+                    _logger.info("Found shop ID: %s", _tokens["shop_id"])
+                    return _tokens["shop_id"]
+                elif shops:
+                    _tokens["shop_id"] = shops[0]["shop_id"]
+                    _save_tokens()
+                    _logger.info("Found shop ID: %s (%s)", _tokens["shop_id"], shops[0].get("shop_name", ""))
+                    return _tokens["shop_id"]
+        except Exception as e:
+            _logger.warning("get_shop_id error on %s: %s", endpoint, e)
+
+    _logger.warning("Could not get shop ID from any endpoint")
     return None
+
+
+def debug_api_call(endpoint):
+    """Make a raw API call and return the response for debugging."""
+    try:
+        resp = requests.get(f"{ETSY_BASE_URL}{endpoint}", headers=_get_headers())
+        return {"status": resp.status_code, "body": resp.json() if resp.status_code == 200 else resp.text[:500]}
+    except Exception as e:
+        return {"error": str(e)}
 
 
 def get_shop_info(shop_id):

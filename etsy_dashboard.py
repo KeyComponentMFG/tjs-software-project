@@ -11753,6 +11753,16 @@ def etsy_status():
     })
 
 
+@server.route("/api/etsy/debug")
+def etsy_debug():
+    """Debug Etsy API — test raw endpoint calls."""
+    from dashboard_utils.etsy_api import debug_api_call, _tokens
+    endpoint = flask.request.args.get("endpoint", "/application/users/me/shops")
+    result = debug_api_call(endpoint)
+    result["tokens_present"] = bool(_tokens.get("access_token"))
+    return flask.jsonify(result)
+
+
 @server.route("/api/etsy/disconnect")
 def etsy_disconnect():
     """Disconnect Etsy API — clears stored tokens."""
