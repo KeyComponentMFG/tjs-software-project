@@ -11726,19 +11726,30 @@ def etsy_callback():
 @server.route("/api/etsy/status")
 def etsy_status():
     """Check Etsy API connection status."""
-    from dashboard_utils.etsy_api import is_connected, _tokens, get_shop_info
+    from dashboard_utils.etsy_api import is_connected, _tokens, get_shop_id, get_shop_info
     connected = is_connected()
     shop_info = None
+    shop_error = None
+
+    # Try to get shop_id if we don't have one yet
+    if connected and not _tokens.get("shop_id"):
+        try:
+            get_shop_id()
+        except Exception as e:
+            shop_error = str(e)
+
     if connected and _tokens.get("shop_id"):
         try:
             shop_info = get_shop_info(_tokens["shop_id"])
-        except Exception:
-            pass
+        except Exception as e:
+            shop_error = str(e)
+
     return flask.jsonify({
         "connected": connected,
         "shop_id": _tokens.get("shop_id"),
         "shop_name": shop_info.get("shop_name") if shop_info else None,
         "has_refresh_token": bool(_tokens.get("refresh_token")),
+        "error": shop_error,
     })
 
 
