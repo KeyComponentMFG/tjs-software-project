@@ -11929,20 +11929,35 @@ def etsy_sync_payments():
             if not pmt:
                 continue
 
-            # Get real payment net
-            pmt_net_val = pmt.get("amount_net", {})
-            if isinstance(pmt_net_val, dict):
-                payment_net = pmt_net_val.get("amount", 0) / pmt_net_val.get("divisor", 100)
-            else:
+            def _pmt_dollars(field):
+                v = pmt.get(field, {})
+                if isinstance(v, dict) and v.get("amount") is not None:
+                    return v.get("amount", 0) / v.get("divisor", 100)
+                return None
+
+            # Use adjusted_net if refund happened, otherwise amount_net
+            # adjusted_net = what Etsy ACTUALLY keeps after refunds
+            adjusted_net = _pmt_dollars("adjusted_net")
+            original_net = _pmt_dollars("amount_net")
+            payment_net = adjusted_net if adjusted_net is not None else original_net
+            if payment_net is None:
                 continue
 
-            # Get real processing fee
-            pmt_fees_val = pmt.get("amount_fees", {})
-            if isinstance(pmt_fees_val, dict):
-                real_proc_fee = abs(pmt_fees_val.get("amount", 0) / pmt_fees_val.get("divisor", 100))
-                order["Processing Fee"] = round(real_proc_fee, 2)
+            # Get fees (adjusted if refund, otherwise original)
+            adjusted_fees = _pmt_dollars("adjusted_fees")
+            original_fees = _pmt_dollars("amount_fees")
+            real_proc_fee = abs(adjusted_fees if adjusted_fees is not None else (original_fees or 0))
+            order["Processing Fee"] = round(real_proc_fee, 2)
 
-            # True Net = Payment Net - Transaction Fee - Offsite Ads - Labels
+            # Refund amount
+            refund_total = 0
+            for adj in pmt.get("payment_adjustments", []):
+                adj_amt = adj.get("total_adjustment_amount", 0)
+                if adj_amt:
+                    refund_total += adj_amt / 100.0
+            order["Refund"] = round(refund_total, 2)
+
+            # True Net = Payment Net (after refund) - Transaction Fee - Offsite Ads - Labels
             txn_fee = order.get("Transaction Fee", 0)
             ads = order.get("Offsite Ads", 0)
             label = order.get("Shipping Label", 0)
