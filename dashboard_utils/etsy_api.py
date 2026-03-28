@@ -145,9 +145,13 @@ def _get_headers():
             _logger.error("Auto-refresh failed: %s", e)
             raise
 
+    token = _tokens['access_token'] or ""
+    # Token might already include "Bearer " prefix from Etsy response
+    if token.startswith("Bearer "):
+        token = token[7:]
     return {
-        "Authorization": f"Bearer {_tokens['access_token']}",
-        "x-api-key": ETSY_API_KEY,
+        "Authorization": f"Bearer {token}",
+        "x-api-key": ETSY_SHARED_SECRET,
     }
 
 
