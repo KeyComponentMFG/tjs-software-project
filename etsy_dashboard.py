@@ -11867,22 +11867,12 @@ def etsy_sync_full():
             if o["Order ID"] not in raw_ids:
                 combined.append(o)
 
-        # Step 3b: Fetch REAL payment data from Etsy payment API
-        # This gives us amount_net — the EXACT amount Etsy pays you per order
-        from dashboard_utils.etsy_api import _fetch_all_payments
-        receipt_ids = [str(rr.get("receipt_id", "")) for rr in raw_receipts if rr.get("receipt_id")]
-        payment_data = _fetch_all_payments(shop_id, receipt_ids)
-        # Rekey by receipt_id string
-        payment_by_receipt = {}
-        for rid_str, pmt in payment_data.items():
-            payment_by_receipt[rid_str] = pmt
-
+        # Step 3b: Build profit WITHOUT payment data first (fast)
         profit_data = build_order_profit_from_ledger(
-            combined, ledger, result["items"], payment_data=payment_by_receipt
+            combined, ledger, result["items"], payment_data=None
         )
 
-        # Count verified vs unverified
-        verified = sum(1 for o in profit_data if o.get("_payment_verified"))
+        verified = 0
 
         # Step 4: Save profit data to Supabase
         client = _get_supabase_client()
@@ -11901,6 +11891,85 @@ def etsy_sync_full():
             "orders_with_profit": len(profit_data),
             "payment_verified": verified,
             "sample": profit_data[0] if profit_data else None,
+        })
+    except Exception as e:
+        import traceback
+        return flask.jsonify({"error": str(e), "traceback": traceback.format_exc()}), 500
+
+
+@server.route("/api/etsy/sync-payments")
+def etsy_sync_payments():
+    """Fetch real payment data for all orders and update True Net values."""
+    from dashboard_utils.etsy_api import is_connected, _tokens, _fetch_all_payments, get_receipt_payments
+    from supabase_loader import _get_supabase_client, get_config_value
+    import json as _json_pmt
+
+    if not is_connected():
+        return flask.jsonify({"error": "Not connected"}), 401
+
+    shop_id = _tokens.get("shop_id")
+    if not shop_id:
+        return flask.jsonify({"error": "No shop_id"}), 400
+
+    try:
+        # Load existing profit data
+        raw = get_config_value("order_profit_ledger_keycomponentmfg")
+        if not raw:
+            return flask.jsonify({"error": "Run /api/etsy/sync-full first"}), 400
+        profit_data = _json_pmt.loads(raw) if isinstance(raw, str) else raw
+
+        # Fetch payments for all orders
+        receipt_ids = [o.get("Order ID") for o in profit_data if o.get("Order ID")]
+        payment_data = _fetch_all_payments(shop_id, receipt_ids)
+
+        # Update each order's True Net with real payment data
+        updated = 0
+        for order in profit_data:
+            oid = order.get("Order ID", "")
+            pmt = payment_data.get(str(oid))
+            if not pmt:
+                continue
+
+            # Get real payment net
+            pmt_net_val = pmt.get("amount_net", {})
+            if isinstance(pmt_net_val, dict):
+                payment_net = pmt_net_val.get("amount", 0) / pmt_net_val.get("divisor", 100)
+            else:
+                continue
+
+            # Get real processing fee
+            pmt_fees_val = pmt.get("amount_fees", {})
+            if isinstance(pmt_fees_val, dict):
+                real_proc_fee = abs(pmt_fees_val.get("amount", 0) / pmt_fees_val.get("divisor", 100))
+                order["Processing Fee"] = round(real_proc_fee, 2)
+
+            # True Net = Payment Net - Transaction Fee - Offsite Ads - Labels
+            txn_fee = order.get("Transaction Fee", 0)
+            ads = order.get("Offsite Ads", 0)
+            label = order.get("Shipping Label", 0)
+            true_net = payment_net - txn_fee - ads - label
+
+            order["True Net"] = round(true_net, 2)
+            order["Total Etsy Fees"] = round(real_proc_fee + txn_fee + ads, 2)
+            sale_price = order.get("Sale Price", 0)
+            order["Margin %"] = round(true_net / sale_price * 100, 1) if sale_price else 0
+            order["_payment_verified"] = True
+            updated += 1
+
+        # Save updated data
+        client = _get_supabase_client()
+        if client:
+            client.table("config").upsert({
+                "key": "order_profit_ledger_keycomponentmfg",
+                "value": _json_pmt.dumps(profit_data),
+            }, on_conflict="key").execute()
+
+        return flask.jsonify({
+            "success": True,
+            "total_orders": len(profit_data),
+            "payments_fetched": len(payment_data),
+            "orders_updated": updated,
+            "sample": next((o for o in profit_data if o.get("_payment_verified")), None),
         })
     except Exception as e:
         import traceback
