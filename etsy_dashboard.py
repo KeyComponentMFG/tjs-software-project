@@ -11763,6 +11763,37 @@ def etsy_debug():
     return flask.jsonify(result)
 
 
+@server.route("/api/etsy/ledger")
+def etsy_ledger_test():
+    """Test the ledger entries endpoint — shows fees, labels, deposits."""
+    from dashboard_utils.etsy_api import get_ledger_entries, _tokens, is_connected
+    import time as _time_ledger
+
+    if not is_connected():
+        return flask.jsonify({"error": "Not connected"}), 401
+
+    shop_id = _tokens.get("shop_id")
+    days = int(flask.request.args.get("days", 30))
+    limit = int(flask.request.args.get("limit", 10))
+
+    min_created = int(_time_ledger.time()) - (days * 86400)
+    max_created = int(_time_ledger.time())
+
+    try:
+        import requests as _req_ledger
+        from dashboard_utils.etsy_api import _get_headers, ETSY_BASE_URL
+        resp = _req_ledger.get(
+            f"{ETSY_BASE_URL}/application/shops/{shop_id}/payment-account/ledger-entries",
+            headers=_get_headers(),
+            params={"limit": limit, "min_created": min_created, "max_created": max_created},
+        )
+        if resp.status_code == 200:
+            return flask.jsonify(resp.json())
+        return flask.jsonify({"error": resp.text[:500], "status": resp.status_code})
+    except Exception as e:
+        return flask.jsonify({"error": str(e)}), 500
+
+
 @server.route("/api/etsy/sync")
 def etsy_sync_orders():
     """Pull all orders from Etsy API and save to Supabase."""
