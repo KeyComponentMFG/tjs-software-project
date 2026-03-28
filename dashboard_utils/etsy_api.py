@@ -386,6 +386,45 @@ def get_shipping_labels(shop_id, receipt_id):
     return None
 
 
+def get_receipt_payments(shop_id, receipt_id):
+    """Fetch payment details for a receipt (may include fee breakdown)."""
+    resp = requests.get(
+        f"{ETSY_BASE_URL}/application/shops/{shop_id}/receipts/{receipt_id}/payments",
+        headers=_get_headers(),
+    )
+    if resp.status_code == 200:
+        return resp.json()
+    _logger.info("get_receipt_payments %s: %s %s", receipt_id, resp.status_code, resp.text[:200])
+    return None
+
+
+def get_ledger_entries(shop_id, limit=100, offset=0):
+    """Fetch shop payment account ledger entries (all fees, payments, deposits)."""
+    resp = requests.get(
+        f"{ETSY_BASE_URL}/application/shops/{shop_id}/payment-account/ledger-entries",
+        headers=_get_headers(),
+        params={"limit": limit, "offset": offset},
+    )
+    if resp.status_code == 200:
+        return resp.json()
+    _logger.info("get_ledger_entries: %s %s", resp.status_code, resp.text[:200])
+    return None
+
+
+def get_ledger_entry_payments(shop_id, ledger_entry_ids):
+    """Fetch payment details for specific ledger entries."""
+    ids_str = ",".join(str(i) for i in ledger_entry_ids)
+    resp = requests.get(
+        f"{ETSY_BASE_URL}/application/shops/{shop_id}/payment-account/ledger-entries/payments",
+        headers=_get_headers(),
+        params={"ledger_entry_ids": ids_str},
+    )
+    if resp.status_code == 200:
+        return resp.json()
+    _logger.info("get_ledger_entry_payments: %s %s", resp.status_code, resp.text[:200])
+    return None
+
+
 # ── Order Sync ────────────────────────────────────────────────────────────────
 
 def sync_all_orders(shop_id, store_slug="keycomponentmfg"):
