@@ -412,30 +412,39 @@ def get_ledger_entries(shop_id, min_created, max_created, limit=100, offset=0):
 
 
 def get_all_ledger_entries(shop_id, days_back=365):
-    """Fetch ALL ledger entries for the shop, paginating through all results.
+    """Fetch ALL ledger entries for the shop.
+
+    Etsy limits queries to 31-day windows, so we loop through
+    in 30-day chunks going backwards from today.
 
     Returns list of all ledger entry dicts.
     """
-    max_created = int(time.time())
-    min_created = max_created - (days_back * 86400)
-
     all_entries = []
-    offset = 0
-    limit = 100
+    now = int(time.time())
+    chunk_size = 30 * 86400  # 30 days in seconds
+    earliest = now - (days_back * 86400)
 
-    while True:
-        data = get_ledger_entries(shop_id, min_created, max_created, limit=limit, offset=offset)
-        if not data or not data.get("results"):
-            break
-        all_entries.extend(data["results"])
-        _logger.info("Fetched %d ledger entries (total: %d)", len(data["results"]), len(all_entries))
-        if len(data["results"]) < limit:
-            break
-        offset += limit
-        # Rate limit
-        if offset % 400 == 0:
-            time.sleep(0.5)
+    window_end = now
+    while window_end > earliest:
+        window_start = max(window_end - chunk_size, earliest)
+        offset = 0
+        limit = 100
 
+        while True:
+            data = get_ledger_entries(shop_id, window_start, window_end, limit=limit, offset=offset)
+            if not data or not data.get("results"):
+                break
+            all_entries.extend(data["results"])
+            if len(data["results"]) < limit:
+                break
+            offset += limit
+            time.sleep(0.25)  # rate limit
+
+        _logger.info("Ledger window %d-%d: %d entries so far", window_start, window_end, len(all_entries))
+        window_end = window_start
+        time.sleep(0.25)
+
+    _logger.info("Total ledger entries fetched: %d", len(all_entries))
     return all_entries
 
 
