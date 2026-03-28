@@ -498,28 +498,19 @@ def build_order_profit_from_ledger(all_receipts, all_ledger_entries, all_items):
         rid = str(r.get("receipt_id", r.get("Order ID", "")))
         receipt_lookup[rid] = r
 
-    # Build shipment timestamp → receipt_id lookup for label matching
-    # Each receipt's shipment has a notification timestamp — match labels to this
+    # Build shipped_timestamp → receipt_id lookup for EXACT label matching
+    # When you buy a label on Etsy, the transaction's shipped_timestamp is set
+    # to the EXACT SAME SECOND as the ledger shipping_label entry.
+    # This is a 1:1 guaranteed match — not proximity, not guessing.
     ship_ts_to_receipt = {}
     for r in all_receipts:
         rid = str(r.get("receipt_id", r.get("Order ID", "")))
-        # Check raw receipt for shipments (from API sync)
-        # The sync stores shipped_timestamp in transactions
+        # Get shipped_timestamp from transactions (exact second of label purchase)
         txns = r.get("transactions", [])
-        for t in txns if isinstance(txns, list) else []:
+        for t in (txns if isinstance(txns, list) else []):
             shipped_ts = t.get("shipped_timestamp")
             if shipped_ts and isinstance(shipped_ts, (int, float)) and shipped_ts > 0:
                 ship_ts_to_receipt[int(shipped_ts)] = rid
-
-    # Also build from receipt-level data
-    for r in all_receipts:
-        rid = str(r.get("receipt_id", r.get("Order ID", "")))
-        shipments = r.get("shipments", [])
-        if isinstance(shipments, list):
-            for s in shipments:
-                ts = s.get("shipment_notification_timestamp", s.get("shipped_timestamp", 0))
-                if ts and isinstance(ts, (int, float)) and ts > 0:
-                    ship_ts_to_receipt[int(ts)] = rid
 
     # Build timestamp → receipt_id index for same-second matching
     ts_to_receipt = {}
@@ -570,20 +561,22 @@ def build_order_profit_from_ledger(all_receipts, all_ledger_entries, all_items):
                     if order_id:
                         break
         elif ref_type == "shipping_label":
-            # Match label to order via shipment timestamp
-            # The label purchase timestamp should be very close to the ship notification
-            best_match = None
-            best_diff = 86400  # max 24 hours
-            for ship_ts, ship_receipt in ship_ts_to_receipt.items():
-                diff = abs(ship_ts - timestamp)
-                if diff < best_diff:
-                    best_diff = diff
-                    best_match = ship_receipt
-            if best_match:
-                order_id = best_match
+            # EXACT match: label created_timestamp == transaction shipped_timestamp
+            # Etsy sets both to the same second when you purchase a label
+            exact = ship_ts_to_receipt.get(timestamp)
+            if exact:
+                order_id = exact
                 _matched_labels += 1
             else:
-                _unmatched_labels += 1
+                # Try ±1 second for minor clock drift
+                for delta in (1, -1):
+                    exact = ship_ts_to_receipt.get(timestamp + delta)
+                    if exact:
+                        order_id = exact
+                        _matched_labels += 1
+                        break
+                else:
+                    _unmatched_labels += 1
 
         if not order_id:
             continue
