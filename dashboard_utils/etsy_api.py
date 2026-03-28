@@ -639,10 +639,14 @@ def build_order_profit_from_ledger(all_receipts, all_ledger_entries, all_items, 
             buyer_shipping = 0
         ship_pl = buyer_shipping - label_cost
 
+        # Refund amount (negative = money returned to buyer, positive = fee credits back)
+        # fin["refund"] is the NET of all refund entries (REFUND_GROSS is negative,
+        # REFUND_PROCESSING_FEE/transaction_refund/sales_tax_refund are positive credits)
+        refund_net = fin["refund"]  # negative overall if refund happened
+
         # TRUE NET calculation:
         # Payment API amount_net = Sale Price - Processing Fee ONLY
-        # True Net = Payment Net - Transaction Fee - Offsite Ads - All Labels
-        # (Listing fee is NOT counted by Etsy in per-order earnings)
+        # True Net = Payment Net - Transaction Fee - Offsite Ads - Labels + Refund Net
         pmt = payment_data.get(order_id, {}) if payment_data else {}
         if pmt and pmt.get("amount_net"):
             pmt_net_val = pmt["amount_net"]
@@ -658,12 +662,11 @@ def build_order_profit_from_ledger(all_receipts, all_ledger_entries, all_items, 
                 else:
                     processing_fee_real = abs(float(pmt_fees_val) / 100.0)
                 fin["processing_fee"] = -processing_fee_real
-            # True Net = Payment Net - Transaction Fee - Offsite Ads - Labels
-            true_net = payment_net - abs(fin["transaction_fee"]) - abs(fin["offsite_ads"]) - label_cost
-            # Recalculate total fees to match Etsy's view (no listing fee)
+            # True Net = Payment Net - Transaction Fee - Offsite Ads - Labels + Refund Net
+            true_net = payment_net - abs(fin["transaction_fee"]) - abs(fin["offsite_ads"]) - label_cost + refund_net
             total_fees = abs(fin["processing_fee"]) + abs(fin["transaction_fee"]) + abs(fin["offsite_ads"])
         else:
-            true_net = fin["gross"] - abs(fin["sales_tax"]) - total_fees - label_cost
+            true_net = fin["gross"] - abs(fin["sales_tax"]) - total_fees - label_cost + refund_net
 
         # Full waterfall: Listing Price → Discount → Sale Price → etc.
         listing_price = receipt.get("Order Value", 0) or 0
@@ -690,6 +693,7 @@ def build_order_profit_from_ledger(all_receipts, all_ledger_entries, all_items, 
             "Total Etsy Fees": round(total_fees, 2),
             "Shipping Label": round(label_cost, 2),
             "Ship P/L": round(ship_pl, 2),
+            "Refund": round(abs(refund_net), 2) if refund_net < -0.01 else 0,
             "True Net": round(true_net, 2),
             "Fee %": round(total_fees / fin["gross"] * 100, 1) if fin["gross"] else 0,
             "Margin %": round(true_net / sale_price * 100, 1) if sale_price else 0,
