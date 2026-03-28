@@ -13374,8 +13374,6 @@ def _build_per_order_profit_section():
         }),
         html.P(f"Per-order profit breakdown — click order # to copy",
                style={"color": GRAY, "margin": "0 0 14px 0", "fontSize": "12px"}),
-        # Hidden clipboard component
-        dcc.Clipboard(id="order-clipboard", style={"display": "none"}),
         html.Div(id="order-copy-toast", style={"position": "fixed", "top": "20px", "right": "20px",
                                                   "zIndex": "9999"}),
         _kpi_row,
@@ -13389,25 +13387,36 @@ def _build_per_order_profit_section():
 # All replaced by clean DataTable above. Dummy IDs preserved for callback compat.
 _REMOVED_OLD_ORDER_SECTION = True
 # ── Copy Order Number on Click ────────────────────────────────────────────────
-@app.callback(
-    Output("order-clipboard", "content"),
-    Output("order-copy-toast", "children"),
+app.clientside_callback(
+    """
+    function(active_cell, data) {
+        if (!active_cell || active_cell.column_id !== "Order #") {
+            return window.dash_clientside.no_update;
+        }
+        var row = active_cell.row;
+        if (row >= 0 && row < data.length) {
+            var orderNum = String(data[row]["Order #"] || "");
+            if (orderNum && navigator.clipboard) {
+                navigator.clipboard.writeText(orderNum);
+                var toast = document.createElement("div");
+                toast.textContent = "Copied: " + orderNum;
+                toast.style.cssText = "background:#2ecc71;color:#fff;padding:8px 16px;border-radius:6px;font-size:13px;font-weight:bold;";
+                var container = document.getElementById("order-copy-toast");
+                if (container) {
+                    container.innerHTML = "";
+                    container.appendChild(toast);
+                    setTimeout(function() { container.innerHTML = ""; }, 2000);
+                }
+            }
+        }
+        return window.dash_clientside.no_update;
+    }
+    """,
+    Output("order-copy-toast", "data-dummy"),
     Input("order-detail-table", "active_cell"),
     State("order-detail-table", "data"),
     prevent_initial_call=True,
 )
-def copy_order_number(active_cell, data):
-    if not active_cell or active_cell.get("column_id") != "Order #":
-        raise dash.exceptions.PreventUpdate
-    row = active_cell.get("row", 0)
-    if row < len(data):
-        order_num = data[row].get("Order #", "")
-        toast = html.Div(f"Copied: {order_num}", style={
-            "backgroundColor": GREEN, "color": WHITE, "padding": "8px 16px",
-            "borderRadius": "6px", "fontSize": "13px", "fontWeight": "bold",
-        })
-        return order_num, toast
-    raise dash.exceptions.PreventUpdate
 
 
 # ── Refund Cost Override Callback ────────────────────────────────────────────
