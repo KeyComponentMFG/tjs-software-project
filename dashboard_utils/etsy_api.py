@@ -146,12 +146,12 @@ def _get_headers():
             raise
 
     token = _tokens['access_token'] or ""
-    # Token might already include "Bearer " prefix from Etsy response
+    # Strip any "Bearer " prefix if the token was stored with it
     if token.startswith("Bearer "):
         token = token[7:]
     return {
         "Authorization": f"Bearer {token}",
-        "x-api-key": ETSY_SHARED_SECRET,
+        "x-api-key": ETSY_API_KEY,
     }
 
 
@@ -177,6 +177,9 @@ def _load_tokens():
         raw = get_config_value("etsy_api_tokens")
         if raw:
             data = json.loads(raw) if isinstance(raw, str) else raw
+            # Clean any "Bearer " prefix that got stored accidentally
+            if data.get("access_token", "").startswith("Bearer "):
+                data["access_token"] = data["access_token"][7:]
             _tokens.update(data)
             _logger.info("Loaded Etsy tokens from Supabase (shop_id=%s)", _tokens.get("shop_id"))
             return True
