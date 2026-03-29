@@ -13406,6 +13406,137 @@ def _build_per_order_profit_section():
         dcc.Input(id="order-card-search", type="hidden", value=""),
     ], style={"display": "none"})
 
+    # ── Order Management Panels ──────────────────────────────────────────────
+    # Categorize orders for the management panels
+    _refund_orders = [o for o in _ledger_orders if o.get("_needs_manual_net")]
+    _canceled_orders = [o for o in _ledger_orders if "cancel" in (o.get("Status", "") or "").lower()
+                        and not o.get("Gross")]
+    _verified_count = len(_ledger_orders) - len(_refund_orders) - len(_canceled_orders)
+
+    # Status bar
+    _status_bar = html.Div([
+        html.Span(f"{_verified_count} verified ", style={"color": GREEN, "fontWeight": "bold"}),
+        html.Span("\u2713", style={"color": GREEN}),
+        html.Span(" | ", style={"color": GRAY}),
+        html.Span(f"{len(_refund_orders)} need earnings entry", style={"color": ORANGE, "fontWeight": "bold"}),
+        html.Span(" | ", style={"color": GRAY}),
+        html.Span(f"{len(_canceled_orders)} canceled", style={"color": GRAY, "fontWeight": "bold"}),
+    ], style={
+        "padding": "10px 16px", "margin": "20px 0 12px 0", "borderRadius": "8px",
+        "backgroundColor": f"{CARD}", "border": f"1px solid {DARKGRAY}44",
+        "fontSize": "13px", "fontFamily": "monospace",
+    })
+
+    # Panel 1: Refunded Orders — Enter Etsy Earnings (orange border)
+    _refund_rows = []
+    for _ro in _refund_orders:
+        _oid = str(_ro.get("Order ID", ""))
+        _refund_amt = _ro.get("Refund", 0) or 0
+        _current_net = _ro.get("True Net", 0) or 0
+        _refund_rows.append(html.Div([
+            html.Div([
+                html.Span(f"#{_oid}", style={"color": CYAN, "fontWeight": "bold", "marginRight": "12px", "minWidth": "110px", "display": "inline-block"}),
+                html.Span(_ro.get("Buyer", _ro.get("Full Name", "")), style={"color": WHITE, "marginRight": "12px", "minWidth": "100px", "display": "inline-block"}),
+                html.Span(_ro.get("Sale Date", ""), style={"color": GRAY, "marginRight": "12px", "minWidth": "80px", "display": "inline-block"}),
+                html.Span(f"Refund: -${abs(_refund_amt):,.2f}", style={"color": RED, "marginRight": "12px", "minWidth": "100px", "display": "inline-block"}),
+                html.Span(f"Current Net: ${_current_net:,.2f}", style={"color": ORANGE, "marginRight": "12px", "minWidth": "100px", "display": "inline-block"}),
+            ], style={"display": "flex", "alignItems": "center", "flexWrap": "wrap", "gap": "4px", "flex": "1"}),
+            html.Div([
+                html.Span("Etsy Earned $", style={"color": GRAY, "fontSize": "11px", "marginRight": "6px"}),
+                dcc.Input(
+                    id={"type": "refund-earned-input", "order": _oid},
+                    type="number", placeholder="0.00",
+                    style={
+                        "width": "90px", "fontSize": "12px", "backgroundColor": "#0a0f1e",
+                        "color": WHITE, "border": f"1px solid {ORANGE}66", "borderRadius": "4px",
+                        "padding": "4px 8px", "marginRight": "6px",
+                    },
+                ),
+                html.Button("Save", id={"type": "refund-earned-save", "order": _oid}, n_clicks=0,
+                             style={
+                                 "fontSize": "11px", "padding": "4px 12px", "borderRadius": "4px",
+                                 "backgroundColor": ORANGE, "color": "#000", "border": "none",
+                                 "cursor": "pointer", "fontWeight": "bold",
+                             }),
+            ], style={"display": "flex", "alignItems": "center"}),
+        ], style={
+            "display": "flex", "justifyContent": "space-between", "alignItems": "center",
+            "padding": "8px 12px", "borderBottom": f"1px solid {DARKGRAY}22",
+        }))
+
+    _panel1_content = _refund_rows if _refund_rows else [
+        html.P("No refunded orders need earnings entry.", style={"color": GRAY, "fontSize": "12px", "padding": "8px 12px"})
+    ]
+
+    _panel1 = html.Details([
+        html.Summary(f"Refunded Orders \u2014 Enter Etsy Earnings ({len(_refund_orders)})", style={
+            "color": ORANGE, "fontSize": "13px", "fontWeight": "bold", "cursor": "pointer",
+            "padding": "10px 14px", "outline": "none",
+        }),
+        html.Div(id="refund-earned-status", style={
+            "padding": "4px 14px", "fontSize": "12px", "minHeight": "20px",
+        }),
+        html.Div(_panel1_content, style={"maxHeight": "400px", "overflowY": "auto"}),
+    ], open=bool(_refund_rows), style={
+        "backgroundColor": CARD, "borderRadius": "8px", "marginBottom": "10px",
+        "border": f"1px solid {ORANGE}66",
+    })
+
+    # Panel 2: Unmatched Shipping Labels (blue border)
+    _panel2 = html.Details([
+        html.Summary("Unmatched Shipping Labels", style={
+            "color": BLUE, "fontSize": "13px", "fontWeight": "bold", "cursor": "pointer",
+            "padding": "10px 14px", "outline": "none",
+        }),
+        html.Div([
+            html.P("43 labels ($80.63) not matched to orders", style={
+                "color": WHITE, "fontSize": "12px", "padding": "4px 14px", "margin": "0",
+            }),
+            html.P("These include return labels, USPS adjustments, and insurance fees", style={
+                "color": GRAY, "fontSize": "11px", "padding": "2px 14px 10px 14px", "margin": "0",
+            }),
+        ]),
+    ], style={
+        "backgroundColor": CARD, "borderRadius": "8px", "marginBottom": "10px",
+        "border": f"1px solid {BLUE}66",
+    })
+
+    # Panel 3: Canceled Orders (gray border)
+    _cancel_rows = []
+    for _co in _canceled_orders:
+        _cancel_rows.append(html.Div([
+            html.Span(f"#{_co.get('Order ID', '')}", style={"color": GRAY, "fontWeight": "bold", "marginRight": "12px", "minWidth": "110px", "display": "inline-block"}),
+            html.Span(_co.get("Buyer", _co.get("Full Name", "")), style={"color": GRAY, "marginRight": "12px", "minWidth": "100px", "display": "inline-block"}),
+            html.Span(_co.get("Sale Date", ""), style={"color": DARKGRAY, "minWidth": "80px", "display": "inline-block"}),
+        ], style={"padding": "6px 12px", "borderBottom": f"1px solid {DARKGRAY}22"}))
+
+    _panel3_content = _cancel_rows if _cancel_rows else [
+        html.P("No canceled orders.", style={"color": GRAY, "fontSize": "12px", "padding": "8px 12px"})
+    ]
+
+    _panel3 = html.Details([
+        html.Summary(f"Canceled Orders ({len(_canceled_orders)})", style={
+            "color": GRAY, "fontSize": "13px", "fontWeight": "bold", "cursor": "pointer",
+            "padding": "10px 14px", "outline": "none",
+        }),
+        html.Div([
+            html.P("These orders were canceled before payment \u2014 not included in totals", style={
+                "color": DARKGRAY, "fontSize": "11px", "padding": "2px 14px 6px 14px", "margin": "0",
+            }),
+        ]),
+        html.Div(_panel3_content, style={"maxHeight": "300px", "overflowY": "auto"}),
+    ], style={
+        "backgroundColor": CARD, "borderRadius": "8px", "marginBottom": "10px",
+        "border": f"1px solid {DARKGRAY}66",
+    })
+
+    _management_panels = html.Div([
+        _status_bar,
+        _panel1,
+        _panel2,
+        _panel3,
+    ], style={"marginTop": "20px"})
+
     return html.Div([
         html.H3("ORDER DETAIL", style={
             "color": CYAN, "margin": "30px 0 6px 0", "fontSize": "14px",
@@ -13419,6 +13550,7 @@ def _build_per_order_profit_section():
         _search_bar,
         _order_table,
         _dummy_elements,
+        _management_panels,
     ])
 
 
@@ -13525,6 +13657,88 @@ def _build_order_table_data(orders):
             "_item_raw": _o.get("Item Names", ""),
         })
     return rows
+
+
+# ── Save Refund Earnings Callback ────────────────────────────────────────────
+@app.callback(
+    Output("refund-earned-status", "children"),
+    Input({"type": "refund-earned-save", "order": ALL}, "n_clicks"),
+    State({"type": "refund-earned-input", "order": ALL}, "value"),
+    prevent_initial_call=True,
+)
+def save_refund_earnings(all_clicks, all_values):
+    """Save manually entered Etsy earnings for refunded orders."""
+    import json as _json_refund
+    # Find which button was clicked
+    if not any(c for c in all_clicks if c):
+        raise dash.exceptions.PreventUpdate
+    ctx = dash.callback_context
+    if not ctx.triggered:
+        raise dash.exceptions.PreventUpdate
+
+    triggered_id = ctx.triggered[0]["prop_id"]
+    # Pattern-matching IDs look like: {"order":"12345","type":"refund-earned-save"}.n_clicks
+    try:
+        _id_str = triggered_id.rsplit(".", 1)[0]
+        _id_obj = _json_refund.loads(_id_str)
+        _clicked_order = str(_id_obj.get("order", ""))
+    except Exception:
+        raise dash.exceptions.PreventUpdate
+
+    if not _clicked_order:
+        raise dash.exceptions.PreventUpdate
+
+    # Find the matching value from the inputs
+    _earned_val = None
+    for i, inp_id in enumerate(ctx.states_list[0]):
+        if str(inp_id["id"].get("order", "")) == _clicked_order:
+            _earned_val = all_values[i]
+            break
+
+    if _earned_val is None or _earned_val == "":
+        return html.Span("Enter an amount first.", style={"color": ORANGE, "fontSize": "12px"})
+
+    try:
+        _earned_val = round(float(_earned_val), 2)
+    except (ValueError, TypeError):
+        return html.Span("Invalid amount.", style={"color": RED, "fontSize": "12px"})
+
+    # Load orders from Supabase
+    try:
+        from supabase_loader import get_config_value, _get_supabase_client
+        _raw = get_config_value("order_profit_ledger_keycomponentmfg")
+        if not _raw:
+            return html.Span("No order data found.", style={"color": RED, "fontSize": "12px"})
+        _orders = _json_refund.loads(_raw) if isinstance(_raw, str) else _raw
+
+        _updated = False
+        for _o in _orders:
+            if str(_o.get("Order ID", "")) == _clicked_order:
+                _old_net = _o.get("True Net", 0)
+                _o["True Net"] = _earned_val
+                _sale_price = _o.get("Sale Price", 0) or _o.get("Gross", 0) or 1
+                _o["Margin %"] = round(_earned_val / _sale_price * 100, 1) if _sale_price else 0
+                _o["_needs_manual_net"] = False
+                _o["_manual_override"] = True
+                _updated = True
+                break
+
+        if not _updated:
+            return html.Span(f"Order {_clicked_order} not found.", style={"color": RED, "fontSize": "12px"})
+
+        # Save back to Supabase
+        _client = _get_supabase_client()
+        _client.table("config").upsert({
+            "key": "order_profit_ledger_keycomponentmfg",
+            "value": _json_refund.dumps(_orders),
+        }, on_conflict="key").execute()
+
+        return html.Span(
+            f"Saved: Order #{_clicked_order} net updated to ${_earned_val:,.2f} (was ${_old_net:,.2f})",
+            style={"color": GREEN, "fontSize": "12px"},
+        )
+    except Exception as e:
+        return html.Span(f"Error: {str(e)}", style={"color": RED, "fontSize": "12px"})
 
 
 # ── Copy Order Number on Click ────────────────────────────────────────────────
