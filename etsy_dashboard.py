@@ -13483,18 +13483,68 @@ def _build_per_order_profit_section():
     })
 
     # Panel 2: Unmatched Shipping Labels (blue border)
+    _unmatched_labels = []
+    try:
+        from supabase_loader import get_config_value as _gcv_labels
+        import json as _json_labels
+        _raw_labels = _gcv_labels("unmatched_shipping_labels")
+        if _raw_labels:
+            _unmatched_labels = _json_labels.loads(_raw_labels) if isinstance(_raw_labels, str) else _raw_labels
+            _unmatched_labels = [u for u in _unmatched_labels if not u.get("assigned_to")]
+    except Exception:
+        pass
+
+    _label_total = sum(u.get("amount", 0) for u in _unmatched_labels)
+    _label_rows = []
+    _type_labels = {
+        "shipping_labels": "Outbound",
+        "shipping_labels_usps_return": "Return",
+        "shipping_label_insurance": "Insurance",
+        "shipping_label_usps_adjustment": "USPS Adj",
+        "shipping_label_globegistics_adjustment": "Intl Adj",
+        "shipping_label_refund": "Refund Credit",
+        "shipping_label_usps_adjustment_credit": "Adj Credit",
+    }
+    for _ul in _unmatched_labels[:50]:
+        _type_display = _type_labels.get(_ul.get("type", ""), _ul.get("type", ""))
+        _is_credit = "credit" in _ul.get("type", "").lower() or "refund" in _ul.get("type", "").lower()
+        _label_rows.append(html.Div([
+            html.Span(_ul.get("date", ""), style={"color": GRAY, "fontSize": "11px", "width": "80px", "flexShrink": "0"}),
+            html.Span(f"${_ul['amount']:.2f}", style={
+                "color": GREEN if _is_credit else RED, "fontSize": "12px", "fontFamily": "monospace",
+                "fontWeight": "bold", "width": "60px", "flexShrink": "0",
+            }),
+            html.Span(_type_display, style={"color": CYAN, "fontSize": "10px", "width": "70px", "flexShrink": "0"}),
+            dcc.Input(
+                id={"type": "label-assign-order-input", "label": _ul.get("label_id", "")},
+                type="text", placeholder="Order #",
+                style={"width": "110px", "fontSize": "11px", "backgroundColor": BG, "color": WHITE,
+                       "border": f"1px solid {DARKGRAY}44", "borderRadius": "4px", "padding": "4px 6px"},
+            ),
+            html.Button("Assign", id={"type": "label-assign-save-btn", "label": _ul.get("label_id", "")},
+                         n_clicks=0, style={
+                "fontSize": "10px", "padding": "4px 8px", "backgroundColor": f"{BLUE}25",
+                "border": f"1px solid {BLUE}", "borderRadius": "4px", "color": BLUE, "cursor": "pointer",
+            }),
+        ], style={"display": "flex", "alignItems": "center", "gap": "8px", "padding": "4px 14px",
+                   "borderBottom": f"1px solid {DARKGRAY}22"}))
+
     _panel2 = html.Details([
-        html.Summary("Unmatched Shipping Labels", style={
+        html.Summary(f"Unmatched Shipping Labels — {len(_unmatched_labels)} labels (${_label_total:.2f})", style={
             "color": BLUE, "fontSize": "13px", "fontWeight": "bold", "cursor": "pointer",
             "padding": "10px 14px", "outline": "none",
         }),
         html.Div([
-            html.P("43 labels ($80.63) not matched to orders", style={
-                "color": WHITE, "fontSize": "12px", "padding": "4px 14px", "margin": "0",
-            }),
-            html.P("These include return labels, USPS adjustments, and insurance fees", style={
-                "color": GRAY, "fontSize": "11px", "padding": "2px 14px 10px 14px", "margin": "0",
-            }),
+            html.Div(id="label-assign-status", style={"padding": "4px 14px", "minHeight": "16px"}),
+            html.Div([
+                html.Div([
+                    html.Span("Date", style={"width": "80px", "color": GRAY, "fontSize": "10px"}),
+                    html.Span("Amount", style={"width": "60px", "color": GRAY, "fontSize": "10px"}),
+                    html.Span("Type", style={"width": "70px", "color": GRAY, "fontSize": "10px"}),
+                    html.Span("Assign to Order", style={"color": GRAY, "fontSize": "10px"}),
+                ], style={"display": "flex", "gap": "8px", "padding": "4px 14px", "borderBottom": f"1px solid {DARKGRAY}44"}),
+                *_label_rows,
+            ], style={"maxHeight": "400px", "overflowY": "auto"}),
         ]),
     ], style={
         "backgroundColor": CARD, "borderRadius": "8px", "marginBottom": "10px",
@@ -13657,6 +13707,99 @@ def _build_order_table_data(orders):
             "_item_raw": _o.get("Item Names", ""),
         })
     return rows
+
+
+# ── Assign Label to Order Callback ────────────────────────────────────────────
+@app.callback(
+    Output("label-assign-status", "children"),
+    Input({"type": "label-assign-save-btn", "label": ALL}, "n_clicks"),
+    State({"type": "label-assign-order-input", "label": ALL}, "value"),
+    prevent_initial_call=True,
+)
+def assign_label_to_order(all_clicks, all_order_inputs):
+    """Assign an unmatched shipping label to a specific order."""
+    ctx = callback_context
+    if not ctx.triggered:
+        raise dash.exceptions.PreventUpdate
+
+    trigger = ctx.triggered[0]
+    if not trigger.get("value"):
+        raise dash.exceptions.PreventUpdate
+
+    try:
+        trigger_id = json.loads(trigger["prop_id"].split(".")[0])
+        label_id = trigger_id.get("label", "")
+    except Exception:
+        raise dash.exceptions.PreventUpdate
+
+    # Find the matching input value
+    idx = None
+    for i, inp in enumerate(ctx.inputs_list[0]):
+        if inp.get("id", {}).get("label") == label_id:
+            idx = i
+            break
+    if idx is None:
+        raise dash.exceptions.PreventUpdate
+
+    order_id = str(all_order_inputs[idx] or "").strip()
+    if not order_id:
+        return html.Span("Enter an order number first", style={"color": ORANGE, "fontSize": "12px"})
+
+    try:
+        from supabase_loader import get_config_value, _get_supabase_client
+
+        # Load unmatched labels
+        raw_labels = get_config_value("unmatched_shipping_labels")
+        labels = json.loads(raw_labels) if isinstance(raw_labels, str) else raw_labels
+
+        # Find the label
+        label_entry = next((l for l in labels if l.get("label_id") == label_id), None)
+        if not label_entry:
+            return html.Span(f"Label {label_id} not found", style={"color": RED, "fontSize": "12px"})
+
+        label_amount = label_entry.get("amount", 0)
+        label_type = label_entry.get("type", "")
+
+        # Load orders
+        raw_orders = get_config_value("order_profit_ledger_keycomponentmfg")
+        orders = json.loads(raw_orders) if isinstance(raw_orders, str) else raw_orders
+
+        # Find the order
+        order = next((o for o in orders if str(o.get("Order ID")) == order_id), None)
+        if not order:
+            return html.Span(f"Order #{order_id} not found", style={"color": RED, "fontSize": "12px"})
+
+        # Add label cost to the order
+        old_label = order.get("Shipping Label", 0)
+        order["Shipping Label"] = round(old_label + label_amount, 2)
+        order["Ship P/L"] = round(order.get("Buyer Shipping", 0) - order["Shipping Label"], 2)
+        order["True Net"] = round(order["True Net"] - label_amount, 2)
+        order["Margin %"] = round(order["True Net"] / order.get("Sale Price", 1) * 100, 1) if order.get("Sale Price") else 0
+
+        # Mark label as assigned
+        label_entry["assigned_to"] = order_id
+
+        # Save both
+        client = _get_supabase_client()
+        client.table("config").upsert({
+            "key": "order_profit_ledger_keycomponentmfg",
+            "value": json.dumps(orders),
+        }, on_conflict="key").execute()
+        client.table("config").upsert({
+            "key": "unmatched_shipping_labels",
+            "value": json.dumps(labels),
+        }, on_conflict="key").execute()
+
+        _type_short = {"shipping_labels": "Outbound", "shipping_labels_usps_return": "Return",
+                       "shipping_label_insurance": "Insurance", "shipping_label_usps_adjustment": "USPS Adj",
+                       "shipping_label_globegistics_adjustment": "Intl Adj"}.get(label_type, label_type)
+
+        return html.Span(
+            f"Assigned {_type_short} ${label_amount:.2f} to order #{order_id} — new label total: ${order['Shipping Label']:.2f}, net: ${order['True Net']:.2f}",
+            style={"color": GREEN, "fontSize": "12px"},
+        )
+    except Exception as e:
+        return html.Span(f"Error: {e}", style={"color": RED, "fontSize": "12px"})
 
 
 # ── Save Refund Earnings Callback ────────────────────────────────────────────
