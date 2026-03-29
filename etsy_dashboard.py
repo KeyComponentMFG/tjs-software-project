@@ -13225,7 +13225,7 @@ def _build_per_order_profit_section():
 
         _buyer_ship = _o.get("Buyer Shipping", 0) or 0
         _table_data.append({
-            "Order #": str(_o.get("Order ID", "")),
+            "Order #": f"#{_o.get('Order ID', '')}",
             "Date": _o.get("Sale Date", ""),
             "Buyer": _o.get("Buyer", _o.get("Full Name", "")),
             "Qty": _o.get("Qty", _o.get("Number of Items", 1)) or 1,
@@ -13235,7 +13235,7 @@ def _build_per_order_profit_section():
             "Ship In": f"${_buyer_ship:,.2f}" if _buyer_ship else "",
             "Fees": f"-${abs(_total_etsy_fees):,.2f}" if _total_etsy_fees else "",
             "Label $": f"-${abs(_label):,.2f}" if _label else "",
-            "Label ID": _o.get("Label ID", ""),
+            "Label ID": f"#{_o.get('Label ID', '')}" if _o.get("Label ID") else "",
             "Ads": f"-${abs(_ads):,.2f}" if _ads else "",
             "Refund": f"-${abs(_refund):,.2f}" if _refund else "",
             "Net": f"${_true_net:,.2f}",
@@ -13343,7 +13343,7 @@ def _build_per_order_profit_section():
             {"if": {"column_id": "Fees"}, "width": "75px", "textAlign": "right", "color": RED},
             {"if": {"column_id": "Ship In"}, "width": "65px", "textAlign": "right", "color": TEAL},
             {"if": {"column_id": "Label $"}, "width": "65px", "textAlign": "right", "color": RED},
-            {"if": {"column_id": "Label ID"}, "width": "110px", "fontSize": "10px", "color": GRAY},
+            {"if": {"column_id": "Label ID"}, "width": "110px", "fontSize": "10px", "color": CYAN, "cursor": "pointer"},
             {"if": {"column_id": "Ads"}, "width": "65px", "textAlign": "right", "color": RED},
             {"if": {"column_id": "Refund"}, "width": "70px", "textAlign": "right", "color": RED},
             {"if": {"column_id": "Net"}, "width": "80px", "textAlign": "right", "fontWeight": "bold"},
@@ -13522,7 +13522,8 @@ def _build_per_order_profit_section():
                 "fontWeight": "bold", "width": "60px", "flexShrink": "0",
             }),
             html.Span(_type_display, style={"color": CYAN, "fontSize": "10px", "width": "70px", "flexShrink": "0"}),
-            html.Span(_ul.get("label_id", ""), style={"color": DARKGRAY, "fontSize": "9px", "width": "110px", "flexShrink": "0", "fontFamily": "monospace"}),
+            html.Span(f"#{_ul.get('label_id', '')}", style={"color": CYAN, "fontSize": "9px", "width": "110px", "flexShrink": "0", "fontFamily": "monospace", "cursor": "pointer"},
+                       id={"type": "unmatched-label-copy", "label": _ul.get("label_id", "")}),
             dcc.Input(
                 id={"type": "label-assign-order-input", "label": _ul.get("label_id", "")},
                 type="text", placeholder="Order #",
@@ -13694,7 +13695,7 @@ def _build_order_table_data(orders):
         _fees = _o.get("Total Etsy Fees", 0)
 
         rows.append({
-            "Order #": str(_oid),
+            "Order #": f"#{_oid}",
             "Date": _o.get("Sale Date", ""),
             "Buyer": (_o.get("Buyer", "") or "")[:18],
             "Qty": _o.get("Qty", 1),
@@ -13704,7 +13705,7 @@ def _build_order_table_data(orders):
             "Ship In": _o.get("Buyer Shipping", 0) if _o.get("Buyer Shipping", 0) > 0 else None,
             "Fees": _fees,
             "Label $": _o.get("Shipping Label", 0) if _o.get("Shipping Label", 0) > 0 else None,
-            "Label ID": _o.get("Label ID", ""),
+            "Label ID": f"#{_o.get('Label ID', '')}" if _o.get("Label ID") else "",
             "Ads": _o.get("Offsite Ads", 0) if _o.get("Offsite Ads", 0) > 0 else None,
             "Refund": _o.get("Refund", 0) if _o.get("Refund", 0) > 0 else None,
             "Net": _net,
@@ -13898,17 +13899,17 @@ def save_refund_earnings(all_clicks, all_values):
 app.clientside_callback(
     """
     function(active_cell, derived_data) {
-        if (!active_cell || active_cell.column_id !== "Order #") {
-            return window.dash_clientside.no_update;
-        }
+        if (!active_cell) return window.dash_clientside.no_update;
+        var col = active_cell.column_id;
+        if (col !== "Order #" && col !== "Label ID") return window.dash_clientside.no_update;
         var row = active_cell.row;
         var data = derived_data || [];
         if (row >= 0 && row < data.length) {
-            var orderNum = String(data[row]["Order #"] || "");
-            if (orderNum && navigator.clipboard) {
-                navigator.clipboard.writeText(orderNum);
+            var val = String(data[row][col] || "");
+            if (val && navigator.clipboard) {
+                navigator.clipboard.writeText(val);
                 var toast = document.createElement("div");
-                toast.textContent = "Copied: " + orderNum;
+                toast.textContent = "Copied: " + val;
                 toast.style.cssText = "background:#2ecc71;color:#fff;padding:8px 16px;border-radius:6px;font-size:13px;font-weight:bold;";
                 var container = document.getElementById("order-copy-toast");
                 if (container) {
