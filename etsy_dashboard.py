@@ -13373,6 +13373,108 @@ def _build_per_order_profit_section():
 # ── REMOVED OLD CODE: order cards, refund editor, label assignment editor ──
 # All replaced by clean DataTable above. Dummy IDs preserved for callback compat.
 _REMOVED_OLD_ORDER_SECTION = True
+# ── Order Search Filter ───────────────────────────────────────────────────────
+@app.callback(
+    Output("order-detail-table", "data"),
+    Input("order-search-input", "value"),
+    prevent_initial_call=True,
+)
+def filter_order_table(search):
+    """Filter order table by buyer name, order #, or item name."""
+    if not search or not search.strip():
+        # Return all data — reload from Supabase
+        try:
+            from supabase_loader import get_config_value
+            import json as _json_search
+            raw = get_config_value("order_profit_ledger_keycomponentmfg")
+            if raw:
+                orders = _json_search.loads(raw) if isinstance(raw, str) else raw
+                return _build_order_table_data(orders)
+        except Exception:
+            pass
+        raise dash.exceptions.PreventUpdate
+
+    q = search.strip().lower()
+    try:
+        from supabase_loader import get_config_value
+        import json as _json_search
+        raw = get_config_value("order_profit_ledger_keycomponentmfg")
+        if not raw:
+            raise dash.exceptions.PreventUpdate
+        orders = _json_search.loads(raw) if isinstance(raw, str) else raw
+        filtered = [o for o in orders if
+                    q in str(o.get("Order ID", "")).lower() or
+                    q in (o.get("Buyer", "") or "").lower() or
+                    q in (o.get("Item Names", "") or "").lower() or
+                    q in (o.get("Variations", "") or "").lower()]
+        return _build_order_table_data(filtered)
+    except Exception:
+        raise dash.exceptions.PreventUpdate
+
+
+def _build_order_table_data(orders):
+    """Build table data rows from order list."""
+    from supabase_loader import get_config_value
+    import json as _json_tbl
+    # Load items for variations
+    _items_data = []
+    try:
+        _raw_it = get_config_value("order_csv_items_keycomponentmfg")
+        if _raw_it:
+            _items_data = _json_tbl.loads(_raw_it) if isinstance(_raw_it, str) else _raw_it
+    except Exception:
+        pass
+    _items_by_order = {}
+    for _it in _items_data:
+        _oid = str(_it.get("Order ID", ""))
+        if _oid:
+            _items_by_order.setdefault(_oid, []).append(_it)
+
+    rows = []
+    for _o in orders:
+        _oid = _o.get("Order ID", "")
+        _order_items = _items_by_order.get(str(_oid), [])
+        _var_parts = []
+        for _it in _order_items:
+            _var = _it.get("Variations", "")
+            if _var:
+                for _v in _var.split(", "):
+                    if ": " in _v:
+                        _prop, _val = _v.split(": ", 1)
+                        _var_parts.append(_val if _prop == "Custom Property" else _val)
+        _var_str = " / ".join(_var_parts) if _var_parts else _o.get("Variations", "")
+        _item = _o.get("Item Names", "")[:45]
+        if _var_str:
+            _item = f"{_item} ({_var_str})"
+
+        _net = _o.get("True Net", 0)
+        _margin = _o.get("Margin %", 0)
+        _fees = _o.get("Total Etsy Fees", 0)
+
+        rows.append({
+            "Order #": str(_oid),
+            "Date": _o.get("Sale Date", ""),
+            "Buyer": (_o.get("Buyer", "") or "")[:18],
+            "Qty": _o.get("Qty", 1),
+            "Item": _item[:60],
+            "List$": _o.get("Listing Price", 0),
+            "Disc": round(-_o.get("Discount", 0), 2) if _o.get("Discount", 0) > 0 else None,
+            "Fees": _fees,
+            "Label": _o.get("Shipping Label", 0) if _o.get("Shipping Label", 0) > 0 else None,
+            "Ads": _o.get("Offsite Ads", 0) if _o.get("Offsite Ads", 0) > 0 else None,
+            "Refund": _o.get("Refund", 0) if _o.get("Refund", 0) > 0 else None,
+            "Net": _net,
+            "Margin%": _margin,
+            "Status": (_o.get("Status", "") or "")[:8],
+            "_net_raw": _net,
+            "_margin_raw": _margin,
+            "_fees_raw": _fees,
+            "_buyer_raw": _o.get("Buyer", ""),
+            "_item_raw": _o.get("Item Names", ""),
+        })
+    return rows
+
+
 # ── Copy Order Number on Click ────────────────────────────────────────────────
 app.clientside_callback(
     """
