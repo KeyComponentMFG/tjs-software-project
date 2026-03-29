@@ -13800,6 +13800,10 @@ def assign_label_to_order(all_clicks, all_order_inputs):
         if not label_entry:
             return html.Span(f"Label {label_id} not found", style={"color": RED, "fontSize": "12px"})
 
+        # Prevent double-assignment
+        if label_entry.get("assigned_to"):
+            return html.Span(f"Already assigned to #{label_entry['assigned_to']}", style={"color": ORANGE, "fontSize": "12px"})
+
         label_amount = label_entry.get("amount", 0)
         label_type = label_entry.get("type", "")
 
