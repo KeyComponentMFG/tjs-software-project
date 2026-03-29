@@ -12044,6 +12044,34 @@ def etsy_sync_payments():
         return flask.jsonify({"error": str(e), "traceback": traceback.format_exc()}), 500
 
 
+@server.route("/api/etsy/sync-status")
+def etsy_sync_status():
+    """Get auto-sync status."""
+    from dashboard_utils.auto_sync import get_sync_status
+    return flask.jsonify(get_sync_status())
+
+
+@server.route("/api/etsy/sync-now")
+def etsy_sync_now():
+    """Trigger an immediate incremental sync."""
+    from dashboard_utils.auto_sync import run_incremental_sync
+    import threading as _th_sync
+    _th_sync.Thread(target=run_incremental_sync, daemon=True).start()
+    return flask.jsonify({"triggered": True, "message": "Sync started in background"})
+
+
+@server.route("/api/etsy/audit-all")
+def etsy_audit_all():
+    """Re-verify all non-manual orders against Payment API."""
+    from dashboard_utils.auto_sync import run_full_audit
+    from dashboard_utils.etsy_api import _tokens
+    shop_id = _tokens.get("shop_id")
+    if not shop_id:
+        return flask.jsonify({"error": "No shop_id"}), 400
+    result = run_full_audit(shop_id)
+    return flask.jsonify(result)
+
+
 @server.route("/api/etsy/disconnect")
 def etsy_disconnect():
     """Disconnect Etsy API — clears stored tokens."""
@@ -13164,6 +13192,51 @@ def _build_per_order_profit_section():
     # Sort newest first
     _ledger_orders.sort(key=lambda x: x.get("Sale Date", "") or "", reverse=True)
 
+    # Sync notification bar
+    _sync_bar = html.Div(style={"display": "none"})
+    try:
+        from dashboard_utils.auto_sync import get_sync_status as _gss
+        _ss = _gss()
+        _unmatched_n = len([l for l in _ledger_orders if False])  # placeholder
+        # Count actual unmatched labels
+        _raw_lbl_sync = _gcv("unmatched_shipping_labels")
+        _lbl_sync = _json_load.loads(_raw_lbl_sync) if isinstance(_raw_lbl_sync, str) else (_raw_lbl_sync or [])
+        _unmatched_n = len([l for l in _lbl_sync if not l.get("assigned_to")])
+        _needs_entry_n = len([o for o in _ledger_orders if o.get("_needs_manual_net")])
+        _has_issues = _unmatched_n > 0 or _needs_entry_n > 0
+
+        _last = _ss.get("last_run", "Never")
+        _bar_color = f"{ORANGE}22" if _has_issues else f"{GREEN}15"
+        _bar_border = ORANGE if _has_issues else GREEN
+        _bar_parts = []
+        if _last != "Never" and _last:
+            _bar_parts.append(html.Span(f"Last sync: {_last}", style={"color": GRAY, "fontSize": "11px"}))
+        if _unmatched_n > 0:
+            _bar_parts.append(html.Span(f"{_unmatched_n} unmatched labels", style={"color": ORANGE, "fontSize": "11px", "fontWeight": "bold"}))
+        if _needs_entry_n > 0:
+            _bar_parts.append(html.Span(f"{_needs_entry_n} need manual entry", style={"color": ORANGE, "fontSize": "11px", "fontWeight": "bold"}))
+        if not _has_issues:
+            _bar_parts.append(html.Span(f"All {len(_ledger_orders)} orders verified", style={"color": GREEN, "fontSize": "11px"}))
+        if _ss.get("error"):
+            _bar_parts.append(html.Span(f"Error: {_ss['error']}", style={"color": RED, "fontSize": "11px"}))
+
+        _bar_parts.append(html.A("Sync Now", href="/api/etsy/sync-now", target="_blank",
+                                  style={"color": CYAN, "fontSize": "10px", "marginLeft": "auto",
+                                         "textDecoration": "none", "padding": "3px 10px",
+                                         "border": f"1px solid {CYAN}44", "borderRadius": "4px"}))
+        _bar_parts.append(html.A("Audit", href="/api/etsy/audit-all", target="_blank",
+                                  style={"color": GREEN, "fontSize": "10px",
+                                         "textDecoration": "none", "padding": "3px 10px",
+                                         "border": f"1px solid {GREEN}44", "borderRadius": "4px"}))
+
+        _sync_bar = html.Div(_bar_parts, style={
+            "display": "flex", "alignItems": "center", "gap": "12px",
+            "padding": "6px 14px", "marginBottom": "10px", "borderRadius": "6px",
+            "backgroundColor": _bar_color, "border": f"1px solid {_bar_border}44",
+        })
+    except Exception:
+        pass
+
     # Compute KPIs
     _total_revenue = sum(o.get("Gross", 0) or 0 for o in _ledger_orders)
     _total_fees = sum(o.get("Total Etsy Fees", 0) or 0 for o in _ledger_orders)
@@ -13501,6 +13574,19 @@ def _build_per_order_profit_section():
     except Exception:
         pass
 
+    # Build searchable order options for dropdown: "Order# — Buyer — Date"
+    _order_options = []
+    try:
+        _raw_ord_dd = _gcv_labels("order_profit_ledger_keycomponentmfg")
+        _all_ord_dd = _json_labels.loads(_raw_ord_dd) if isinstance(_raw_ord_dd, str) else _raw_ord_dd
+        for _o_dd in sorted(_all_ord_dd, key=lambda x: x.get("Sale Date", ""), reverse=True):
+            _o_id = str(_o_dd.get("Order ID", ""))
+            _o_buyer = _o_dd.get("Buyer", "")
+            _o_date = _o_dd.get("Sale Date", "")
+            _order_options.append({"label": f"#{_o_id} — {_o_buyer} — {_o_date}", "value": _o_id})
+    except Exception:
+        pass
+
     _label_total = sum(u.get("amount", 0) for u in _unmatched_labels)
     _label_rows = []
     _type_labels = {
@@ -13516,29 +13602,29 @@ def _build_per_order_profit_section():
         _type_display = _type_labels.get(_ul.get("type", ""), _ul.get("type", ""))
         _is_credit = "credit" in _ul.get("type", "").lower() or "refund" in _ul.get("type", "").lower()
         _label_rows.append(html.Div([
-            html.Span(_ul.get("date", ""), style={"color": GRAY, "fontSize": "11px", "width": "80px", "flexShrink": "0"}),
+            html.Span(_ul.get("date", ""), style={"color": GRAY, "fontSize": "12px", "width": "85px", "flexShrink": "0"}),
             html.Span(f"${_ul['amount']:.2f}", style={
                 "color": GREEN if _is_credit else RED, "fontSize": "12px", "fontFamily": "monospace",
-                "fontWeight": "bold", "width": "60px", "flexShrink": "0",
+                "fontWeight": "bold", "width": "65px", "flexShrink": "0",
             }),
-            html.Span(_type_display, style={"color": CYAN, "fontSize": "10px", "width": "70px", "flexShrink": "0"}),
-            html.Span(
-                f"#{_ul.get('etsy_number', _ul.get('label_id', ''))}",
-                style={"color": CYAN, "fontSize": "9px", "width": "110px", "flexShrink": "0", "fontFamily": "monospace", "cursor": "pointer"},
-                id={"type": "unmatched-label-copy", "label": _ul.get("etsy_number", _ul.get("label_id", ""))},
-            ),
-            dcc.Input(
-                id={"type": "label-assign-order-input", "label": _ul.get("label_id", "")},
-                type="text", placeholder="Order #",
-                style={"width": "110px", "fontSize": "11px", "backgroundColor": BG, "color": WHITE,
-                       "border": f"1px solid {DARKGRAY}44", "borderRadius": "4px", "padding": "4px 6px"},
+            html.Span(_type_display, style={"color": CYAN, "fontSize": "11px", "width": "75px", "flexShrink": "0"}),
+            html.Div(
+                dcc.Dropdown(
+                    id={"type": "label-assign-order-input", "label": _ul.get("label_id", "")},
+                    options=_order_options,
+                    placeholder="Search buyer or order #...",
+                    searchable=True,
+                    clearable=True,
+                    style={"fontSize": "11px", "backgroundColor": BG, "color": WHITE},
+                ),
+                style={"width": "280px", "flexShrink": "0"},
             ),
             html.Button("Assign", id={"type": "label-assign-save-btn", "label": _ul.get("label_id", "")},
                          n_clicks=0, style={
                 "fontSize": "10px", "padding": "4px 8px", "backgroundColor": f"{BLUE}25",
                 "border": f"1px solid {BLUE}", "borderRadius": "4px", "color": BLUE, "cursor": "pointer",
             }),
-        ], style={"display": "flex", "alignItems": "center", "gap": "8px", "padding": "4px 14px",
+        ], style={"display": "flex", "alignItems": "center", "gap": "8px", "padding": "6px 14px",
                    "borderBottom": f"1px solid {DARKGRAY}22"}))
 
     _panel2 = html.Details([
@@ -13550,13 +13636,13 @@ def _build_per_order_profit_section():
             html.Div(id="label-assign-status", style={"padding": "4px 14px", "minHeight": "16px"}),
             html.Div([
                 html.Div([
-                    html.Span("Date", style={"width": "80px", "color": GRAY, "fontSize": "10px"}),
-                    html.Span("Amount", style={"width": "60px", "color": GRAY, "fontSize": "10px"}),
-                    html.Span("Type", style={"width": "70px", "color": GRAY, "fontSize": "10px"}),
-                    html.Span("Assign to Order", style={"color": GRAY, "fontSize": "10px"}),
+                    html.Span("Date", style={"width": "85px", "color": GRAY, "fontSize": "10px"}),
+                    html.Span("Amount", style={"width": "65px", "color": GRAY, "fontSize": "10px"}),
+                    html.Span("Type", style={"width": "75px", "color": GRAY, "fontSize": "10px"}),
+                    html.Span("Assign to Order (search by name or #)", style={"color": GRAY, "fontSize": "10px"}),
                 ], style={"display": "flex", "gap": "8px", "padding": "4px 14px", "borderBottom": f"1px solid {DARKGRAY}44"}),
                 *_label_rows,
-            ], style={"maxHeight": "400px", "overflowY": "auto"}),
+            ], style={"maxHeight": "500px", "overflowY": "auto"}),
         ]),
     ], style={
         "backgroundColor": CARD, "borderRadius": "8px", "marginBottom": "10px",
@@ -13600,6 +13686,7 @@ def _build_per_order_profit_section():
     ], style={"marginTop": "20px"})
 
     return html.Div([
+        _sync_bar,
         html.H3("ORDER DETAIL", style={
             "color": CYAN, "margin": "30px 0 6px 0", "fontSize": "14px",
             "letterSpacing": "1.5px", "borderTop": f"2px solid {CYAN}33", "paddingTop": "14px",
@@ -13723,33 +13810,7 @@ def _build_order_table_data(orders):
     return rows
 
 
-# ── Copy Unmatched Label ID on Click ──────────────────────────────────────────
-app.clientside_callback(
-    """
-    function(n_clicks) {
-        if (!n_clicks) return window.dash_clientside.no_update;
-        var triggered = window.dash_clientside.callback_context.triggered;
-        if (!triggered || !triggered.length) return window.dash_clientside.no_update;
-        var prop = triggered[0].prop_id;
-        try {
-            var id = JSON.parse(prop.split(".")[0]);
-            var labelId = "#" + id.label;
-            if (navigator.clipboard) {
-                navigator.clipboard.writeText(labelId);
-                var container = document.getElementById("label-assign-status");
-                if (container) {
-                    container.innerHTML = '<span style="color:#2ecc71;font-size:12px;font-weight:bold;">Copied: ' + labelId + '</span>';
-                    setTimeout(function() { container.innerHTML = ""; }, 2000);
-                }
-            }
-        } catch(e) {}
-        return window.dash_clientside.no_update;
-    }
-    """,
-    Output("label-assign-status", "data-copy-dummy"),
-    Input({"type": "unmatched-label-copy", "label": ALL}, "n_clicks"),
-    prevent_initial_call=True,
-)
+# (Label copy callback removed — replaced with searchable dropdown)
 
 
 # ── Assign Label to Order Callback ────────────────────────────────────────────
@@ -13786,7 +13847,7 @@ def assign_label_to_order(all_clicks, all_order_inputs):
 
     order_id = str(all_order_inputs[idx] or "").strip()
     if not order_id:
-        return html.Span("Enter an order number first", style={"color": ORANGE, "fontSize": "12px"})
+        return html.Span("Select an order first", style={"color": ORANGE, "fontSize": "12px"})
 
     try:
         from supabase_loader import get_config_value, _get_supabase_client
@@ -13816,11 +13877,16 @@ def assign_label_to_order(all_clicks, all_order_inputs):
         if not order:
             return html.Span(f"Order #{order_id} not found", style={"color": RED, "fontSize": "12px"})
 
-        # Add label cost to the order
+        # Add label cost to the order (credits/refunds reduce the cost)
         old_label = order.get("Shipping Label", 0)
-        order["Shipping Label"] = round(old_label + label_amount, 2)
+        is_credit = "credit" in label_type.lower() or "refund" in label_type.lower()
+        if is_credit:
+            order["Shipping Label"] = round(old_label - label_amount, 2)
+            order["True Net"] = round(order["True Net"] + label_amount, 2)
+        else:
+            order["Shipping Label"] = round(old_label + label_amount, 2)
+            order["True Net"] = round(order["True Net"] - label_amount, 2)
         order["Ship P/L"] = round(order.get("Buyer Shipping", 0) - order["Shipping Label"], 2)
-        order["True Net"] = round(order["True Net"] - label_amount, 2)
         order["Margin %"] = round(order["True Net"] / order.get("Sale Price", 1) * 100, 1) if order.get("Sale Price") else 0
 
         # Mark label as assigned

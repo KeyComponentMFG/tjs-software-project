@@ -22,3 +22,14 @@ def post_worker_init(worker):
 
     t = threading.Thread(target=_reload, daemon=True)
     t.start()
+
+    def _start_sync():
+        time.sleep(15)  # wait for app to be fully loaded
+        try:
+            from dashboard_utils.auto_sync import start_sync_loop
+            start_sync_loop(interval_seconds=1800)  # every 30 minutes
+            worker.log.info("Auto-sync loop started (30 min interval)")
+        except Exception as e:
+            worker.log.warning(f"Auto-sync start failed: {e}")
+
+    threading.Thread(target=_start_sync, daemon=True).start()

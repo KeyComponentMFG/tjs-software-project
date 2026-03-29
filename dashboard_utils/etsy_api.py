@@ -470,6 +470,24 @@ def get_all_ledger_entries(shop_id, days_back=365):
     return all_entries
 
 
+def get_ledger_entries_since(shop_id, since_timestamp):
+    """Fetch ledger entries from since_timestamp to now (for incremental sync)."""
+    now = int(time.time())
+    all_entries = []
+    offset = 0
+    while True:
+        data = get_ledger_entries(shop_id, since_timestamp, now, limit=100, offset=offset)
+        if not data or not data.get("results"):
+            break
+        all_entries.extend(data["results"])
+        if len(data["results"]) < 100:
+            break
+        offset += 100
+        time.sleep(0.25)
+    _logger.info("Incremental ledger: %d entries since %s", len(all_entries), since_timestamp)
+    return all_entries
+
+
 def build_order_profit_from_ledger(all_receipts, all_ledger_entries, all_items, payment_data=None):
     """Match ledger entries to orders and compute true P/L per order.
 
@@ -604,12 +622,13 @@ def build_order_profit_from_ledger(all_receipts, all_ledger_entries, all_items, 
             fin["gross"] += amount
         elif ledger_type == "PAYMENT_PROCESSING_FEE":
             fin["processing_fee"] += amount
-        elif ledger_type in ("transaction", "transaction_quantity",
-                             "shipping_transaction"):
+        elif ledger_type in ("transaction", "shipping_transaction"):
             # transaction = 6.5% on item price
-            # transaction_quantity = additional fee for qty > 1
             # shipping_transaction = 6.5% on shipping price
             fin["transaction_fee"] += amount
+        elif ledger_type == "transaction_quantity":
+            # $0.20 per extra item (listing renewal) — NOT part of per-order earnings
+            fin["listing_fee"] += amount
         elif ledger_type == "sales_tax":
             fin["sales_tax"] += amount
         elif ledger_type in ("offsite_ads_fee",):
