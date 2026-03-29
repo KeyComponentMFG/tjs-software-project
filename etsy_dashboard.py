@@ -13271,7 +13271,7 @@ def _build_per_order_profit_section():
             html.Div("Shipping Labels", style={"color": GRAY, "fontSize": "10px", "marginTop": "4px"}),
         ], style=_kpi_style),
         html.Div([
-            html.Div(f"{'+'if _total_ship_pl>=0 else ''}${_total_ship_pl:,.0f}", style={"color": _ship_pl_color, "fontSize": "18px", "fontWeight": "bold", "fontFamily": "monospace"}),
+            html.Div(f"+${_total_ship_pl:,.0f}" if _total_ship_pl >= 0 else f"-${abs(_total_ship_pl):,.0f}", style={"color": _ship_pl_color, "fontSize": "18px", "fontWeight": "bold", "fontFamily": "monospace"}),
             html.Div("Ship P/L", style={"color": GRAY, "fontSize": "10px", "marginTop": "4px"}),
         ], style=_kpi_style),
         html.Div([
@@ -13284,11 +13284,12 @@ def _build_per_order_profit_section():
         ], style=_kpi_style),
     ], style={"display": "flex", "gap": "6px", "flexWrap": "wrap", "marginBottom": "16px"})
 
-    # Build image URL lookup from inventory data
+    # Build image URL lookup from Etsy listing images (stored in Supabase)
     _img_lookup = {}
     try:
-        _imgs = _IMAGE_URLS if '_IMAGE_URLS' in dir() else {}
-        _img_lookup = _imgs
+        _raw_imgs = _gcv("order_listing_images")
+        if _raw_imgs:
+            _img_lookup = _json_load.loads(_raw_imgs) if isinstance(_raw_imgs, str) else _raw_imgs
     except Exception:
         pass
 
@@ -13320,9 +13321,9 @@ def _build_per_order_profit_section():
         _ship_state = _o.get("Ship State", "")
         _label_id = _o.get("Label ID", "")
 
-        # Image thumbnail
+        # Image thumbnail — look up by order ID
         _first_item = _item_names.split(" | ")[0].split("(")[0].strip()
-        _img_url = _img_lookup.get(_first_item, _img_lookup.get(_item_names, ""))
+        _img_url = _img_lookup.get(_oid, "")
         _thumb = html.Img(src=_img_url, style={"width": "44px", "height": "44px", "borderRadius": "6px", "objectFit": "cover"}) if _img_url else html.Div("?", style={"width": "44px", "height": "44px", "borderRadius": "6px", "backgroundColor": f"{DARKGRAY}44", "display": "flex", "alignItems": "center", "justifyContent": "center", "color": GRAY, "fontSize": "16px"})
 
         # Status badge
@@ -13338,12 +13339,21 @@ def _build_per_order_profit_section():
 
         # Shipping comparison
         _ship_section = []
+        _spl_str = f"+${_ship_pl:.2f}" if _ship_pl >= 0 else f"-${abs(_ship_pl):.2f}"
         if _buyer_ship > 0 or _label > 0:
             _ship_section = [
-                html.Span(f"Buyer paid ${_buyer_ship:.2f}", style={"color": GREEN if _buyer_ship > 0 else GRAY, "fontSize": "10px"}),
-                html.Span(" → ", style={"color": GRAY, "fontSize": "10px"}),
-                html.Span(f"Label ${_label:.2f}", style={"color": RED, "fontSize": "10px"}),
-                html.Span(f" = {'+'if _ship_pl>=0 else ''}${_ship_pl:.2f}", style={"color": _spl_color, "fontSize": "10px", "fontWeight": "bold"}),
+                html.Div([
+                    html.Span(f"Buyer: ", style={"color": GRAY, "fontSize": "10px"}),
+                    html.Span(f"${_buyer_ship:.2f}", style={"color": GREEN if _buyer_ship > 0 else GRAY, "fontSize": "10px", "fontWeight": "bold"}),
+                ]),
+                html.Div([
+                    html.Span(f"Label: ", style={"color": GRAY, "fontSize": "10px"}),
+                    html.Span(f"${_label:.2f}", style={"color": RED, "fontSize": "10px", "fontWeight": "bold"}),
+                ]),
+                html.Div([
+                    html.Span(f"P/L: ", style={"color": GRAY, "fontSize": "10px"}),
+                    html.Span(_spl_str, style={"color": _spl_color, "fontSize": "11px", "fontWeight": "bold"}),
+                ]),
             ]
 
         # Fee breakdown tooltip
@@ -13379,13 +13389,14 @@ def _build_per_order_profit_section():
             # Sale price
             html.Div([
                 html.Div(f"${_sale_price:.2f}", style={"color": WHITE, "fontSize": "13px", "fontWeight": "bold", "fontFamily": "monospace", "textAlign": "right"}),
-                html.Div(f"-${_discount:.2f} disc" if _discount else f"Qty: {_qty}", style={"color": GRAY, "fontSize": "9px", "textAlign": "right"}),
-            ], style={"width": "75px", "flexShrink": "0"}),
+                html.Div(f"x{_qty}" if _qty > 1 else "", style={"color": GRAY, "fontSize": "9px", "textAlign": "right"}),
+            ], style={"width": "70px", "flexShrink": "0"}),
 
             # Shipping comparison
-            html.Div([
-                html.Div(_ship_section if _ship_section else [html.Span("Free ship", style={"color": GRAY, "fontSize": "10px"})]),
-            ], style={"width": "200px", "flexShrink": "0"}),
+            html.Div(
+                _ship_section if _ship_section else [html.Span("Free ship", style={"color": GRAY, "fontSize": "10px"})],
+                style={"width": "110px", "flexShrink": "0"},
+            ),
 
             # Fees
             html.Div([
@@ -13433,15 +13444,16 @@ def _build_per_order_profit_section():
     })
 
     # Column header
+    _hdr_style = {"color": GRAY, "fontSize": "10px", "textTransform": "uppercase", "letterSpacing": "0.5px"}
     _col_header = html.Div([
-        html.Span("", style={"width": "44px"}),
-        html.Span("Order / Buyer", style={"minWidth": "200px", "color": GRAY, "fontSize": "10px", "textTransform": "uppercase"}),
-        html.Span("Item", style={"flex": "1", "minWidth": "150px", "color": GRAY, "fontSize": "10px", "textTransform": "uppercase"}),
-        html.Span("Sale", style={"width": "75px", "color": GRAY, "fontSize": "10px", "textTransform": "uppercase", "textAlign": "right"}),
-        html.Span("Shipping (Buyer → Label = P/L)", style={"width": "200px", "color": GRAY, "fontSize": "10px", "textTransform": "uppercase"}),
-        html.Span("Fees", style={"width": "100px", "color": GRAY, "fontSize": "10px", "textTransform": "uppercase", "textAlign": "right"}),
-        html.Span("", style={"width": "65px"}),
-        html.Span("Profit", style={"width": "80px", "color": GRAY, "fontSize": "10px", "textTransform": "uppercase", "textAlign": "right"}),
+        html.Span("", style={"width": "44px", "flexShrink": "0"}),
+        html.Span("Order / Buyer", style={**_hdr_style, "minWidth": "200px", "flexShrink": "0"}),
+        html.Span("Item", style={**_hdr_style, "flex": "1", "minWidth": "150px"}),
+        html.Span("Sale", style={**_hdr_style, "width": "70px", "flexShrink": "0", "textAlign": "right"}),
+        html.Span("Shipping", style={**_hdr_style, "width": "110px", "flexShrink": "0"}),
+        html.Span("Fees", style={**_hdr_style, "width": "100px", "flexShrink": "0", "textAlign": "right"}),
+        html.Span("", style={"width": "65px", "flexShrink": "0"}),
+        html.Span("Profit", style={**_hdr_style, "width": "80px", "flexShrink": "0", "textAlign": "right"}),
     ], style={"display": "flex", "alignItems": "center", "gap": "12px", "padding": "8px 14px", "borderBottom": f"2px solid {CYAN}33"})
 
     # Order table container with scrolling
