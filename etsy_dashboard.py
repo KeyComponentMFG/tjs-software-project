@@ -13221,7 +13221,7 @@ def _build_per_order_profit_section():
             id="order-search-input",
             type="text",
             placeholder="Search by buyer, order #, or item name...",
-            debounce=True,
+            debounce=False,
             style={
                 "flex": "1", "fontSize": "13px", "backgroundColor": "#0a0f1e",
                 "color": WHITE, "border": f"1px solid {DARKGRAY}44", "borderRadius": "6px",
