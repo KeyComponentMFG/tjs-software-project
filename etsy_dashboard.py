@@ -13238,10 +13238,11 @@ def _build_per_order_profit_section():
         pass
 
     # Compute KPIs
-    _total_revenue = sum(o.get("Gross", 0) or 0 for o in _ledger_orders)
+    _total_revenue = sum((o.get("Sale Price", 0) or 0) + (o.get("Buyer Shipping", 0) or 0) for o in _ledger_orders)
     _total_fees = sum(o.get("Total Etsy Fees", 0) or 0 for o in _ledger_orders)
     _total_labels = sum(o.get("Shipping Label", 0) or 0 for o in _ledger_orders)
     _total_net = sum(o.get("True Net", 0) or 0 for o in _ledger_orders)
+    _total_ship_pl = sum(o.get("Ship P/L", 0) or 0 for o in _ledger_orders)
     _order_count = len(_ledger_orders)
     _avg_margin = sum(o.get("Margin %", 0) or 0 for o in _ledger_orders) / _order_count if _order_count else 0
     _avg_net = _total_net / _order_count if _order_count else 0
@@ -13249,8 +13250,9 @@ def _build_per_order_profit_section():
     # Summary KPIs
     _kpi_style = {
         "backgroundColor": CARD, "borderRadius": "8px", "padding": "12px 16px",
-        "textAlign": "center", "flex": "1", "minWidth": "100px",
+        "textAlign": "center", "flex": "1", "minWidth": "90px",
     }
+    _ship_pl_color = GREEN if _total_ship_pl >= 0 else RED
     _kpi_row = html.Div([
         html.Div([
             html.Div(f"{_order_count}", style={"color": WHITE, "fontSize": "18px", "fontWeight": "bold", "fontFamily": "monospace"}),
@@ -13258,19 +13260,23 @@ def _build_per_order_profit_section():
         ], style=_kpi_style),
         html.Div([
             html.Div(f"${_total_revenue:,.0f}", style={"color": GREEN, "fontSize": "18px", "fontWeight": "bold", "fontFamily": "monospace"}),
-            html.Div("Gross Revenue", style={"color": GRAY, "fontSize": "10px", "marginTop": "4px"}),
+            html.Div("Revenue", style={"color": GRAY, "fontSize": "10px", "marginTop": "4px"}),
         ], style=_kpi_style),
         html.Div([
-            html.Div(f"${_total_fees:,.0f}", style={"color": RED, "fontSize": "18px", "fontWeight": "bold", "fontFamily": "monospace"}),
-            html.Div("Total Fees", style={"color": GRAY, "fontSize": "10px", "marginTop": "4px"}),
+            html.Div(f"-${_total_fees:,.0f}", style={"color": RED, "fontSize": "18px", "fontWeight": "bold", "fontFamily": "monospace"}),
+            html.Div("Etsy Fees", style={"color": GRAY, "fontSize": "10px", "marginTop": "4px"}),
         ], style=_kpi_style),
         html.Div([
-            html.Div(f"${_total_labels:,.0f}", style={"color": BLUE, "fontSize": "18px", "fontWeight": "bold", "fontFamily": "monospace"}),
-            html.Div("Total Labels", style={"color": GRAY, "fontSize": "10px", "marginTop": "4px"}),
+            html.Div(f"-${_total_labels:,.0f}", style={"color": RED, "fontSize": "18px", "fontWeight": "bold", "fontFamily": "monospace"}),
+            html.Div("Shipping Labels", style={"color": GRAY, "fontSize": "10px", "marginTop": "4px"}),
+        ], style=_kpi_style),
+        html.Div([
+            html.Div(f"{'+'if _total_ship_pl>=0 else ''}${_total_ship_pl:,.0f}", style={"color": _ship_pl_color, "fontSize": "18px", "fontWeight": "bold", "fontFamily": "monospace"}),
+            html.Div("Ship P/L", style={"color": GRAY, "fontSize": "10px", "marginTop": "4px"}),
         ], style=_kpi_style),
         html.Div([
             html.Div(f"${_total_net:,.0f}", style={"color": CYAN, "fontSize": "18px", "fontWeight": "bold", "fontFamily": "monospace"}),
-            html.Div("Total Net", style={"color": GRAY, "fontSize": "10px", "marginTop": "4px"}),
+            html.Div("Net Profit", style={"color": GRAY, "fontSize": "10px", "marginTop": "4px"}),
         ], style=_kpi_style),
         html.Div([
             html.Div(f"{_avg_margin:.1f}%", style={"color": GREEN if _avg_margin >= 50 else (ORANGE if _avg_margin >= 30 else RED), "fontSize": "18px", "fontWeight": "bold", "fontFamily": "monospace"}),
@@ -13278,72 +13284,132 @@ def _build_per_order_profit_section():
         ], style=_kpi_style),
     ], style={"display": "flex", "gap": "6px", "flexWrap": "wrap", "marginBottom": "16px"})
 
-    # Build table data for DataTable
-    _table_data = []
-    for _o in _ledger_orders:
-        _item_names = _o.get("Item Names", _o.get("Item Name", "")) or "Unknown"
-        _variations = _o.get("Variations", "")
-        _item_display = _item_names
-        if _variations:
-            _item_display = f"{_item_names} ({_variations})"
+    # Build image URL lookup from inventory data
+    _img_lookup = {}
+    try:
+        _imgs = _IMAGE_URLS if '_IMAGE_URLS' in dir() else {}
+        _img_lookup = _imgs
+    except Exception:
+        pass
 
-        _true_net = _o.get("True Net", 0) or 0
-        _margin_pct = _o.get("Margin %", 0) or 0
-        _total_etsy_fees = _o.get("Total Etsy Fees", 0) or 0
-        _label = _o.get("Shipping Label", 0) or 0
-        _ads = _o.get("Offsite Ads", 0) or 0
-        _refund = _o.get("Refund", 0) or 0
+    # Build order rows as clean HTML cards
+    _order_rows = []
+    for _idx, _o in enumerate(_ledger_orders):
+        _oid = str(_o.get("Order ID", ""))
+        _buyer = _o.get("Buyer", _o.get("Full Name", "")) or ""
+        _date = _o.get("Sale Date", "")
+        _item_names = _o.get("Item Names", _o.get("Item Name", "")) or "Unknown"
+        _variations = _o.get("Variations", "") or ""
+        _qty = _o.get("Qty", 1) or 1
         _listing_price = _o.get("Listing Price", 0) or 0
         _discount = _o.get("Discount", 0) or 0
-
+        _sale_price = _o.get("Sale Price", 0) or 0
         _buyer_ship = _o.get("Buyer Shipping", 0) or 0
-        _table_data.append({
-            "Order #": f"#{_o.get('Order ID', '')}",
-            "Date": _o.get("Sale Date", ""),
-            "Buyer": _o.get("Buyer", _o.get("Full Name", "")),
-            "Qty": _o.get("Qty", _o.get("Number of Items", 1)) or 1,
-            "Item": _item_display[:80],
-            "List$": f"${_listing_price:,.2f}" if _listing_price else "",
-            "Disc": f"-${abs(_discount):,.2f}" if _discount else "",
-            "Ship In": f"${_buyer_ship:,.2f}" if _buyer_ship else "",
-            "Fees": f"-${abs(_total_etsy_fees):,.2f}" if _total_etsy_fees else "",
-            "Label $": f"-${abs(_label):,.2f}" if _label else "",
-            "Label ID": f"#{_o.get('Label ID', '')}" if _o.get("Label ID") else "",
-            "Ads": f"-${abs(_ads):,.2f}" if _ads else "",
-            "Refund": f"-${abs(_refund):,.2f}" if _refund else "",
-            "Net": f"${_true_net:,.2f}",
-            "Margin%": f"{_margin_pct:.1f}%",
-            "Status": _o.get("Status", ""),
-            # Hidden raw values for sorting/filtering
-            "_net_raw": _true_net,
-            "_margin_raw": _margin_pct,
-            "_fees_raw": _total_etsy_fees,
-            "_buyer_raw": _o.get("Buyer", _o.get("Full Name", "")),
-            "_item_raw": _item_display,
-        })
+        _label = _o.get("Shipping Label", 0) or 0
+        _ship_pl = _o.get("Ship P/L", 0) or 0
+        _txn_fee = _o.get("Transaction Fee", 0) or 0
+        _proc_fee = _o.get("Processing Fee", 0) or 0
+        _ads = _o.get("Offsite Ads", 0) or 0
+        _total_etsy_fees = _o.get("Total Etsy Fees", 0) or 0
+        _refund = _o.get("Refund", 0) or 0
+        _true_net = _o.get("True Net", 0) or 0
+        _margin = _o.get("Margin %", 0) or 0
+        _status = _o.get("Status", "Completed")
+        _tracking = _o.get("Tracking", "")
+        _ship_country = _o.get("Ship Country", "")
+        _ship_state = _o.get("Ship State", "")
+        _label_id = _o.get("Label ID", "")
 
-    # Column definitions
-    _columns = [
-        {"name": "Order #", "id": "Order #"},
-        {"name": "Date", "id": "Date"},
-        {"name": "Buyer", "id": "Buyer"},
-        {"name": "Qty", "id": "Qty"},
-        {"name": "Item", "id": "Item"},
-        {"name": "List$", "id": "List$"},
-        {"name": "Disc", "id": "Disc"},
-        {"name": "Ship In", "id": "Ship In"},
-        {"name": "Fees", "id": "Fees"},
-        {"name": "Label $", "id": "Label $"},
-        {"name": "Label ID", "id": "Label ID"},
-        {"name": "Ads", "id": "Ads"},
-        {"name": "Refund", "id": "Refund"},
-        {"name": "Net", "id": "Net"},
-        {"name": "Margin%", "id": "Margin%"},
-        {"name": "Status", "id": "Status"},
-    ]
+        # Image thumbnail
+        _first_item = _item_names.split(" | ")[0].split("(")[0].strip()
+        _img_url = _img_lookup.get(_first_item, _img_lookup.get(_item_names, ""))
+        _thumb = html.Img(src=_img_url, style={"width": "44px", "height": "44px", "borderRadius": "6px", "objectFit": "cover"}) if _img_url else html.Div("?", style={"width": "44px", "height": "44px", "borderRadius": "6px", "backgroundColor": f"{DARKGRAY}44", "display": "flex", "alignItems": "center", "justifyContent": "center", "color": GRAY, "fontSize": "16px"})
 
-    # Hidden columns (raw values used for conditional styling)
-    _hidden_columns = ["_net_raw", "_margin_raw", "_fees_raw", "_buyer_raw", "_item_raw"]
+        # Status badge
+        _status_color = GREEN if _status == "Completed" else (ORANGE if "Refund" in _status else (GRAY if "Cancel" in _status else BLUE))
+        _status_badge = html.Span(_status, style={"fontSize": "9px", "padding": "2px 6px", "borderRadius": "3px", "backgroundColor": f"{_status_color}22", "color": _status_color, "fontWeight": "bold"})
+
+        # Net color
+        _net_color = GREEN if _true_net >= 0 else RED
+        # Margin color
+        _margin_color = GREEN if _margin >= 50 else (ORANGE if _margin >= 30 else RED)
+        # Ship P/L color
+        _spl_color = GREEN if _ship_pl >= 0 else RED
+
+        # Shipping comparison
+        _ship_section = []
+        if _buyer_ship > 0 or _label > 0:
+            _ship_section = [
+                html.Span(f"Buyer paid ${_buyer_ship:.2f}", style={"color": GREEN if _buyer_ship > 0 else GRAY, "fontSize": "10px"}),
+                html.Span(" → ", style={"color": GRAY, "fontSize": "10px"}),
+                html.Span(f"Label ${_label:.2f}", style={"color": RED, "fontSize": "10px"}),
+                html.Span(f" = {'+'if _ship_pl>=0 else ''}${_ship_pl:.2f}", style={"color": _spl_color, "fontSize": "10px", "fontWeight": "bold"}),
+            ]
+
+        # Fee breakdown tooltip
+        _fee_parts = []
+        if _txn_fee: _fee_parts.append(f"Txn: ${_txn_fee:.2f}")
+        if _proc_fee: _fee_parts.append(f"Proc: ${_proc_fee:.2f}")
+        if _ads: _fee_parts.append(f"Ads: ${_ads:.2f}")
+        _fee_detail = " | ".join(_fee_parts)
+
+        # Row background
+        _row_bg = "#1a2847" if _idx % 2 else CARD
+
+        _order_rows.append(html.Div([
+            # Thumbnail
+            html.Div(_thumb, style={"flexShrink": "0"}),
+
+            # Order info column
+            html.Div([
+                html.Div([
+                    html.Span(f"#{_oid}", style={"color": CYAN, "fontSize": "12px", "fontWeight": "bold", "fontFamily": "monospace"}),
+                    html.Span(f"  {_date}", style={"color": GRAY, "fontSize": "11px"}),
+                    _status_badge,
+                ], style={"display": "flex", "alignItems": "center", "gap": "8px"}),
+                html.Div(_buyer, style={"color": WHITE, "fontSize": "13px", "fontWeight": "500", "marginTop": "2px"}),
+            ], style={"minWidth": "200px", "flexShrink": "0"}),
+
+            # Item + Variations
+            html.Div([
+                html.Div(_first_item[:55], style={"color": WHITE, "fontSize": "12px", "overflow": "hidden", "textOverflow": "ellipsis", "whiteSpace": "nowrap"}),
+                html.Div(_variations[:60] if _variations else f"Qty: {_qty}", style={"color": GRAY, "fontSize": "10px", "marginTop": "1px"}),
+            ], style={"flex": "1", "minWidth": "150px", "maxWidth": "300px", "overflow": "hidden"}),
+
+            # Sale price
+            html.Div([
+                html.Div(f"${_sale_price:.2f}", style={"color": WHITE, "fontSize": "13px", "fontWeight": "bold", "fontFamily": "monospace", "textAlign": "right"}),
+                html.Div(f"-${_discount:.2f} disc" if _discount else f"Qty: {_qty}", style={"color": GRAY, "fontSize": "9px", "textAlign": "right"}),
+            ], style={"width": "75px", "flexShrink": "0"}),
+
+            # Shipping comparison
+            html.Div([
+                html.Div(_ship_section if _ship_section else [html.Span("Free ship", style={"color": GRAY, "fontSize": "10px"})]),
+            ], style={"width": "200px", "flexShrink": "0"}),
+
+            # Fees
+            html.Div([
+                html.Div(f"-${_total_etsy_fees:.2f}", style={"color": RED, "fontSize": "12px", "fontFamily": "monospace", "textAlign": "right"}),
+                html.Div(_fee_detail, style={"color": GRAY, "fontSize": "9px", "textAlign": "right"}),
+            ], style={"width": "100px", "flexShrink": "0"}),
+
+            # Refund (only if exists)
+            html.Div([
+                html.Div(f"-${abs(_refund):.2f}", style={"color": RED, "fontSize": "12px", "fontFamily": "monospace", "textAlign": "right"}),
+                html.Div("Refund", style={"color": GRAY, "fontSize": "9px", "textAlign": "right"}),
+            ] if _refund else [], style={"width": "65px", "flexShrink": "0"}),
+
+            # Net Profit + Margin
+            html.Div([
+                html.Div(f"${_true_net:.2f}", style={"color": _net_color, "fontSize": "14px", "fontWeight": "bold", "fontFamily": "monospace", "textAlign": "right"}),
+                html.Div(f"{_margin:.1f}%", style={"color": _margin_color, "fontSize": "11px", "fontWeight": "bold", "textAlign": "right"}),
+            ], style={"width": "80px", "flexShrink": "0"}),
+
+        ], style={
+            "display": "flex", "alignItems": "center", "gap": "12px",
+            "padding": "10px 14px", "backgroundColor": _row_bg,
+            "borderBottom": f"1px solid {DARKGRAY}22",
+        }, id={"type": "order-row-data", "idx": _oid}))
 
     # Search bar
     _search_bar = html.Div([
@@ -13366,111 +13432,34 @@ def _build_per_order_profit_section():
         "marginBottom": "12px", "padding": "0 2px",
     })
 
-    # DataTable with dark theme styling
-    _order_table = dash_table.DataTable(
+    # Column header
+    _col_header = html.Div([
+        html.Span("", style={"width": "44px"}),
+        html.Span("Order / Buyer", style={"minWidth": "200px", "color": GRAY, "fontSize": "10px", "textTransform": "uppercase"}),
+        html.Span("Item", style={"flex": "1", "minWidth": "150px", "color": GRAY, "fontSize": "10px", "textTransform": "uppercase"}),
+        html.Span("Sale", style={"width": "75px", "color": GRAY, "fontSize": "10px", "textTransform": "uppercase", "textAlign": "right"}),
+        html.Span("Shipping (Buyer → Label = P/L)", style={"width": "200px", "color": GRAY, "fontSize": "10px", "textTransform": "uppercase"}),
+        html.Span("Fees", style={"width": "100px", "color": GRAY, "fontSize": "10px", "textTransform": "uppercase", "textAlign": "right"}),
+        html.Span("", style={"width": "65px"}),
+        html.Span("Profit", style={"width": "80px", "color": GRAY, "fontSize": "10px", "textTransform": "uppercase", "textAlign": "right"}),
+    ], style={"display": "flex", "alignItems": "center", "gap": "12px", "padding": "8px 14px", "borderBottom": f"2px solid {CYAN}33"})
+
+    # Order table container with scrolling
+    _order_table = html.Div([
+        _col_header,
+        html.Div(
+            _order_rows,
+            id="order-rows-container",
+            style={"maxHeight": "700px", "overflowY": "auto"},
+        ),
+    ], style={"borderRadius": "8px", "border": f"1px solid {DARKGRAY}33", "overflow": "hidden"})
+
+    # Hidden DataTable for backward compat with search callback
+    _hidden_table = dash_table.DataTable(
         id="order-detail-table",
-        columns=_columns + [{"name": c, "id": c} for c in _hidden_columns],
-        hidden_columns=_hidden_columns,
-        data=_table_data,
-        page_size=50,
-        page_action="native",
-        sort_action="native",
-        sort_by=[{"column_id": "Date", "direction": "desc"}],
-        style_table={
-            "overflowX": "auto",
-            "borderRadius": "8px",
-            "border": f"1px solid {DARKGRAY}33",
-        },
-        style_header={
-            "backgroundColor": "#0a0f1e",
-            "color": GRAY,
-            "fontWeight": "bold",
-            "fontSize": "11px",
-            "textTransform": "uppercase",
-            "letterSpacing": "0.5px",
-            "borderBottom": f"2px solid {CYAN}33",
-            "padding": "10px 8px",
-            "textAlign": "left",
-        },
-        style_cell={
-            "backgroundColor": CARD,
-            "color": WHITE,
-            "fontSize": "12px",
-            "fontFamily": "monospace",
-            "padding": "8px 8px",
-            "borderBottom": f"1px solid {DARKGRAY}22",
-            "borderRight": "none",
-            "textAlign": "left",
-            "overflow": "hidden",
-            "textOverflow": "ellipsis",
-            "maxWidth": "200px",
-        },
-        style_cell_conditional=[
-            {"if": {"column_id": "Order #"}, "width": "110px", "color": CYAN, "cursor": "pointer"},
-            {"if": {"column_id": "Date"}, "width": "90px"},
-            {"if": {"column_id": "Buyer"}, "width": "120px", "fontFamily": "inherit"},
-            {"if": {"column_id": "Qty"}, "width": "40px", "textAlign": "center"},
-            {"if": {"column_id": "Item"}, "minWidth": "180px", "maxWidth": "280px", "fontFamily": "inherit"},
-            {"if": {"column_id": "List$"}, "width": "75px", "textAlign": "right"},
-            {"if": {"column_id": "Disc"}, "width": "65px", "textAlign": "right"},
-            {"if": {"column_id": "Fees"}, "width": "75px", "textAlign": "right", "color": RED},
-            {"if": {"column_id": "Ship In"}, "width": "65px", "textAlign": "right", "color": TEAL},
-            {"if": {"column_id": "Label $"}, "width": "65px", "textAlign": "right", "color": RED},
-            {"if": {"column_id": "Label ID"}, "width": "110px", "fontSize": "10px", "color": CYAN, "cursor": "pointer"},
-            {"if": {"column_id": "Ads"}, "width": "65px", "textAlign": "right", "color": RED},
-            {"if": {"column_id": "Refund"}, "width": "70px", "textAlign": "right", "color": RED},
-            {"if": {"column_id": "Net"}, "width": "80px", "textAlign": "right", "fontWeight": "bold"},
-            {"if": {"column_id": "Margin%"}, "width": "65px", "textAlign": "center"},
-            {"if": {"column_id": "Status"}, "width": "80px", "fontFamily": "inherit"},
-        ],
-        style_data_conditional=[
-            # Net column: green if positive
-            {
-                "if": {
-                    "filter_query": "{_net_raw} >= 0",
-                    "column_id": "Net",
-                },
-                "color": GREEN,
-            },
-            # Net column: red if negative
-            {
-                "if": {
-                    "filter_query": "{_net_raw} < 0",
-                    "column_id": "Net",
-                },
-                "color": RED,
-            },
-            # Margin: green >= 50%
-            {
-                "if": {
-                    "filter_query": "{_margin_raw} >= 50",
-                    "column_id": "Margin%",
-                },
-                "color": GREEN,
-            },
-            # Margin: orange 30-50%
-            {
-                "if": {
-                    "filter_query": "{_margin_raw} >= 30 && {_margin_raw} < 50",
-                    "column_id": "Margin%",
-                },
-                "color": ORANGE,
-            },
-            # Margin: red < 30%
-            {
-                "if": {
-                    "filter_query": "{_margin_raw} < 30",
-                    "column_id": "Margin%",
-                },
-                "color": RED,
-            },
-            # Alternating row backgrounds
-            {
-                "if": {"row_index": "odd"},
-                "backgroundColor": "#1a2847",
-            },
-        ],
-        style_as_list_view=True,
+        columns=[{"name": "x", "id": "x"}],
+        data=[],
+        style_table={"display": "none"},
     )
 
     # Dummy hidden elements for old callbacks that may still be registered
@@ -13698,6 +13687,7 @@ def _build_per_order_profit_section():
         _kpi_row,
         _search_bar,
         _order_table,
+        _hidden_table,
         _dummy_elements,
         _management_panels,
     ])
@@ -13706,43 +13696,31 @@ def _build_per_order_profit_section():
 # ── REMOVED OLD CODE: order cards, refund editor, label assignment editor ──
 # All replaced by clean DataTable above. Dummy IDs preserved for callback compat.
 _REMOVED_OLD_ORDER_SECTION = True
-# ── Order Search Filter ───────────────────────────────────────────────────────
-@app.callback(
+# ── Order Search Filter (clientside — filters visible HTML rows) ──────────────
+app.clientside_callback(
+    """
+    function(search) {
+        var container = document.getElementById("order-rows-container");
+        if (!container) return window.dash_clientside.no_update;
+        var rows = container.children;
+        var q = (search || "").toLowerCase();
+        var shown = 0;
+        for (var i = 0; i < rows.length; i++) {
+            var text = rows[i].textContent.toLowerCase();
+            if (!q || text.indexOf(q) !== -1) {
+                rows[i].style.display = "";
+                shown++;
+            } else {
+                rows[i].style.display = "none";
+            }
+        }
+        return window.dash_clientside.no_update;
+    }
+    """,
     Output("order-detail-table", "data"),
     Input("order-search-input", "value"),
     prevent_initial_call=True,
 )
-def filter_order_table(search):
-    """Filter order table by buyer name, order #, or item name."""
-    if not search or not search.strip():
-        # Return all data — reload from Supabase
-        try:
-            from supabase_loader import get_config_value
-            import json as _json_search
-            raw = get_config_value("order_profit_ledger_keycomponentmfg")
-            if raw:
-                orders = _json_search.loads(raw) if isinstance(raw, str) else raw
-                return _build_order_table_data(orders)
-        except Exception:
-            pass
-        raise dash.exceptions.PreventUpdate
-
-    q = search.strip().lower()
-    try:
-        from supabase_loader import get_config_value
-        import json as _json_search
-        raw = get_config_value("order_profit_ledger_keycomponentmfg")
-        if not raw:
-            raise dash.exceptions.PreventUpdate
-        orders = _json_search.loads(raw) if isinstance(raw, str) else raw
-        filtered = [o for o in orders if
-                    q in str(o.get("Order ID", "")).lower() or
-                    q in (o.get("Buyer", "") or "").lower() or
-                    q in (o.get("Item Names", "") or "").lower() or
-                    q in (o.get("Variations", "") or "").lower()]
-        return _build_order_table_data(filtered)
-    except Exception:
-        raise dash.exceptions.PreventUpdate
 
 
 def _build_order_table_data(orders):
