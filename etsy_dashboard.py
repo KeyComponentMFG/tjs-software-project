@@ -13368,56 +13368,55 @@ def _build_per_order_profit_section():
 
         _order_rows.append(html.Div([
             # Thumbnail
-            html.Div(_thumb, style={"flexShrink": "0"}),
+            html.Div(_thumb),
 
             # Order info column
             html.Div([
                 html.Div([
-                    html.Span(f"#{_oid}", style={"color": CYAN, "fontSize": "12px", "fontWeight": "bold", "fontFamily": "monospace"}),
-                    html.Span(f"  {_date}", style={"color": GRAY, "fontSize": "11px"}),
+                    html.Span(f"#{_oid}", style={"color": CYAN, "fontSize": "11px", "fontWeight": "bold", "fontFamily": "monospace"}),
+                    html.Span(f" {_date}", style={"color": GRAY, "fontSize": "10px"}),
                     _status_badge,
-                ], style={"display": "flex", "alignItems": "center", "gap": "8px"}),
-                html.Div(_buyer, style={"color": WHITE, "fontSize": "13px", "fontWeight": "500", "marginTop": "2px"}),
-            ], style={"minWidth": "200px", "flexShrink": "0"}),
+                ], style={"display": "flex", "alignItems": "center", "gap": "6px", "flexWrap": "wrap"}),
+                html.Div(_buyer, style={"color": WHITE, "fontSize": "12px", "fontWeight": "500", "marginTop": "2px"}),
+            ]),
 
             # Item + Variations
             html.Div([
                 html.Div(_first_item[:55], style={"color": WHITE, "fontSize": "12px", "overflow": "hidden", "textOverflow": "ellipsis", "whiteSpace": "nowrap"}),
                 html.Div(_variations[:60] if _variations else f"Qty: {_qty}", style={"color": GRAY, "fontSize": "10px", "marginTop": "1px"}),
-            ], style={"flex": "1", "minWidth": "150px", "maxWidth": "300px", "overflow": "hidden"}),
+            ], style={"overflow": "hidden"}),
 
             # Sale price
             html.Div([
                 html.Div(f"${_sale_price:.2f}", style={"color": WHITE, "fontSize": "13px", "fontWeight": "bold", "fontFamily": "monospace", "textAlign": "right"}),
                 html.Div(f"x{_qty}" if _qty > 1 else "", style={"color": GRAY, "fontSize": "9px", "textAlign": "right"}),
-            ], style={"width": "70px", "flexShrink": "0"}),
+            ]),
 
             # Shipping comparison
             html.Div(
                 _ship_section if _ship_section else [html.Span("Free ship", style={"color": GRAY, "fontSize": "10px"})],
-                style={"width": "110px", "flexShrink": "0"},
             ),
 
             # Fees
             html.Div([
                 html.Div(f"-${_total_etsy_fees:.2f}", style={"color": RED, "fontSize": "12px", "fontFamily": "monospace", "textAlign": "right"}),
                 html.Div(_fee_detail, style={"color": GRAY, "fontSize": "9px", "textAlign": "right"}),
-            ], style={"width": "100px", "flexShrink": "0"}),
+            ]),
 
             # Refund (only if exists)
             html.Div([
                 html.Div(f"-${abs(_refund):.2f}", style={"color": RED, "fontSize": "12px", "fontFamily": "monospace", "textAlign": "right"}),
                 html.Div("Refund", style={"color": GRAY, "fontSize": "9px", "textAlign": "right"}),
-            ] if _refund else [], style={"width": "65px", "flexShrink": "0"}),
+            ] if _refund else []),
 
             # Net Profit + Margin
             html.Div([
                 html.Div(f"${_true_net:.2f}", style={"color": _net_color, "fontSize": "14px", "fontWeight": "bold", "fontFamily": "monospace", "textAlign": "right"}),
                 html.Div(f"{_margin:.1f}%", style={"color": _margin_color, "fontSize": "11px", "fontWeight": "bold", "textAlign": "right"}),
-            ], style={"width": "80px", "flexShrink": "0"}),
+            ]),
 
         ], style={
-            "display": "flex", "alignItems": "center", "gap": "12px",
+            **_grid_style,
             "padding": "10px 14px", "backgroundColor": _row_bg,
             "borderBottom": f"1px solid {DARKGRAY}22",
         }, id={"type": "order-row-data", "idx": _oid}))
@@ -13443,18 +13442,20 @@ def _build_per_order_profit_section():
         "marginBottom": "12px", "padding": "0 2px",
     })
 
-    # Column header
+    # Grid template — shared between header and rows for perfect alignment
+    _grid_cols = "44px 200px 1fr 70px 110px 100px 65px 80px"
+    _grid_style = {"display": "grid", "gridTemplateColumns": _grid_cols, "gap": "12px", "alignItems": "center", "padding": "8px 14px"}
     _hdr_style = {"color": GRAY, "fontSize": "10px", "textTransform": "uppercase", "letterSpacing": "0.5px"}
     _col_header = html.Div([
-        html.Span("", style={"width": "44px", "flexShrink": "0"}),
-        html.Span("Order / Buyer", style={**_hdr_style, "minWidth": "200px", "flexShrink": "0"}),
-        html.Span("Item", style={**_hdr_style, "flex": "1", "minWidth": "150px"}),
-        html.Span("Sale", style={**_hdr_style, "width": "70px", "flexShrink": "0", "textAlign": "right"}),
-        html.Span("Shipping", style={**_hdr_style, "width": "110px", "flexShrink": "0"}),
-        html.Span("Fees", style={**_hdr_style, "width": "100px", "flexShrink": "0", "textAlign": "right"}),
-        html.Span("", style={"width": "65px", "flexShrink": "0"}),
-        html.Span("Profit", style={**_hdr_style, "width": "80px", "flexShrink": "0", "textAlign": "right"}),
-    ], style={"display": "flex", "alignItems": "center", "gap": "12px", "padding": "8px 14px", "borderBottom": f"2px solid {CYAN}33"})
+        html.Span(""),
+        html.Span("Order / Buyer", style=_hdr_style),
+        html.Span("Item", style=_hdr_style),
+        html.Span("Sale", style={**_hdr_style, "textAlign": "right"}),
+        html.Span("Shipping", style=_hdr_style),
+        html.Span("Fees", style={**_hdr_style, "textAlign": "right"}),
+        html.Span(""),
+        html.Span("Profit", style={**_hdr_style, "textAlign": "right"}),
+    ], style={**_grid_style, "borderBottom": f"2px solid {CYAN}33"})
 
     # Order table container with scrolling
     _order_table = html.Div([
