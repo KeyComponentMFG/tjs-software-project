@@ -13403,7 +13403,7 @@ def _build_per_order_profit_section():
     # Dummy hidden elements for old callbacks that may still be registered
     _dummy_elements = html.Div([
         html.Div(id="refund-editor-status", style={"display": "none"}),
-        html.Div(id="label-assign-status", style={"display": "none"}),
+        html.Div(id="label-assign-status-dummy", style={"display": "none"}),
         dcc.Input(id="label-assign-order", type="hidden", value=""),
         dcc.Input(id="label-assign-label", type="hidden", value=""),
         html.Button(id="label-assign-btn", n_clicks=0, style={"display": "none"}),
@@ -13718,6 +13718,35 @@ def _build_order_table_data(orders):
             "_item_raw": _o.get("Item Names", ""),
         })
     return rows
+
+
+# ── Copy Unmatched Label ID on Click ──────────────────────────────────────────
+app.clientside_callback(
+    """
+    function(n_clicks) {
+        if (!n_clicks) return window.dash_clientside.no_update;
+        var triggered = window.dash_clientside.callback_context.triggered;
+        if (!triggered || !triggered.length) return window.dash_clientside.no_update;
+        var prop = triggered[0].prop_id;
+        try {
+            var id = JSON.parse(prop.split(".")[0]);
+            var labelId = "#" + id.label;
+            if (navigator.clipboard) {
+                navigator.clipboard.writeText(labelId);
+                var container = document.getElementById("label-assign-status");
+                if (container) {
+                    container.innerHTML = '<span style="color:#2ecc71;font-size:12px;font-weight:bold;">Copied: ' + labelId + '</span>';
+                    setTimeout(function() { container.innerHTML = ""; }, 2000);
+                }
+            }
+        } catch(e) {}
+        return window.dash_clientside.no_update;
+    }
+    """,
+    Output("label-assign-status", "data-copy-dummy"),
+    Input({"type": "unmatched-label-copy", "label": ALL}, "n_clicks"),
+    prevent_initial_call=True,
+)
 
 
 # ── Assign Label to Order Callback ────────────────────────────────────────────
