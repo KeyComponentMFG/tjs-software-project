@@ -642,10 +642,15 @@ def build_order_profit_from_ledger(all_receipts, all_ledger_entries, all_items, 
 
     _logger.info("Label matching: %d matched, %d unmatched", _matched_labels, _unmatched_labels)
 
-    # Build final order list with full breakdown
+    # Build final order list — only REAL orders (have a receipt in receipt_lookup)
     result_orders = []
     for order_id, fin in order_financials.items():
         receipt = receipt_lookup.get(order_id, {})
+
+        # Skip fake entries — ledger entries that aren't real orders
+        # Real orders have a buyer name and sale date from the receipt
+        if not receipt.get("Buyer") and not receipt.get("Full Name") and not receipt.get("Sale Date"):
+            continue
 
         # Get item info
         order_items_list = [i for i in all_items if str(i.get("Order ID", "")) == order_id]
