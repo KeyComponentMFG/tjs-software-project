@@ -13522,8 +13522,11 @@ def _build_per_order_profit_section():
                 "fontWeight": "bold", "width": "60px", "flexShrink": "0",
             }),
             html.Span(_type_display, style={"color": CYAN, "fontSize": "10px", "width": "70px", "flexShrink": "0"}),
-            html.Span(f"#{_ul.get('label_id', '')}", style={"color": CYAN, "fontSize": "9px", "width": "110px", "flexShrink": "0", "fontFamily": "monospace", "cursor": "pointer"},
-                       id={"type": "unmatched-label-copy", "label": _ul.get("label_id", "")}),
+            html.Span(
+                f"#{_ul.get('etsy_number', _ul.get('label_id', ''))}",
+                style={"color": CYAN, "fontSize": "9px", "width": "110px", "flexShrink": "0", "fontFamily": "monospace", "cursor": "pointer"},
+                id={"type": "unmatched-label-copy", "label": _ul.get("etsy_number", _ul.get("label_id", ""))},
+            ),
             dcc.Input(
                 id={"type": "label-assign-order-input", "label": _ul.get("label_id", "")},
                 type="text", placeholder="Order #",
