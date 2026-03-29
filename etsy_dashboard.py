@@ -13223,6 +13223,7 @@ def _build_per_order_profit_section():
         _listing_price = _o.get("Listing Price", 0) or 0
         _discount = _o.get("Discount", 0) or 0
 
+        _buyer_ship = _o.get("Buyer Shipping", 0) or 0
         _table_data.append({
             "Order #": str(_o.get("Order ID", "")),
             "Date": _o.get("Sale Date", ""),
@@ -13231,8 +13232,10 @@ def _build_per_order_profit_section():
             "Item": _item_display[:80],
             "List$": f"${_listing_price:,.2f}" if _listing_price else "",
             "Disc": f"-${abs(_discount):,.2f}" if _discount else "",
+            "Ship In": f"${_buyer_ship:,.2f}" if _buyer_ship else "",
             "Fees": f"-${abs(_total_etsy_fees):,.2f}" if _total_etsy_fees else "",
-            "Label": f"-${abs(_label):,.2f}" if _label else "",
+            "Label $": f"-${abs(_label):,.2f}" if _label else "",
+            "Label ID": _o.get("Label ID", ""),
             "Ads": f"-${abs(_ads):,.2f}" if _ads else "",
             "Refund": f"-${abs(_refund):,.2f}" if _refund else "",
             "Net": f"${_true_net:,.2f}",
@@ -13255,8 +13258,10 @@ def _build_per_order_profit_section():
         {"name": "Item", "id": "Item"},
         {"name": "List$", "id": "List$"},
         {"name": "Disc", "id": "Disc"},
+        {"name": "Ship In", "id": "Ship In"},
         {"name": "Fees", "id": "Fees"},
-        {"name": "Label", "id": "Label"},
+        {"name": "Label $", "id": "Label $"},
+        {"name": "Label ID", "id": "Label ID"},
         {"name": "Ads", "id": "Ads"},
         {"name": "Refund", "id": "Refund"},
         {"name": "Net", "id": "Net"},
@@ -13336,7 +13341,9 @@ def _build_per_order_profit_section():
             {"if": {"column_id": "List$"}, "width": "75px", "textAlign": "right"},
             {"if": {"column_id": "Disc"}, "width": "65px", "textAlign": "right"},
             {"if": {"column_id": "Fees"}, "width": "75px", "textAlign": "right", "color": RED},
-            {"if": {"column_id": "Label"}, "width": "70px", "textAlign": "right", "color": RED},
+            {"if": {"column_id": "Ship In"}, "width": "65px", "textAlign": "right", "color": TEAL},
+            {"if": {"column_id": "Label $"}, "width": "65px", "textAlign": "right", "color": RED},
+            {"if": {"column_id": "Label ID"}, "width": "110px", "fontSize": "10px", "color": GRAY},
             {"if": {"column_id": "Ads"}, "width": "65px", "textAlign": "right", "color": RED},
             {"if": {"column_id": "Refund"}, "width": "70px", "textAlign": "right", "color": RED},
             {"if": {"column_id": "Net"}, "width": "80px", "textAlign": "right", "fontWeight": "bold"},
@@ -13515,6 +13522,7 @@ def _build_per_order_profit_section():
                 "fontWeight": "bold", "width": "60px", "flexShrink": "0",
             }),
             html.Span(_type_display, style={"color": CYAN, "fontSize": "10px", "width": "70px", "flexShrink": "0"}),
+            html.Span(_ul.get("label_id", ""), style={"color": DARKGRAY, "fontSize": "9px", "width": "110px", "flexShrink": "0", "fontFamily": "monospace"}),
             dcc.Input(
                 id={"type": "label-assign-order-input", "label": _ul.get("label_id", "")},
                 type="text", placeholder="Order #",
@@ -13693,8 +13701,10 @@ def _build_order_table_data(orders):
             "Item": _item[:60],
             "List$": _o.get("Listing Price", 0),
             "Disc": round(-_o.get("Discount", 0), 2) if _o.get("Discount", 0) > 0 else None,
+            "Ship In": _o.get("Buyer Shipping", 0) if _o.get("Buyer Shipping", 0) > 0 else None,
             "Fees": _fees,
-            "Label": _o.get("Shipping Label", 0) if _o.get("Shipping Label", 0) > 0 else None,
+            "Label $": _o.get("Shipping Label", 0) if _o.get("Shipping Label", 0) > 0 else None,
+            "Label ID": _o.get("Label ID", ""),
             "Ads": _o.get("Offsite Ads", 0) if _o.get("Offsite Ads", 0) > 0 else None,
             "Refund": _o.get("Refund", 0) if _o.get("Refund", 0) > 0 else None,
             "Net": _net,
