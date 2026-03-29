@@ -13293,6 +13293,10 @@ def _build_per_order_profit_section():
     except Exception:
         pass
 
+    # Grid template — shared between header and rows for perfect alignment
+    _grid_cols = "44px 200px 1fr 70px 110px 100px 65px 80px"
+    _grid_style = {"display": "grid", "gridTemplateColumns": _grid_cols, "gap": "12px", "alignItems": "center", "padding": "8px 14px"}
+
     # Build order rows as clean HTML cards
     _order_rows = []
     for _idx, _o in enumerate(_ledger_orders):
@@ -13442,9 +13446,6 @@ def _build_per_order_profit_section():
         "marginBottom": "12px", "padding": "0 2px",
     })
 
-    # Grid template — shared between header and rows for perfect alignment
-    _grid_cols = "44px 200px 1fr 70px 110px 100px 65px 80px"
-    _grid_style = {"display": "grid", "gridTemplateColumns": _grid_cols, "gap": "12px", "alignItems": "center", "padding": "8px 14px"}
     _hdr_style = {"color": GRAY, "fontSize": "10px", "textTransform": "uppercase", "letterSpacing": "0.5px"}
     _col_header = html.Div([
         html.Span(""),
