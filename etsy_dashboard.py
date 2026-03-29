@@ -11896,6 +11896,58 @@ def etsy_sync_full():
         return flask.jsonify({"error": str(e), "traceback": traceback.format_exc()}), 500
 
 
+@server.route("/api/etsy/set-earnings")
+def etsy_set_earnings():
+    """Manually set the 'You earned' amount for any order.
+    Usage: /api/etsy/set-earnings?order=3933696617&earned=18.35
+    """
+    from supabase_loader import get_config_value, _get_supabase_client
+    import json as _json_earn
+
+    order_id = flask.request.args.get("order", "")
+    earned = flask.request.args.get("earned", "")
+
+    if not order_id or not earned:
+        # Show all orders that need manual entry
+        raw = get_config_value("order_profit_ledger_keycomponentmfg")
+        if not raw:
+            return flask.jsonify({"error": "No order data"}), 400
+        orders = _json_earn.loads(raw) if isinstance(raw, str) else raw
+        needs_manual = [{"order": o["Order ID"], "buyer": o.get("Buyer", ""), "date": o.get("Sale Date", ""),
+                         "current_net": o["True Net"], "refund": o.get("Refund", 0)}
+                        for o in orders if o.get("_needs_manual_net")]
+        return flask.jsonify({"orders_needing_manual_entry": needs_manual, "count": len(needs_manual),
+                              "usage": "/api/etsy/set-earnings?order=ORDER_ID&earned=AMOUNT"})
+
+    try:
+        earned_val = float(earned)
+        raw = get_config_value("order_profit_ledger_keycomponentmfg")
+        orders = _json_earn.loads(raw) if isinstance(raw, str) else raw
+
+        updated = False
+        for o in orders:
+            if str(o.get("Order ID")) == str(order_id):
+                old_net = o["True Net"]
+                o["True Net"] = round(earned_val, 2)
+                o["Margin %"] = round(earned_val / o.get("Sale Price", 1) * 100, 1) if o.get("Sale Price") else 0
+                o["_needs_manual_net"] = False
+                o["_manual_override"] = True
+                updated = True
+
+                client = _get_supabase_client()
+                client.table("config").upsert({
+                    "key": "order_profit_ledger_keycomponentmfg",
+                    "value": _json_earn.dumps(orders),
+                }, on_conflict="key").execute()
+
+                return flask.jsonify({"success": True, "order": order_id, "old_net": old_net,
+                                      "new_net": earned_val})
+
+        return flask.jsonify({"error": f"Order {order_id} not found"}), 404
+    except Exception as e:
+        return flask.jsonify({"error": str(e)}), 500
+
+
 @server.route("/api/etsy/sync-payments")
 def etsy_sync_payments():
     """Fetch real payment data for all orders and update True Net values."""
