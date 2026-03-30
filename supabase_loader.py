@@ -128,7 +128,11 @@ def _load_config_from_supabase(client) -> dict:
         val = row["value"]
         # supabase-py usually auto-parses JSONB, but handle string case too
         if isinstance(val, str):
-            val = json.loads(val)
+            try:
+                val = json.loads(val)
+            except (json.JSONDecodeError, ValueError):
+                # Plain string value (not JSON) — use as-is
+                pass
         config[row["key"]] = val
     return config
 
