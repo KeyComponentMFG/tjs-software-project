@@ -18360,6 +18360,20 @@ def handle_datahub_upload(etsy_contents, orders_contents, listings_contents,
                 daemon=True,
             ).start()
 
+            # For non-KeyComp stores: auto-build profit ledger from CSV + statement data
+            # This converts the uploaded CSV into the same format as API data
+            if _upload_store != "keycomponentmfg":
+                def _build_store_ledger(_slug):
+                    import time as _t
+                    _t.sleep(3)  # wait for CSV save to complete
+                    try:
+                        from dashboard_utils.csv_order_builder import build_order_profit_from_csv
+                        _result = build_order_profit_from_csv(_slug)
+                        _logger.info("Auto-built profit ledger for %s: %d orders", _slug, len(_result) if _result else 0)
+                    except Exception as _e:
+                        _logger.warning("Auto-build profit ledger failed for %s: %s", _slug, _e)
+                threading.Thread(target=_build_store_ledger, args=(_upload_store,), daemon=True).start()
+
             # Show column preview so we can see what data is available
             _col_preview = ", ".join(_cols[:15])
             if len(_cols) > 15:
