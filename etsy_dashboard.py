@@ -13584,6 +13584,7 @@ def _build_per_order_profit_section(store_orders, store_info):
                         html.Button("Save", id={"type": "shipper-assign-btn", "order": _oid}, n_clicks=0,
                             style={"fontSize": "10px", "padding": "3px 8px", "backgroundColor": f"{BLUE}25",
                                    "border": f"1px solid {BLUE}", "borderRadius": "4px", "color": BLUE, "cursor": "pointer", "marginLeft": "6px"}),
+                                        html.Span(id={"type": "shipper-assign-status", "order": _oid}, style={"fontSize": "11px", "marginLeft": "6px"}),
                     ], style={**_detail_row_style, "alignItems": "center", "gap": "8px"}),
                     html.Div([html.Span("Ship Origin", style=_detail_label), html.Span(_o.get("Ship Origin", ""), style={**_detail_val, "fontSize": "10px"})], style=_detail_row_style) if _o.get("Ship Origin") else html.Div(),
                     html.Div([html.Span("Label ID", style=_detail_label), html.Span(f"#{_label_id}" if _label_id else "N/A", style={"color": CYAN if _label_id else GRAY, "fontSize": "10px", "fontFamily": "monospace"})], style=_detail_row_style),
@@ -14076,37 +14077,33 @@ _REMOVED_OLD_ORDER_SECTION = True
 
 # ── Assign Shipper (TJ/Braden) to Order ──────────────────────────────────────
 @app.callback(
-    Output("label-assign-status", "children", allow_duplicate=True),
-    Input({"type": "shipper-assign-btn", "order": ALL}, "n_clicks"),
-    State({"type": "shipper-assign-dd", "order": ALL}, "value"),
+    Output({"type": "shipper-assign-status", "order": MATCH}, "children"),
+    Output({"type": "shipper-assign-btn", "order": MATCH}, "children"),
+    Output({"type": "shipper-assign-btn", "order": MATCH}, "style"),
+    Input({"type": "shipper-assign-btn", "order": MATCH}, "n_clicks"),
+    State({"type": "shipper-assign-dd", "order": MATCH}, "value"),
     prevent_initial_call=True,
 )
-def assign_shipper_to_order(all_clicks, all_values):
+def assign_shipper_to_order(n_clicks, shipper_value):
     """Assign TJ or Braden to an order."""
+    if not n_clicks:
+        raise dash.exceptions.PreventUpdate
+
     ctx = callback_context
-    if not ctx.triggered:
-        raise dash.exceptions.PreventUpdate
-    trigger = ctx.triggered[0]
-    if not trigger.get("value"):
-        raise dash.exceptions.PreventUpdate
-    try:
-        trigger_id = json.loads(trigger["prop_id"].split(".")[0])
-        order_id = trigger_id.get("order", "")
-    except Exception:
+    trigger_id = ctx.triggered_id
+    order_id = trigger_id.get("order", "") if isinstance(trigger_id, dict) else ""
+
+    if not order_id:
         raise dash.exceptions.PreventUpdate
 
-    # Find the matching dropdown value
-    idx = None
-    for i, inp in enumerate(ctx.inputs_list[0]):
-        if inp.get("id", {}).get("order") == order_id:
-            idx = i
-            break
-    if idx is None:
-        raise dash.exceptions.PreventUpdate
-
-    shipper = str(all_values[idx] or "").strip()
+    shipper = str(shipper_value or "").strip()
     if shipper not in ("TJ", "Braden"):
-        return html.Span("Select TJ or Braden first", style={"color": ORANGE, "fontSize": "12px"})
+        return (
+            html.Span("Pick TJ or Braden first", style={"color": ORANGE}),
+            "Save",
+            {"fontSize": "10px", "padding": "3px 8px", "backgroundColor": f"{BLUE}25",
+             "border": f"1px solid {BLUE}", "borderRadius": "4px", "color": BLUE, "cursor": "pointer", "marginLeft": "6px"},
+        )
 
     try:
         from supabase_loader import get_config_value, _get_supabase_client
@@ -14121,13 +14118,26 @@ def assign_shipper_to_order(all_clicks, all_values):
                     "key": "order_profit_ledger_keycomponentmfg",
                     "value": json.dumps(orders),
                 }, on_conflict="key").execute()
-                return html.Span(
-                    f"Assigned #{order_id} to {shipper}",
-                    style={"color": GREEN, "fontSize": "12px"},
+                _color = CYAN if shipper == "TJ" else GREEN
+                return (
+                    html.Span(f" {shipper}", style={"color": _color, "fontWeight": "bold"}),
+                    "Saved",
+                    {"fontSize": "10px", "padding": "3px 8px", "backgroundColor": f"{GREEN}25",
+                     "border": f"1px solid {GREEN}", "borderRadius": "4px", "color": GREEN, "marginLeft": "6px"},
                 )
-        return html.Span(f"Order #{order_id} not found", style={"color": RED, "fontSize": "12px"})
+        return (
+            html.Span("Order not found", style={"color": RED}),
+            "Save",
+            {"fontSize": "10px", "padding": "3px 8px", "backgroundColor": f"{BLUE}25",
+             "border": f"1px solid {BLUE}", "borderRadius": "4px", "color": BLUE, "cursor": "pointer", "marginLeft": "6px"},
+        )
     except Exception as e:
-        return html.Span(f"Error: {e}", style={"color": RED, "fontSize": "12px"})
+        return (
+            html.Span(f"Error: {e}", style={"color": RED, "fontSize": "10px"}),
+            "Save",
+            {"fontSize": "10px", "padding": "3px 8px", "backgroundColor": f"{BLUE}25",
+             "border": f"1px solid {BLUE}", "borderRadius": "4px", "color": BLUE, "cursor": "pointer", "marginLeft": "6px"},
+        )
 
 
 # ── Order Search + Shipper Filter (clientside — filters visible HTML rows) ────
