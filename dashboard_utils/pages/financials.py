@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 from dashboard_utils.theme import *
 
 
-def build_tab3_financials():
+def build_tab3_financials(selected_store="all"):
     """Tab 3 - Financials: Full P&L + Cash Flow + Shipping + Monthly + Fees + Ledger"""
     import etsy_dashboard as ed
 
@@ -936,6 +936,6 @@ def build_tab3_financials():
         ], style={"marginBottom": "8px"}),
 
         # ══ PER-ORDER PROFIT ══
-        _build_per_order_profit_section(),
+        _build_per_order_profit_section(selected_store),
 
     ], style={"padding": TAB_PADDING})

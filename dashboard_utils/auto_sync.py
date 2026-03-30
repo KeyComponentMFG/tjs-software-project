@@ -2,11 +2,20 @@
 
 Runs every 30 minutes in a background daemon thread:
 - Fetches new receipts and ledger entries since last sync
-- Matches outbound labels by exact-second timestamp
+- Re-checks orders from last 7 days for status changes (cancellations/refunds)
+- Matches outbound labels by exact-second timestamp (±1s ONLY)
 - Chains adjustments/insurance via reference_id
 - Computes True Net from Payment API
-- Flags unmatched labels and refunded orders for manual review
+- Partial refund detection: auto-computes True Net when possible
+- Only flags full refunds (where we can't determine earnings) for manual review
+- Handles regulatory_operating_fee ledger type
+- Retry logic for 429 and 5xx API errors
+- Persists sync results to Supabase
 - NEVER touches manually overridden orders
+- NEVER overwrites _payment_verified orders unless re-verifying them
+- transaction_quantity goes to listing_fee, NOT transaction_fee
+- Credits/refunds (shipping_label_refund, shipping_label_usps_adjustment_credit)
+  go to refund bucket, NOT shipping_label
 """
 import json
 import logging
@@ -25,13 +34,69 @@ _sync_status = {
     "new_labels_matched": 0,
     "new_unmatched": 0,
     "needs_manual": 0,
+    "orders_updated": 0,
     "error": None,
 }
+
+# Retry constants
+_MAX_RETRIES = 2
+_RETRY_DELAY = 2  # seconds
 
 
 def get_sync_status():
     """Return current sync status for the notification bar."""
     return dict(_sync_status)
+
+
+def _api_call_with_retry(fn, *args, **kwargs):
+    """Wrap an API call with retry logic for 429 and 5xx errors.
+
+    Returns the function result on success, None on exhausted retries.
+    """
+    import requests
+
+    last_exc = None
+    for attempt in range(_MAX_RETRIES + 1):
+        try:
+            result = fn(*args, **kwargs)
+            return result
+        except requests.exceptions.HTTPError as e:
+            status = getattr(e.response, "status_code", None) if hasattr(e, "response") else None
+            if status and (status == 429 or 500 <= status < 600):
+                last_exc = e
+                if attempt < _MAX_RETRIES:
+                    _logger.warning("API call %s attempt %d failed with %s, retrying in %ds",
+                                    fn.__name__, attempt + 1, status, _RETRY_DELAY)
+                    time.sleep(_RETRY_DELAY)
+                    continue
+            raise
+        except Exception as e:
+            # Check if it's a requests response error embedded in the exception
+            resp = getattr(e, "response", None)
+            status = getattr(resp, "status_code", None) if resp is not None else None
+            if status and (status == 429 or 500 <= status < 600):
+                last_exc = e
+                if attempt < _MAX_RETRIES:
+                    _logger.warning("API call %s attempt %d failed with %s, retrying in %ds",
+                                    fn.__name__, attempt + 1, status, _RETRY_DELAY)
+                    time.sleep(_RETRY_DELAY)
+                    continue
+            raise
+
+    _logger.error("API call %s exhausted retries", fn.__name__)
+    return None
+
+
+def _safe_get_receipt_payments(shop_id, receipt_id):
+    """Fetch payment data with retry logic for transient failures."""
+    from dashboard_utils.etsy_api import get_receipt_payments
+    return _api_call_with_retry(get_receipt_payments, shop_id, int(receipt_id))
+
+
+def _safe_get_receipt_by_id(shop_id, receipt_id):
+    """Fetch a single receipt with retry logic."""
+    from dashboard_utils.etsy_api import get_receipt_by_id
+    return _api_call_with_retry(get_receipt_by_id, shop_id, int(receipt_id))
 
 
 def run_incremental_sync():
@@ -80,18 +145,9 @@ def _do_sync():
 
     _logger.info("Incremental sync since %s", datetime.fromtimestamp(last_ts).strftime("%Y-%m-%d %H:%M"))
 
-    # Fetch new data
+    # Fetch new data (with retry-safe wrappers for individual calls later)
     new_receipts = get_all_receipts(shop_id, min_created=last_ts)
     new_ledger = get_ledger_entries_since(shop_id, last_ts)
-
-    if not new_receipts and not new_ledger:
-        _logger.info("Nothing new since last sync")
-        _save_timestamp(int(time.time()))
-        _sync_status["error"] = None
-        _sync_status["last_result"] = "No new data"
-        return {"new_orders": 0, "new_entries": 0}
-
-    _logger.info("New receipts: %d, new ledger entries: %d", len(new_receipts), len(new_ledger))
 
     # Load existing data
     raw_orders = get_config_value("order_profit_ledger_keycomponentmfg")
@@ -101,6 +157,75 @@ def _do_sync():
     raw_labels = get_config_value("unmatched_shipping_labels")
     labels = json.loads(raw_labels) if isinstance(raw_labels, str) else (raw_labels or [])
     existing_label_ids = {l["label_id"] for l in labels}
+
+    # === Re-check recent orders (last 7 days) for status changes ===
+    orders_updated = 0
+    recheck_ts = int(time.time()) - (7 * 86400)
+    recent_order_ids = [
+        o for o in orders
+        if not o.get("_manual_override")
+        and o.get("Status") == "Completed"
+        and o.get("Sale Date")
+    ]
+    # Filter to orders from last 7 days
+    recent_to_check = []
+    for o in recent_order_ids:
+        try:
+            sale_dt = datetime.strptime(o["Sale Date"], "%m/%d/%Y")
+            if sale_dt.timestamp() >= recheck_ts:
+                recent_to_check.append(o)
+        except (ValueError, TypeError):
+            pass
+
+    if recent_to_check:
+        _logger.info("Re-checking %d recent orders for status changes", len(recent_to_check))
+        for o in recent_to_check:
+            rid = str(o["Order ID"])
+            try:
+                receipt = _safe_get_receipt_by_id(shop_id, rid)
+                if not receipt:
+                    continue
+
+                new_status = receipt.get("status", "")
+                is_now_refunded = new_status in ("refunded", "Refunded")
+                is_now_canceled = new_status in ("canceled", "Canceled")
+
+                if is_now_refunded or is_now_canceled:
+                    _logger.info("Order %s status changed to %s", rid, new_status)
+
+                    if is_now_canceled:
+                        o["Status"] = "Canceled"
+                        o["_needs_manual_net"] = True
+                        orders_updated += 1
+                    elif is_now_refunded:
+                        # Re-fetch payment to determine partial vs full refund
+                        pmt_data = _safe_get_receipt_payments(shop_id, rid)
+                        if pmt_data and pmt_data.get("results"):
+                            pmt = pmt_data["results"][0]
+                            refund = 0
+                            for adj in pmt.get("payment_adjustments", []):
+                                adj_amt = adj.get("total_adjustment_amount", 0)
+                                if adj_amt:
+                                    refund += adj_amt / 100.0
+                            o["Refund"] = round(refund, 2)
+                            o["Status"] = "Refunded"
+
+                            _apply_refund_logic(o, pmt, refund)
+                            orders_updated += 1
+
+                time.sleep(0.25)
+            except Exception as e:
+                _logger.warning("Re-check failed for order %s: %s", rid, e)
+
+    if not new_receipts and not new_ledger and orders_updated == 0:
+        _logger.info("Nothing new since last sync")
+        _save_timestamp(int(time.time()))
+        _sync_status["error"] = None
+        _sync_status["last_result"] = "No new data"
+        _persist_sync_results(0, 0, 0, 0, 0, len(orders))
+        return {"new_orders": 0, "new_entries": 0}
+
+    _logger.info("New receipts: %d, new ledger entries: %d", len(new_receipts), len(new_ledger))
 
     # === Process new receipts into orders ===
     new_order_count = 0
@@ -175,6 +300,7 @@ def _do_sync():
             "Transaction Fee": 0,
             "Processing Fee": 0,
             "Listing Fee": 0,
+            "Regulatory Fee": 0,
             "Offsite Ads": 0,
             "Total Etsy Fees": 0,
             "Shipping Label": 0,
@@ -190,7 +316,7 @@ def _do_sync():
             "Label ID": "",
             "_store": "keycomponentmfg",
             "_payment_verified": False,
-            "_needs_manual_net": is_refunded or is_canceled,
+            "_needs_manual_net": is_canceled,  # Only canceled gets flagged immediately; refunds checked via payment API
         }
 
         orders.append(order)
@@ -235,7 +361,7 @@ def _do_sync():
         if ref_id in existing_label_ids or ref_id in _label_id_to_order:
             continue
 
-        # Exact-second timestamp match
+        # Exact-second timestamp match (±1s ONLY — NEVER use proximity)
         order_id = ship_ts_to_receipt.get(ts)
         if not order_id:
             for delta in (1, -1):
@@ -265,7 +391,16 @@ def _do_sync():
             existing_label_ids.add(ref_id)
             new_unmatched += 1
 
-    # Pass 2: match new adjustments/insurance/returns via _label_id_to_order
+    # Pass 2: handle adjustments/insurance/returns via _label_id_to_order
+    # Credits/refunds go to the REFUND bucket, not shipping_label
+    _CREDIT_TYPES = {"shipping_label_refund", "shipping_label_usps_adjustment_credit"}
+    _ADDON_TYPES = {
+        "shipping_label_usps_adjustment",
+        "shipping_label_insurance",
+        "shipping_label_globegistics_adjustment",
+        "shipping_labels_usps_return",
+    }
+
     for entry in new_ledger:
         if entry.get("reference_type") != "shipping_label":
             continue
@@ -280,11 +415,20 @@ def _do_sync():
         if ref_id in existing_label_ids:
             continue
 
-        is_credit = lt in ("shipping_label_refund", "shipping_label_usps_adjustment_credit")
+        if lt in _CREDIT_TYPES:
+            # Credits/refunds go to the refund bucket — reduce shipping label cost
+            order_id = _label_id_to_order.get(ref_id)
+            if order_id and order_id in existing_ids:
+                o = existing_ids[order_id]
+                if not o.get("_manual_override"):
+                    # Credit reduces label cost
+                    o["Shipping Label"] = round(max(0, o.get("Shipping Label", 0) - amount), 2)
+                    o["Ship P/L"] = round(o.get("Buyer Shipping", 0) - o["Shipping Label"], 2)
+                    new_labels_matched += 1
+                    continue
 
-        if lt in ("shipping_label_usps_adjustment", "shipping_label_insurance",
-                   "shipping_label_globegistics_adjustment", "shipping_labels_usps_return"):
-            # Try to chain via _label_id_to_order
+        elif lt in _ADDON_TYPES:
+            # Additional charges chain via reference_id
             order_id = _label_id_to_order.get(ref_id)
             if order_id and order_id in existing_ids:
                 o = existing_ids[order_id]
@@ -338,7 +482,12 @@ def _do_sync():
 
         if lt in ("transaction", "shipping_transaction"):
             o["Transaction Fee"] = round(o.get("Transaction Fee", 0) + amount, 2)
+        elif lt == "regulatory_operating_fee":
+            # Regulatory operating fee goes to the transaction_fee bucket
+            o["Regulatory Fee"] = round(o.get("Regulatory Fee", 0) + amount, 2)
+            o["Transaction Fee"] = round(o.get("Transaction Fee", 0) + amount, 2)
         elif lt == "transaction_quantity":
+            # transaction_quantity goes to listing_fee, NOT transaction_fee
             o["Listing Fee"] = round(o.get("Listing Fee", 0) + amount, 2)
         elif lt == "offsite_ads_fee":
             o["Offsite Ads"] = round(o.get("Offsite Ads", 0) + amount, 2)
@@ -352,7 +501,7 @@ def _do_sync():
                 continue
 
             try:
-                pmt_data = get_receipt_payments(shop_id, int(rid))
+                pmt_data = _safe_get_receipt_payments(shop_id, rid)
                 if pmt_data and pmt_data.get("results"):
                     pmt = pmt_data["results"][0]
                     an = pmt.get("amount_net", {})
@@ -361,7 +510,16 @@ def _do_sync():
                     proc_fee = abs(af.get("amount", 0) / af.get("divisor", 100)) if isinstance(af, dict) else 0
 
                     o["Processing Fee"] = round(proc_fee, 2)
-                    o["Total Etsy Fees"] = round(o["Transaction Fee"] + o["Offsite Ads"] + proc_fee, 2)
+                    o["Total Etsy Fees"] = round(
+                        o["Transaction Fee"] + o["Offsite Ads"] + proc_fee, 2
+                    )
+
+                    # Compute Fee %: Total Etsy Fees / (Sale Price + Buyer Shipping) * 100
+                    fee_base = o.get("Sale Price", 0) + o.get("Buyer Shipping", 0)
+                    if fee_base > 0:
+                        o["Fee %"] = round(o["Total Etsy Fees"] / fee_base * 100, 1)
+                    else:
+                        o["Fee %"] = 0
 
                     # Check for refund
                     refund = 0
@@ -373,7 +531,7 @@ def _do_sync():
 
                     if refund > 0:
                         o["Status"] = "Refunded"
-                        o["_needs_manual_net"] = True
+                        _apply_refund_logic(o, pmt, refund)
                     else:
                         # True Net = amount_net - txn - ads - label
                         true_net = api_net - o["Transaction Fee"] - o["Offsite Ads"] - o["Shipping Label"]
@@ -409,19 +567,61 @@ def _do_sync():
         "new_labels_matched": new_labels_matched,
         "new_unmatched": new_unmatched,
         "needs_manual": needs_manual,
-        "last_result": f"{new_order_count} orders, {new_labels_matched} labels matched, {new_unmatched} unmatched",
+        "orders_updated": orders_updated,
+        "last_result": f"{new_order_count} orders, {new_labels_matched} labels matched, {new_unmatched} unmatched, {orders_updated} updated",
     })
 
-    _logger.info("Sync complete: %d new orders, %d labels matched, %d unmatched, %d need manual",
-                 new_order_count, new_labels_matched, new_unmatched, needs_manual)
+    # Persist sync results to Supabase for dashboard visibility across restarts
+    _persist_sync_results(new_order_count, new_labels_matched, new_unmatched,
+                          needs_manual, orders_updated, len(orders))
+
+    _logger.info("Sync complete: %d new orders, %d labels matched, %d unmatched, %d need manual, %d updated",
+                 new_order_count, new_labels_matched, new_unmatched, needs_manual, orders_updated)
 
     return {
         "new_orders": new_order_count,
         "new_labels_matched": new_labels_matched,
         "new_unmatched": new_unmatched,
         "needs_manual": needs_manual,
+        "orders_updated": orders_updated,
         "total_orders": len(orders),
     }
+
+
+def _apply_refund_logic(order, pmt, refund_amount):
+    """Determine if refund is partial or full. Auto-compute True Net for partial refunds.
+
+    Partial refund: refund_amount < sale_price — we can compute what was earned.
+    Full refund: refund_amount >= sale_price — need manual entry.
+    """
+    sale_price = order.get("Sale Price", 0)
+
+    if sale_price > 0 and refund_amount < sale_price:
+        # PARTIAL refund — auto-compute True Net
+        # Earnings = what they paid minus what was refunded minus fees minus label
+        an = pmt.get("amount_net", {})
+        api_net = an.get("amount", 0) / an.get("divisor", 100) if isinstance(an, dict) else 0
+
+        # api_net already accounts for the refund adjustment from Etsy's side
+        true_net = api_net - order.get("Transaction Fee", 0) - order.get("Offsite Ads", 0) - order.get("Shipping Label", 0)
+        order["True Net"] = round(true_net, 2)
+        order["Margin %"] = round(true_net / sale_price * 100, 1) if sale_price else 0
+
+        # Fee %
+        fee_base = sale_price + order.get("Buyer Shipping", 0)
+        if fee_base > 0:
+            order["Fee %"] = round(order.get("Total Etsy Fees", 0) / fee_base * 100, 1)
+
+        order["_payment_verified"] = True
+        order["_needs_manual_net"] = False
+        _logger.info("Partial refund on order %s: $%.2f of $%.2f — True Net auto-computed: $%.2f",
+                      order["Order ID"], refund_amount, sale_price, true_net)
+    else:
+        # FULL refund — can't determine earnings, flag for manual
+        order["_needs_manual_net"] = True
+        order["_payment_verified"] = False
+        _logger.info("Full refund on order %s: $%.2f — needs manual entry",
+                      order["Order ID"], refund_amount)
 
 
 def _save_timestamp(ts):
@@ -431,6 +631,49 @@ def _save_timestamp(ts):
         "key": "auto_sync_last_timestamp",
         "value": str(ts),
     }, on_conflict="key").execute()
+
+
+def _persist_sync_results(new_orders, labels_matched, unmatched, needs_manual, updated, total):
+    """Save sync results to Supabase so the dashboard can display last sync info after restart."""
+    from supabase_loader import save_config_value
+    try:
+        result = {
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "new_orders": new_orders,
+            "labels_matched": labels_matched,
+            "unmatched": unmatched,
+            "needs_manual": needs_manual,
+            "orders_updated": updated,
+            "total_orders": total,
+        }
+        save_config_value("auto_sync_last_result", json.dumps(result))
+    except Exception as e:
+        _logger.warning("Failed to persist sync results: %s", e)
+
+
+def load_persisted_sync_status():
+    """Load last sync results from Supabase (called at startup)."""
+    from supabase_loader import get_config_value
+    try:
+        raw = get_config_value("auto_sync_last_result")
+        if raw:
+            data = json.loads(raw) if isinstance(raw, str) else raw
+            _sync_status["last_run"] = data.get("timestamp")
+            _sync_status["new_orders"] = data.get("new_orders", 0)
+            _sync_status["new_labels_matched"] = data.get("labels_matched", 0)
+            _sync_status["new_unmatched"] = data.get("unmatched", 0)
+            _sync_status["needs_manual"] = data.get("needs_manual", 0)
+            _sync_status["orders_updated"] = data.get("orders_updated", 0)
+            _sync_status["last_result"] = (
+                f"{data.get('new_orders', 0)} orders, "
+                f"{data.get('labels_matched', 0)} labels matched, "
+                f"{data.get('unmatched', 0)} unmatched, "
+                f"{data.get('orders_updated', 0)} updated"
+            )
+            return data
+    except Exception as e:
+        _logger.warning("Failed to load persisted sync status: %s", e)
+    return None
 
 
 def run_full_audit(shop_id):
@@ -450,7 +693,7 @@ def run_full_audit(shop_id):
 
     for o in normal:
         try:
-            data = get_receipt_payments(shop_id, o["Order ID"])
+            data = _safe_get_receipt_payments(shop_id, o["Order ID"])
             if not data or not data.get("results"):
                 errors += 1
                 continue
@@ -491,6 +734,9 @@ def run_full_audit(shop_id):
 
 def start_sync_loop(interval_seconds=1800):
     """Start the background sync loop. Runs in a daemon thread."""
+    # Load persisted status from last run on startup
+    load_persisted_sync_status()
+
     def _loop():
         _logger.info("Auto-sync loop started (every %d seconds)", interval_seconds)
         while True:

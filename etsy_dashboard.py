@@ -13162,20 +13162,36 @@ def _build_ship_type():
 
 
 
-def _build_per_order_profit_section():
+def _build_per_order_profit_section(selected_store="all"):
     """Build the per-order detail section for the Financials tab.
 
-    Clean DataTable approach using ledger-based profit data from Supabase.
+    Supports multiple stores: KeyComp (API), Aurvio (CSV), Luna&Links (CSV).
     Formula: True Net = payment_API_amount_net - transaction_fee - offsite_ads - shipping_label
     """
-    # Load ledger-based profit data from Supabase
+    from supabase_loader import get_config_value as _gcv
+    import json as _json_load
+
+    # Store config: slug -> Supabase key
+    _store_keys = {
+        "keycomponentmfg": "order_profit_ledger_keycomponentmfg",
+        "aurvio": "order_profit_ledger_aurvio",
+        "lunalinks": "order_profit_ledger_lunalinks",
+    }
+
+    # Load order data based on store selection
     _ledger_orders = []
     try:
-        from supabase_loader import get_config_value as _gcv
-        import json as _json_load
-        _raw = _gcv("order_profit_ledger_keycomponentmfg")
-        if _raw:
-            _ledger_orders = _json_load.loads(_raw) if isinstance(_raw, str) else _raw
+        if selected_store and selected_store != "all" and selected_store in _store_keys:
+            _raw = _gcv(_store_keys[selected_store])
+            if _raw:
+                _ledger_orders = _json_load.loads(_raw) if isinstance(_raw, str) else _raw
+        else:
+            # Load all stores
+            for _sk in _store_keys.values():
+                _raw = _gcv(_sk)
+                if _raw:
+                    _parsed = _json_load.loads(_raw) if isinstance(_raw, str) else _raw
+                    _ledger_orders.extend(_parsed)
     except Exception:
         pass
 
@@ -13297,17 +13313,19 @@ def _build_per_order_profit_section():
     _grid_cols = "44px 200px 1fr 70px 110px 100px 65px 80px"
     _grid_style = {"display": "grid", "gridTemplateColumns": _grid_cols, "gap": "12px", "alignItems": "center", "padding": "8px 14px"}
 
-    # Build labels-per-order lookup for detail view
+    # Build labels-per-order lookup for detail view (all stores)
     _labels_by_order = {}
-    try:
-        _raw_lbl_detail = _gcv("unmatched_shipping_labels")
-        _all_labels_detail = _json_load.loads(_raw_lbl_detail) if isinstance(_raw_lbl_detail, str) else (_raw_lbl_detail or [])
-        for _lb in _all_labels_detail:
-            _assigned = str(_lb.get("assigned_to", "") or "")
-            if _assigned:
-                _labels_by_order.setdefault(_assigned, []).append(_lb)
-    except Exception:
-        pass
+    _label_keys = ["unmatched_shipping_labels", "unmatched_shipping_labels_aurvio", "unmatched_shipping_labels_lunalinks"]
+    for _lk in _label_keys:
+        try:
+            _raw_lbl_detail = _gcv(_lk)
+            _all_labels_detail = _json_load.loads(_raw_lbl_detail) if isinstance(_raw_lbl_detail, str) else (_raw_lbl_detail or [])
+            for _lb in _all_labels_detail:
+                _assigned = str(_lb.get("assigned_to", "") or "")
+                if _assigned:
+                    _labels_by_order.setdefault(_assigned, []).append(_lb)
+        except Exception:
+            pass
 
     # Type labels for display
     _type_names = {
@@ -13356,6 +13374,16 @@ def _build_per_order_profit_section():
         # Status badge
         _status_color = GREEN if _status == "Completed" else (ORANGE if "Refund" in _status else (GRAY if "Cancel" in _status else BLUE))
         _status_badge = html.Span(_status, style={"fontSize": "9px", "padding": "2px 6px", "borderRadius": "3px", "backgroundColor": f"{_status_color}22", "color": _status_color, "fontWeight": "bold"})
+
+        # Data source badge
+        _data_src = _o.get("_data_source", "api" if _o.get("_payment_verified") else "")
+        _store_slug = _o.get("_store", "keycomponentmfg")
+        _store_names = {"keycomponentmfg": "KeyComp", "aurvio": "Aurvio", "lunalinks": "Luna&Links"}
+        _src_badge = html.Span()
+        if _data_src == "csv":
+            _src_badge = html.Span("CSV", style={"fontSize": "8px", "padding": "1px 5px", "borderRadius": "3px", "backgroundColor": f"{ORANGE}22", "color": ORANGE})
+        elif _o.get("_payment_verified"):
+            _src_badge = html.Span("Verified", style={"fontSize": "8px", "padding": "1px 5px", "borderRadius": "3px", "backgroundColor": f"{GREEN}22", "color": GREEN})
 
         # Net color
         _net_color = GREEN if _true_net >= 0 else RED
@@ -13479,7 +13507,7 @@ def _build_per_order_profit_section():
                         html.Div([
                             html.Span(f"#{_oid}", style={"color": CYAN, "fontSize": "11px", "fontWeight": "bold", "fontFamily": "monospace"}),
                             html.Span(f" {_date}", style={"color": GRAY, "fontSize": "10px"}),
-                            _status_badge,
+                            _status_badge, _src_badge,
                         ], style={"display": "flex", "alignItems": "center", "gap": "6px", "flexWrap": "wrap"}),
                         html.Div(_buyer, style={"color": WHITE, "fontSize": "12px", "fontWeight": "500", "marginTop": "2px"}),
                     ]),
@@ -15450,7 +15478,7 @@ def render_active_tab(tab, _strict_flag, _upload_trigger, _selected_store, _dh_a
     elif tab == "tab-deep-dive":
         return html.Div([stale_banner, store_banner, build_tab2_deep_dive()])
     elif tab == "tab-financials":
-        return html.Div([stale_banner, store_banner, build_tab3_financials()])
+        return html.Div([stale_banner, store_banner, build_tab3_financials(_selected_store)])
     elif tab == "tab-inventory":
         return html.Div([stale_banner, store_banner, build_tab4_inventory()])
     elif tab == "tab-tax-forms":
