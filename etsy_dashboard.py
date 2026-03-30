@@ -450,6 +450,7 @@ def _apply_store_filter(store="all"):
     global gross_sales, total_refunds, net_sales, total_fees
     global total_shipping_cost, total_marketing, total_taxes, total_payments
     global order_count, avg_order, total_buyer_fees
+    global etsy_net, etsy_net_earned, etsy_net_margin
 
     # Initialize StateManager on first call
     if _DATA_ALL is None:
@@ -545,6 +546,20 @@ def _apply_store_filter(store="all"):
                 _state_manager.set_store_filter("all")
         except Exception as _e:
             _logger.warning("API overlay for 'all' failed: %s", _e)
+
+    # Recompute etsy_net from the (possibly API-overridden) globals
+    etsy_net_earned = (gross_sales - total_fees - total_shipping_cost - total_marketing
+                       - total_refunds - total_taxes - total_buyer_fees + total_payments)
+    etsy_net = etsy_net_earned
+    etsy_net_margin = (etsy_net / gross_sales * 100) if gross_sales else 0
+
+    # Recompute derived metrics that depend on the globals we just set
+    try:
+        _recompute_analytics()
+        _recompute_valuation()
+        _recompute_tax_years()
+    except Exception:
+        pass
 
     # Profit and profit_margin are business-level metrics (bank-derived).
     # They stay the same regardless of store selection because all stores
