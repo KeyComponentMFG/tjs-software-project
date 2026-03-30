@@ -515,6 +515,8 @@ def _apply_store_filter(store="all"):
             _logger.warning("API state build failed, falling back to statement: %s", _e)
 
     elif store == "all":
+        # For "all": build KeyComp from API, get Aurvio+Luna from statement,
+        # then override ALL globals with the combined numbers
         try:
             from supabase_loader import get_config_value as _gcv_api
             import json as _json_api
@@ -529,21 +531,33 @@ def _apply_store_filter(store="all"):
                     statement_data=_DATA_ALL,
                     labels_data=_labels,
                 )
-                # Subtract KeyComp statement data, add API data
+                # Get Aurvio+Luna statement totals (subtract KeyComp from "all")
                 _stmt_kc = _state_manager.set_store_filter("keycomponentmfg")
-                gross_sales = (gross_sales - _stmt_kc.gross_sales) + _api_state.gross_sales
-                total_refunds = (total_refunds - _stmt_kc.total_refunds) + _api_state.total_refunds
-                total_fees = (total_fees - _stmt_kc.total_fees) + _api_state.total_fees
-                total_shipping_cost = (total_shipping_cost - _stmt_kc.total_shipping_cost) + _api_state.total_shipping_cost
-                total_marketing = (total_marketing - _stmt_kc.total_marketing) + _api_state.total_marketing
-                order_count = (order_count - _stmt_kc.order_count) + _api_state.order_count
+                _stmt_all = _state_manager.set_store_filter("all")  # re-get "all" state
+
+                # Aurvio+Luna = "all" statement minus KeyComp statement
+                _other_gross = _stmt_all.gross_sales - _stmt_kc.gross_sales
+                _other_fees = _stmt_all.total_fees - _stmt_kc.total_fees
+                _other_ship = _stmt_all.total_shipping_cost - _stmt_kc.total_shipping_cost
+                _other_mkt = _stmt_all.total_marketing - _stmt_kc.total_marketing
+                _other_refunds = _stmt_all.total_refunds - _stmt_kc.total_refunds
+                _other_orders = _stmt_all.order_count - _stmt_kc.order_count
+
+                # Combined = API KeyComp + Statement Aurvio/Luna
+                gross_sales = _api_state.gross_sales + _other_gross
+                total_fees = _api_state.total_fees + _other_fees
+                total_shipping_cost = _api_state.total_shipping_cost + _other_ship
+                total_marketing = _api_state.total_marketing + _other_mkt
+                total_refunds = _api_state.total_refunds + _other_refunds
+                order_count = _api_state.order_count + _other_orders
                 net_sales = gross_sales - total_fees
                 avg_order = gross_sales / order_count if order_count else 0
+                total_taxes = _stmt_all.total_taxes
+                total_payments = _stmt_all.total_payments
+                total_buyer_fees = _stmt_all.total_buyer_fees
                 buyer_paid_shipping = _api_state.buyer_paid_shipping
                 shipping_profit = _api_state.shipping_profit
                 shipping_margin = _api_state.shipping_margin
-                # Re-set store filter back to "all" for DataFrames
-                _state_manager.set_store_filter("all")
         except Exception as _e:
             _logger.warning("API overlay for 'all' failed: %s", _e)
 
