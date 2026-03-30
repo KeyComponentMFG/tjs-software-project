@@ -13301,31 +13301,53 @@ def _build_per_order_profit_section(store_orders, store_info):
     # Sort newest first
     _ledger_orders.sort(key=lambda x: x.get("Sale Date", "") or "", reverse=True)
 
-    # Sync notification bar
+    # Sync notification bar — shows what needs your attention
     _sync_bar = html.Div(style={"display": "none"})
     try:
         from dashboard_utils.auto_sync import get_sync_status as _gss
         _ss = _gss()
-        _unmatched_n = len([l for l in _ledger_orders if False])  # placeholder
-        # Count actual unmatched labels
+
+        # Also try loading persisted status if in-memory is empty
+        if not _ss.get("last_run"):
+            _raw_sync_status = _gcv("auto_sync_status")
+            if _raw_sync_status:
+                _persisted = _json_load.loads(_raw_sync_status) if isinstance(_raw_sync_status, str) else _raw_sync_status
+                if _persisted.get("timestamp"):
+                    _ss["last_run"] = _persisted["timestamp"]
+                    _ss.update({k: _persisted.get(k, 0) for k in ("new_orders", "needs_manual", "unmatched", "no_label", "paid_orders")})
+
+        # Count from actual data
         _raw_lbl_sync = _gcv("unmatched_shipping_labels")
         _lbl_sync = _json_load.loads(_raw_lbl_sync) if isinstance(_raw_lbl_sync, str) else (_raw_lbl_sync or [])
         _unmatched_n = len([l for l in _lbl_sync if not l.get("assigned_to")])
         _needs_entry_n = len([o for o in _ledger_orders if o.get("_needs_manual_net")])
-        _has_issues = _unmatched_n > 0 or _needs_entry_n > 0
+        _paid_n = len([o for o in _ledger_orders if o.get("Status") == "Paid"])
+        _no_label_n = len([o for o in _ledger_orders if not o.get("Label ID") and o.get("Status") == "Completed"
+                           and not o.get("_manual_override") and str(o.get("Order ID", "")) not in ("3889351854", "3842441750")])
+        _verified_n = len([o for o in _ledger_orders if o.get("_payment_verified")])
+
+        _has_issues = _unmatched_n > 0 or _needs_entry_n > 0 or _paid_n > 0 or _no_label_n > 0
 
         _last = _ss.get("last_run", "Never")
         _bar_color = f"{ORANGE}22" if _has_issues else f"{GREEN}15"
         _bar_border = ORANGE if _has_issues else GREEN
+
         _bar_parts = []
-        if _last != "Never" and _last:
-            _bar_parts.append(html.Span(f"Last sync: {_last}", style={"color": GRAY, "fontSize": "11px"}))
+        if _last and _last != "Never":
+            _bar_parts.append(html.Span(f"Sync: {_last}", style={"color": GRAY, "fontSize": "11px"}))
+
+        # Show what needs attention
+        if _paid_n > 0:
+            _bar_parts.append(html.Span(f"{_paid_n} to ship", style={"color": BLUE, "fontSize": "11px", "fontWeight": "bold"}))
+        if _no_label_n > 0:
+            _bar_parts.append(html.Span(f"{_no_label_n} need labels", style={"color": ORANGE, "fontSize": "11px", "fontWeight": "bold"}))
         if _unmatched_n > 0:
             _bar_parts.append(html.Span(f"{_unmatched_n} unmatched labels", style={"color": ORANGE, "fontSize": "11px", "fontWeight": "bold"}))
         if _needs_entry_n > 0:
-            _bar_parts.append(html.Span(f"{_needs_entry_n} need manual entry", style={"color": ORANGE, "fontSize": "11px", "fontWeight": "bold"}))
+            _bar_parts.append(html.Span(f"{_needs_entry_n} need earnings entry", style={"color": RED, "fontSize": "11px", "fontWeight": "bold"}))
         if not _has_issues:
-            _bar_parts.append(html.Span(f"All {len(_ledger_orders)} orders verified", style={"color": GREEN, "fontSize": "11px"}))
+            _bar_parts.append(html.Span(f"{_verified_n}/{len(_ledger_orders)} verified", style={"color": GREEN, "fontSize": "11px", "fontWeight": "bold"}))
+
         if _ss.get("error"):
             _bar_parts.append(html.Span(f"Error: {_ss['error']}", style={"color": RED, "fontSize": "11px"}))
 
@@ -13339,8 +13361,8 @@ def _build_per_order_profit_section(store_orders, store_info):
                                          "border": f"1px solid {GREEN}44", "borderRadius": "4px"}))
 
         _sync_bar = html.Div(_bar_parts, style={
-            "display": "flex", "alignItems": "center", "gap": "12px",
-            "padding": "6px 14px", "marginBottom": "10px", "borderRadius": "6px",
+            "display": "flex", "alignItems": "center", "gap": "12px", "flexWrap": "wrap",
+            "padding": "8px 14px", "marginBottom": "10px", "borderRadius": "6px",
             "backgroundColor": _bar_color, "border": f"1px solid {_bar_border}44",
         })
     except Exception:

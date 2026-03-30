@@ -325,18 +325,78 @@ def _do_sync():
 
     _logger.info("Added %d new orders", new_order_count)
 
+    # === Re-check "Paid" orders — they may have shipped since last sync ===
+    paid_orders = [o for o in orders if o.get("Status") == "Paid" and not o.get("_manual_override")]
+    if paid_orders:
+        _logger.info("Re-checking %d Paid orders for shipment", len(paid_orders))
+        for o in paid_orders:
+            rid = str(o["Order ID"])
+            try:
+                receipt = _safe_get_receipt_by_id(shop_id, rid)
+                if not receipt:
+                    continue
+
+                # Check if shipped
+                shipments = receipt.get("shipments", [])
+                if shipments:
+                    s = shipments[0]
+                    tracking = s.get("tracking_code", "")
+                    shipped_ts = s.get("shipped_timestamp") or s.get("ship_date")
+                    if tracking and not o.get("Tracking"):
+                        o["Tracking"] = tracking
+                    if shipped_ts:
+                        o["Status"] = "Completed"
+                        orders_updated += 1
+                        _logger.info("Order %s shipped (tracking: %s)", rid, tracking)
+
+                # Update address if missing
+                addr = receipt.get("formatted_address", {})
+                if isinstance(addr, dict):
+                    if not o.get("Ship Country"):
+                        o["Ship Country"] = addr.get("country_iso", "")
+                    if not o.get("Ship State"):
+                        o["Ship State"] = addr.get("state", "")
+
+                time.sleep(0.25)
+            except Exception as e:
+                _logger.warning("Re-check paid order %s failed: %s", rid, e)
+
     # === Process new ledger entries ===
-    # Build ship_ts_to_receipt for label matching (all receipts, not just new)
+    # Build ship_ts_to_receipt for label matching
+    # Must include ALL recent receipts (not just new) so labels can match
+    # orders that were created before but shipped after the last sync
     ship_ts_to_receipt = {}
-    for r_existing in (new_receipts + []):
-        rid = str(r_existing.get("receipt_id", ""))
-        for t in r_existing.get("transactions", []):
+
+    # Get timestamps from new receipts
+    for r_new in new_receipts:
+        rid = str(r_new.get("receipt_id", ""))
+        for t in r_new.get("transactions", []):
             shipped_ts = t.get("shipped_timestamp")
             if shipped_ts and isinstance(shipped_ts, (int, float)) and shipped_ts > 0:
                 ship_ts_to_receipt[int(shipped_ts)] = rid
 
-    # Also include timestamps from existing orders (for matching labels to older orders)
-    # We need the full receipt data for this — use existing orders' Label IDs as fallback
+    # ALSO fetch recently shipped receipts that aren't "new" but have new labels
+    # This covers orders created weeks ago but only shipped today
+    orders_needing_labels = [o for o in orders if not o.get("Label ID") and o.get("Status") == "Completed" and not o.get("_manual_override")]
+    if orders_needing_labels:
+        _logger.info("Fetching receipt data for %d orders missing labels", len(orders_needing_labels))
+        for o in orders_needing_labels:
+            rid = str(o["Order ID"])
+            try:
+                receipt = _safe_get_receipt_by_id(shop_id, rid)
+                if not receipt:
+                    continue
+                for t in receipt.get("transactions", []):
+                    shipped_ts = t.get("shipped_timestamp")
+                    if shipped_ts and isinstance(shipped_ts, (int, float)) and shipped_ts > 0:
+                        ship_ts_to_receipt[int(shipped_ts)] = rid
+                time.sleep(0.25)
+            except Exception as e:
+                _logger.warning("Receipt fetch for label matching %s failed: %s", rid, e)
+
+    _logger.info("ship_ts_to_receipt has %d entries for label matching", len(ship_ts_to_receipt))
+
+    # Build label_id -> order_id lookup from existing data
     _label_id_to_order = {}
     for o in orders:
         lid = str(o.get("Label ID", ""))
@@ -492,10 +552,16 @@ def _do_sync():
         elif lt == "offsite_ads_fee":
             o["Offsite Ads"] = round(o.get("Offsite Ads", 0) + amount, 2)
 
-    # === Fetch payment data for new orders and compute True Net ===
-    if new_receipt_ids:
-        _logger.info("Fetching payment data for %d new orders", len(new_receipt_ids))
-        for rid in new_receipt_ids:
+    # === Fetch payment data and compute True Net ===
+    # For new orders AND any order that just got a label but isn't verified yet
+    orders_needing_payment = set(new_receipt_ids)
+    for o in orders:
+        if not o.get("_payment_verified") and not o.get("_manual_override") and not o.get("_needs_manual_net"):
+            orders_needing_payment.add(str(o["Order ID"]))
+
+    if orders_needing_payment:
+        _logger.info("Fetching payment data for %d orders", len(orders_needing_payment))
+        for rid in orders_needing_payment:
             o = existing_ids.get(rid)
             if not o or o.get("_manual_override"):
                 continue
@@ -548,6 +614,9 @@ def _do_sync():
     # === Count items needing attention ===
     unmatched_count = len([l for l in labels if not l.get("assigned_to")])
     needs_manual = len([o for o in orders if o.get("_needs_manual_net")])
+    no_label_count = len([o for o in orders if not o.get("Label ID") and o.get("Status") == "Completed"
+                          and not o.get("_manual_override") and o.get("Order ID") not in ("3889351854", "3842441750")])  # Lori=family, Joseph=hand-delivered
+    paid_count = len([o for o in orders if o.get("Status") == "Paid"])
 
     # === Save atomically ===
     client = _get_supabase_client()
@@ -569,7 +638,10 @@ def _do_sync():
         "new_unmatched": new_unmatched,
         "needs_manual": needs_manual,
         "orders_updated": orders_updated,
-        "last_result": f"{new_order_count} orders, {new_labels_matched} labels matched, {new_unmatched} unmatched, {orders_updated} updated",
+        "no_label": no_label_count,
+        "paid_orders": paid_count,
+        "unmatched_labels": unmatched_count,
+        "last_result": f"{new_order_count} new, {new_labels_matched} labels, {orders_updated} updated, {paid_count} to ship, {no_label_count} need labels",
     })
 
     # Persist sync results to Supabase for dashboard visibility across restarts
