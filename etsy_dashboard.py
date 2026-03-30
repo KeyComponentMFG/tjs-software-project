@@ -13396,7 +13396,9 @@ def _build_per_order_profit_section(store_orders, store_info):
     # Build image URL lookup from Etsy listing images (stored in Supabase)
     _img_lookup = {}
     try:
-        _raw_imgs = _gcv("order_listing_images")
+        # Load images for this store (KeyComp, Aurvio, or Luna)
+        _img_key = f"order_listing_images_{_store_slug}" if _store_slug != "keycomponentmfg" else "order_listing_images"
+        _raw_imgs = _gcv(_img_key)
         if _raw_imgs:
             _img_lookup = _json_load.loads(_raw_imgs) if isinstance(_raw_imgs, str) else _raw_imgs
     except Exception:
