@@ -474,6 +474,428 @@ def build_etsy_state(data: pd.DataFrame, store: str, config: dict) -> EtsyState:
 
 
 # ---------------------------------------------------------------------------
+# build_etsy_state_from_api_ledger — compute state from API-verified orders
+# ---------------------------------------------------------------------------
+
+def build_etsy_state_from_api_ledger(
+    ledger_orders: list,
+    config: dict,
+    statement_data: "pd.DataFrame | None" = None,
+    labels_data: list | None = None,
+) -> EtsyState:
+    """Build an EtsyState from API-verified per-order data.
+
+    Produces the exact same shape as build_etsy_state() so all downstream
+    code (charts, tabs, KPIs) works unchanged. Uses the verified per-order
+    data as the source of truth instead of statement CSVs.
+
+    Args:
+        ledger_orders: list of order dicts from order_profit_ledger_keycomponentmfg
+        config: CONFIG dict
+        statement_data: optional statement DataFrame for deposit rows only
+        labels_data: optional list of label dicts for shipping breakdown
+    """
+    from datetime import datetime as _dt
+
+    # Filter out canceled orders for revenue metrics
+    active = [o for o in ledger_orders if o.get("Status") not in ("Canceled",)]
+
+    # --- Build a synthetic DataFrame for compatibility ---
+    rows = []
+    for o in active:
+        sale_date_str = o.get("Sale Date", "")
+        try:
+            dt = _dt.strptime(sale_date_str, "%m/%d/%Y")
+        except (ValueError, TypeError):
+            dt = None
+
+        month = dt.strftime("%Y-%m") if dt else None
+        sale_price = o.get("Sale Price", 0) or 0
+        buyer_ship = o.get("Buyer Shipping", 0) or 0
+        revenue = sale_price + buyer_ship
+
+        rows.append({
+            "Date_Parsed": dt,
+            "Month": month,
+            "Type": "Sale",
+            "Title": f"Payment for Order #{o.get('Order ID', '')}",
+            "Info": f"Order #{o.get('Order ID', '')}",
+            "Net_Clean": revenue,
+            "Store": o.get("_store", "keycomponentmfg"),
+            "Amount_Clean": revenue,
+            "Fees_Clean": 0,
+            # Extra fields for product performance
+            "_item_names": o.get("Item Names", ""),
+            "_sale_price": sale_price,
+            "_buyer_ship": buyer_ship,
+            "_txn_fee": o.get("Transaction Fee", 0) or 0,
+            "_proc_fee": o.get("Processing Fee", 0) or 0,
+            "_listing_fee": o.get("Listing Fee", 0) or 0,
+            "_ads": o.get("Offsite Ads", 0) or 0,
+            "_label": o.get("Shipping Label", 0) or 0,
+            "_refund": o.get("Refund", 0) or 0,
+            "_true_net": o.get("True Net", 0) or 0,
+            "_ship_pl": o.get("Ship P/L", 0) or 0,
+            "_ship_country": o.get("Ship Country", "") or "",
+        })
+
+    df = pd.DataFrame(rows) if rows else pd.DataFrame()
+    if len(df) == 0:
+        df["Date_Parsed"] = pd.Series(dtype="datetime64[ns]")
+
+    # --- Scalar metrics ---
+    gross_sales = sum(r["Net_Clean"] for r in rows)
+    total_refunds = sum(o.get("Refund", 0) or 0 for o in active)
+    net_sales = gross_sales - total_refunds
+
+    _txn_fees = sum(o.get("Transaction Fee", 0) or 0 for o in active)
+    _proc_fees = sum(o.get("Processing Fee", 0) or 0 for o in active)
+    _listing_fees_total = sum(o.get("Listing Fee", 0) or 0 for o in active)
+    _ads_total = sum(o.get("Offsite Ads", 0) or 0 for o in active)
+    total_fees = _txn_fees + _proc_fees + _ads_total
+    total_shipping_cost = sum(o.get("Shipping Label", 0) or 0 for o in active)
+    total_marketing = _ads_total
+    total_taxes = sum(o.get("Sales Tax", 0) or 0 for o in active)
+    total_payments = 0.0
+    total_buyer_fees = 0.0
+    order_count = len(ledger_orders)
+    avg_order = gross_sales / order_count if order_count else 0.0
+
+    # --- Monthly aggregations ---
+    months_sorted = sorted(set(r["Month"] for r in rows if r["Month"])) if rows else []
+
+    def _monthly_sum(field):
+        """Sum a field by month from the rows list."""
+        result = {}
+        for r in rows:
+            m = r.get("Month")
+            if m:
+                result[m] = result.get(m, 0) + (r.get(field, 0) or 0)
+        return pd.Series(result)
+
+    monthly_sales = _monthly_sum("Net_Clean")
+
+    # Build monthly fee/shipping/marketing/refund from per-order data
+    _monthly_fees_dict = {}
+    _monthly_shipping_dict = {}
+    _monthly_marketing_dict = {}
+    _monthly_refunds_dict = {}
+    _monthly_taxes_dict = {}
+    _monthly_order_counts_dict = {}
+
+    for r in rows:
+        m = r.get("Month")
+        if not m:
+            continue
+        _monthly_fees_dict[m] = _monthly_fees_dict.get(m, 0) + r["_txn_fee"] + r["_proc_fee"] + r["_ads"]
+        _monthly_shipping_dict[m] = _monthly_shipping_dict.get(m, 0) + r["_label"]
+        _monthly_marketing_dict[m] = _monthly_marketing_dict.get(m, 0) + r["_ads"]
+        _monthly_refunds_dict[m] = _monthly_refunds_dict.get(m, 0) + r["_refund"]
+        _monthly_taxes_dict[m] = _monthly_taxes_dict.get(m, 0) + 0  # taxes are pass-through
+        _monthly_order_counts_dict[m] = _monthly_order_counts_dict.get(m, 0) + 1
+
+    monthly_fees = pd.Series(_monthly_fees_dict)
+    monthly_shipping = pd.Series(_monthly_shipping_dict)
+    monthly_marketing = pd.Series(_monthly_marketing_dict)
+    monthly_refunds = pd.Series(_monthly_refunds_dict)
+    monthly_taxes = pd.Series(_monthly_taxes_dict) if _monthly_taxes_dict else pd.Series(dtype=float)
+
+    # Raw monthly (negative values for fees/shipping/refunds — used for net revenue calc)
+    monthly_raw_fees = -monthly_fees
+    monthly_raw_shipping = -monthly_shipping
+    monthly_raw_marketing = -monthly_marketing
+    monthly_raw_refunds = -monthly_refunds
+    monthly_raw_taxes = pd.Series({m: 0 for m in months_sorted}, dtype=float)
+    monthly_raw_buyer_fees = pd.Series({m: 0 for m in months_sorted}, dtype=float)
+    monthly_raw_payments = pd.Series({m: 0 for m in months_sorted}, dtype=float)
+
+    monthly_order_counts = pd.Series(_monthly_order_counts_dict)
+
+    monthly_net_revenue = {}
+    for m in months_sorted:
+        monthly_net_revenue[m] = (
+            monthly_sales.get(m, 0)
+            + monthly_raw_fees.get(m, 0)
+            + monthly_raw_shipping.get(m, 0)
+            + monthly_raw_marketing.get(m, 0)
+            + monthly_raw_refunds.get(m, 0)
+        )
+
+    monthly_aov = {}
+    monthly_profit_per_order = {}
+    for m in months_sorted:
+        oc = monthly_order_counts.get(m, 0)
+        if oc > 0:
+            monthly_aov[m] = monthly_sales.get(m, 0) / oc
+            monthly_profit_per_order[m] = monthly_net_revenue.get(m, 0) / oc
+        else:
+            monthly_aov[m] = 0
+            monthly_profit_per_order[m] = 0
+
+    # --- Daily aggregations ---
+    if len(df) and df["Date_Parsed"].notna().any():
+        daily_sales = df.groupby(df["Date_Parsed"].dt.date)["Net_Clean"].sum()
+        daily_orders = df.groupby(df["Date_Parsed"].dt.date)["Net_Clean"].count()
+    else:
+        daily_sales = pd.Series(dtype=float)
+        daily_orders = pd.Series(dtype=float)
+
+    # Build daily cost series from per-order data
+    _daily_fees = {}
+    _daily_shipping = {}
+    _daily_marketing = {}
+    _daily_refunds = {}
+    for r in rows:
+        dt = r.get("Date_Parsed")
+        if dt is None:
+            continue
+        d = dt.date()
+        _daily_fees[d] = _daily_fees.get(d, 0) - (r["_txn_fee"] + r["_proc_fee"] + r["_ads"])
+        _daily_shipping[d] = _daily_shipping.get(d, 0) - r["_label"]
+        _daily_marketing[d] = _daily_marketing.get(d, 0) - r["_ads"]
+        _daily_refunds[d] = _daily_refunds.get(d, 0) - r["_refund"]
+
+    all_dates = sorted(set(daily_sales.index) | set(_daily_fees.keys()))
+    daily_df = pd.DataFrame(index=all_dates)
+    daily_df["revenue"] = pd.Series(daily_sales)
+    daily_df["fees"] = pd.Series(_daily_fees)
+    daily_df["shipping"] = pd.Series(_daily_shipping)
+    daily_df["marketing"] = pd.Series(_daily_marketing)
+    daily_df["refunds"] = pd.Series(_daily_refunds)
+    daily_df["buyer_fees"] = 0
+    daily_df["taxes"] = 0
+    daily_df["payments"] = 0
+    daily_df["orders"] = pd.Series(daily_orders)
+    daily_df = daily_df.fillna(0)
+    daily_df["profit"] = (
+        daily_df["revenue"] + daily_df["fees"] + daily_df["shipping"]
+        + daily_df["marketing"] + daily_df["refunds"]
+    )
+    daily_df["cum_revenue"] = daily_df["revenue"].cumsum()
+    daily_df["cum_profit"] = daily_df["profit"].cumsum()
+
+    # Weekly AOV
+    if len(df) and df["Date_Parsed"].notna().any():
+        _wdf = df.copy()
+        _wdf["WeekStart"] = _wdf["Date_Parsed"].dt.to_period("W").apply(lambda p: p.start_time)
+        weekly_aov = _wdf.groupby("WeekStart").agg(
+            total=("Net_Clean", "sum"), count=("Net_Clean", "count"),
+        )
+        weekly_aov["aov"] = weekly_aov["total"] / weekly_aov["count"]
+    else:
+        weekly_aov = pd.DataFrame(columns=["total", "count", "aov"])
+
+    # Days active
+    if len(df) and df["Date_Parsed"].notna().any():
+        days_active = max((df["Date_Parsed"].max() - df["Date_Parsed"].min()).days + 1, 1)
+    else:
+        days_active = 1
+
+    # --- Fee breakdown ---
+    listing_fees = _listing_fees_total
+    transaction_fees_product = _txn_fees
+    transaction_fees_shipping = 0  # included in transaction_fees_product for API
+    processing_fees = _proc_fees
+    credit_transaction = 0  # API fees are net of credits
+    credit_listing = 0
+    credit_processing = 0
+    share_save = 0
+    total_credits = 0
+    total_fees_gross = _txn_fees + _proc_fees + _listing_fees_total
+
+    # --- Marketing breakdown ---
+    etsy_ads = 0  # Etsy Ads (CPC) not in API ledger, only in statement
+    offsite_ads_fees = _ads_total
+    offsite_ads_credits = 0
+
+    # --- Shipping breakdown (from labels data) ---
+    _label_list = labels_data or []
+    _assigned_labels = [lb for lb in _label_list if lb.get("assigned_to")]
+
+    # Count by type
+    _outbound_labels = [lb for lb in _assigned_labels if lb.get("type") == "shipping_labels"]
+    _return_labels = [lb for lb in _assigned_labels if lb.get("type") == "shipping_labels_usps_return"]
+    _adj_labels = [lb for lb in _assigned_labels if "adjustment" in (lb.get("type", "") or "") and "credit" not in (lb.get("type", "") or "")]
+    _credit_labels = [lb for lb in _assigned_labels if "credit" in (lb.get("type", "") or "") or "refund" in (lb.get("type", "") or "")]
+    _insurance_labels = [lb for lb in _assigned_labels if "insurance" in (lb.get("type", "") or "")]
+
+    # Count international by ship country
+    _intl_orders = [o for o in active if o.get("Ship Country", "") not in ("US", "", None)]
+    _intl_label_cost = sum(o.get("Shipping Label", 0) or 0 for o in _intl_orders)
+
+    # Outbound = total label cost minus returns/adjustments/credits/insurance
+    _all_label_cost = sum(o.get("Shipping Label", 0) or 0 for o in active)
+    _return_cost = sum(lb.get("amount", 0) for lb in _return_labels)
+    _adj_cost = sum(lb.get("amount", 0) for lb in _adj_labels)
+    _credit_amt = sum(lb.get("amount", 0) for lb in _credit_labels)
+    _insurance_cost = sum(lb.get("amount", 0) for lb in _insurance_labels)
+
+    usps_outbound = _all_label_cost - _return_cost - _adj_cost + _credit_amt - _insurance_cost
+    usps_outbound_count = len([o for o in active if o.get("Label ID")])
+    usps_return = _return_cost
+    usps_return_count = len(_return_labels)
+    asendia_labels = _intl_label_cost
+    asendia_count = len(_intl_orders)
+    ship_adjustments = _adj_cost
+    ship_adjust_count = len(_adj_labels)
+    ship_credits_val = _credit_amt
+    ship_credit_count = len(_credit_labels)
+    ship_insurance = _insurance_cost
+    ship_insurance_count = len(_insurance_labels)
+
+    # Buyer paid shipping (API has this!)
+    _buyer_ship_total = sum(o.get("Buyer Shipping", 0) or 0 for o in active)
+    _ship_pl_total = sum(o.get("Ship P/L", 0) or 0 for o in active)
+    buyer_paid_shipping = _buyer_ship_total
+    shipping_profit = _ship_pl_total
+    shipping_margin = round(_ship_pl_total / _all_label_cost * 100, 1) if _all_label_cost > 0 else 0
+
+    paid_ship_count = len([o for o in active if (o.get("Buyer Shipping", 0) or 0) > 0])
+    free_ship_count = len([o for o in active if (o.get("Buyer Shipping", 0) or 0) == 0])
+    avg_outbound_label = round(_all_label_cost / usps_outbound_count, 2) if usps_outbound_count else 0
+
+    # --- Product performance ---
+    _listing_aliases = config.get("listing_aliases", {})
+    _product_rev = {}
+    _product_fees = {}
+    for o in active:
+        item = o.get("Item Names", "") or "Unknown"
+        # Use first item name, normalize
+        first_item = item.split(" | ")[0].strip()
+        name = _normalize_product_name(first_item, aliases=_listing_aliases)
+        sale = (o.get("Sale Price", 0) or 0) + (o.get("Buyer Shipping", 0) or 0)
+        fee = (o.get("Transaction Fee", 0) or 0)
+        _product_rev[name] = _product_rev.get(name, 0) + sale
+        _product_fees[name] = _product_fees.get(name, 0) + fee
+
+    product_revenue_est = pd.Series(_product_rev).sort_values(ascending=False).round(2) if _product_rev else pd.Series(dtype=float)
+    product_fee_totals = pd.Series(_product_fees).abs().sort_values(ascending=False) if _product_fees else pd.Series(dtype=float)
+
+    # --- Deposits (from statement data — not per-order) ---
+    import re as _re
+    _etsy_deposit_total = 0.0
+    _deposit_rows_df = pd.DataFrame()
+    if statement_data is not None and len(statement_data) > 0:
+        _kc_stmt = statement_data[statement_data["Store"] == "keycomponentmfg"] if "Store" in statement_data.columns else statement_data
+        _deposit_rows_df = _kc_stmt[_kc_stmt["Type"] == "Deposit"] if "Type" in _kc_stmt.columns else pd.DataFrame()
+        for _, _dr in _deposit_rows_df.iterrows():
+            _m = _re.search(r'([\d,]+\.\d+)', str(_dr.get("Title", "")))
+            if _m:
+                _etsy_deposit_total += float(_m.group(1).replace(",", ""))
+
+    # --- Build synthetic DataFrames for downstream compat ---
+    # These satisfy code that iterates refund_df, ship_df, etc.
+    sales_df = df[["Date_Parsed", "Month", "Type", "Title", "Info", "Net_Clean", "Store"]].copy() if len(df) else pd.DataFrame(columns=["Date_Parsed", "Month", "Type", "Title", "Info", "Net_Clean", "Store"])
+
+    # Fee rows: one per order for each fee type
+    _fee_rows = []
+    for o in active:
+        dt_str = o.get("Sale Date", "")
+        try:
+            dt = _dt.strptime(dt_str, "%m/%d/%Y")
+        except (ValueError, TypeError):
+            dt = None
+        m = dt.strftime("%Y-%m") if dt else None
+        oid = o.get("Order ID", "")
+        if o.get("Transaction Fee", 0):
+            _fee_rows.append({"Date_Parsed": dt, "Month": m, "Type": "Fee", "Title": f"Transaction fee: Order #{oid}", "Info": f"Order #{oid}", "Net_Clean": -(o.get("Transaction Fee", 0) or 0), "Store": "keycomponentmfg"})
+        if o.get("Processing Fee", 0):
+            _fee_rows.append({"Date_Parsed": dt, "Month": m, "Type": "Fee", "Title": f"Processing fee", "Info": f"Order #{oid}", "Net_Clean": -(o.get("Processing Fee", 0) or 0), "Store": "keycomponentmfg"})
+    fee_df = pd.DataFrame(_fee_rows) if _fee_rows else pd.DataFrame(columns=["Date_Parsed", "Month", "Type", "Title", "Info", "Net_Clean", "Store"])
+
+    # Ship rows
+    _ship_rows = []
+    for o in active:
+        if not o.get("Shipping Label"):
+            continue
+        dt_str = o.get("Sale Date", "")
+        try:
+            dt = _dt.strptime(dt_str, "%m/%d/%Y")
+        except (ValueError, TypeError):
+            dt = None
+        _is_intl = o.get("Ship Country", "") not in ("US", "", None)
+        _title = "Asendia shipping label" if _is_intl else "USPS shipping label"
+        _ship_rows.append({"Date_Parsed": dt, "Month": dt.strftime("%Y-%m") if dt else None, "Type": "Shipping", "Title": _title, "Info": f"Label #{o.get('Label ID', '')}", "Net_Clean": -(o.get("Shipping Label", 0) or 0), "Store": "keycomponentmfg"})
+    ship_df = pd.DataFrame(_ship_rows) if _ship_rows else pd.DataFrame(columns=["Date_Parsed", "Month", "Type", "Title", "Info", "Net_Clean", "Store"])
+
+    # Refund rows
+    _ref_rows = []
+    for o in active:
+        if not o.get("Refund"):
+            continue
+        dt_str = o.get("Sale Date", "")
+        try:
+            dt = _dt.strptime(dt_str, "%m/%d/%Y")
+        except (ValueError, TypeError):
+            dt = None
+        _ref_rows.append({"Date_Parsed": dt, "Month": dt.strftime("%Y-%m") if dt else None, "Type": "Refund", "Title": f"Refund Order #{o.get('Order ID', '')}", "Info": f"Order #{o.get('Order ID', '')}", "Net_Clean": -(o.get("Refund", 0) or 0), "Store": "keycomponentmfg"})
+    refund_df = pd.DataFrame(_ref_rows) if _ref_rows else pd.DataFrame(columns=["Date_Parsed", "Month", "Type", "Title", "Info", "Net_Clean", "Store"])
+
+    # Marketing rows
+    _mkt_rows = []
+    for o in active:
+        if not o.get("Offsite Ads"):
+            continue
+        dt_str = o.get("Sale Date", "")
+        try:
+            dt = _dt.strptime(dt_str, "%m/%d/%Y")
+        except (ValueError, TypeError):
+            dt = None
+        _mkt_rows.append({"Date_Parsed": dt, "Month": dt.strftime("%Y-%m") if dt else None, "Type": "Marketing", "Title": f"Offsite Ads fee", "Info": f"Order #{o.get('Order ID', '')}", "Net_Clean": -(o.get("Offsite Ads", 0) or 0), "Store": "keycomponentmfg"})
+    mkt_df = pd.DataFrame(_mkt_rows) if _mkt_rows else pd.DataFrame(columns=["Date_Parsed", "Month", "Type", "Title", "Info", "Net_Clean", "Store"])
+
+    # Empty DFs for types not in API
+    _empty_df = pd.DataFrame(columns=["Date_Parsed", "Month", "Type", "Title", "Info", "Net_Clean", "Store"])
+    tax_df = _empty_df.copy()
+    buyer_fee_df = _empty_df.copy()
+    payment_df = _empty_df.copy()
+
+    return EtsyState(
+        store="keycomponentmfg",
+        data=df,
+        sales_df=sales_df, fee_df=fee_df, ship_df=ship_df, mkt_df=mkt_df,
+        refund_df=refund_df, tax_df=tax_df, deposit_df=_deposit_rows_df,
+        buyer_fee_df=buyer_fee_df, payment_df=payment_df,
+        gross_sales=gross_sales, total_refunds=total_refunds, net_sales=net_sales,
+        total_fees=total_fees, total_shipping_cost=total_shipping_cost,
+        total_marketing=total_marketing, total_taxes=total_taxes,
+        total_payments=total_payments, total_buyer_fees=total_buyer_fees,
+        order_count=order_count, avg_order=avg_order,
+        months_sorted=months_sorted,
+        monthly_sales=monthly_sales, monthly_fees=monthly_fees,
+        monthly_shipping=monthly_shipping, monthly_marketing=monthly_marketing,
+        monthly_refunds=monthly_refunds, monthly_taxes=monthly_taxes,
+        monthly_raw_fees=monthly_raw_fees, monthly_raw_shipping=monthly_raw_shipping,
+        monthly_raw_marketing=monthly_raw_marketing, monthly_raw_refunds=monthly_raw_refunds,
+        monthly_raw_taxes=monthly_raw_taxes, monthly_raw_buyer_fees=monthly_raw_buyer_fees,
+        monthly_raw_payments=monthly_raw_payments,
+        monthly_net_revenue=monthly_net_revenue, monthly_order_counts=monthly_order_counts,
+        monthly_aov=monthly_aov, monthly_profit_per_order=monthly_profit_per_order,
+        days_active=days_active,
+        daily_sales=daily_sales, daily_orders=daily_orders,
+        daily_df=daily_df, weekly_aov=weekly_aov,
+        listing_fees=listing_fees, transaction_fees_product=transaction_fees_product,
+        transaction_fees_shipping=transaction_fees_shipping, processing_fees=processing_fees,
+        credit_transaction=credit_transaction, credit_listing=credit_listing,
+        credit_processing=credit_processing, share_save=share_save,
+        total_credits=total_credits, total_fees_gross=total_fees_gross,
+        etsy_ads=etsy_ads, offsite_ads_fees=offsite_ads_fees, offsite_ads_credits=offsite_ads_credits,
+        usps_outbound=usps_outbound, usps_outbound_count=usps_outbound_count,
+        usps_return=usps_return, usps_return_count=usps_return_count,
+        asendia_labels=asendia_labels, asendia_count=asendia_count,
+        ship_adjustments=ship_adjustments, ship_adjust_count=ship_adjust_count,
+        ship_credits=ship_credits_val, ship_credit_count=ship_credit_count,
+        ship_insurance=ship_insurance, ship_insurance_count=ship_insurance_count,
+        buyer_paid_shipping=buyer_paid_shipping, shipping_profit=shipping_profit,
+        shipping_margin=shipping_margin,
+        paid_ship_count=paid_ship_count, free_ship_count=free_ship_count,
+        avg_outbound_label=avg_outbound_label,
+        product_fee_totals=product_fee_totals, product_revenue_est=product_revenue_est,
+        _etsy_deposit_total=_etsy_deposit_total, _deposit_rows=_deposit_rows_df,
+    )
+
+
+# ---------------------------------------------------------------------------
 # StateManager — thread-safe manager for dashboard state
 # ---------------------------------------------------------------------------
 
