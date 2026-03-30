@@ -13441,7 +13441,7 @@ def _build_per_order_profit_section(store_orders, store_info):
         pass
 
     # Grid template — shared between header and rows for perfect alignment
-    _grid_cols = "44px 200px 1fr 70px 110px 100px 65px 80px"
+    _grid_cols = "44px 200px 1fr 55px 70px 110px 100px 65px 80px"
     _grid_style = {"display": "grid", "gridTemplateColumns": _grid_cols, "gap": "12px", "alignItems": "center", "padding": "8px 14px"}
 
     # Build labels-per-order lookup for detail view (all stores)
@@ -13662,6 +13662,13 @@ def _build_per_order_profit_section(store_orders, store_info):
                         html.Div(_first_item[:55], style={"color": WHITE, "fontSize": "12px", "overflow": "hidden", "textOverflow": "ellipsis", "whiteSpace": "nowrap"}),
                         html.Div(_variations[:60] if _variations else f"Qty: {_qty}", style={"color": GRAY, "fontSize": "10px", "marginTop": "1px"}),
                     ], style={"overflow": "hidden"}),
+                    # Shipped By column
+                    html.Div(
+                        html.Span(_o.get("Shipped By", "—"), style={
+                            "fontSize": "10px", "fontWeight": "bold",
+                            "color": CYAN if _o.get("Shipped By") == "TJ" else (GREEN if _o.get("Shipped By") == "Braden" else ORANGE),
+                        }),
+                    ),
                     html.Div([
                         html.Div(f"${_sale_price + _buyer_ship:.2f}", style={"color": WHITE, "fontSize": "13px", "fontWeight": "bold", "fontFamily": "monospace", "textAlign": "right"}),
                         html.Div(f"x{_qty}" if _qty > 1 else "", style={"color": GRAY, "fontSize": "9px", "textAlign": "right"}),
@@ -13716,12 +13723,13 @@ def _build_per_order_profit_section(store_orders, store_info):
         html.Span(""),
         html.Span("Order / Buyer", style=_hdr_style),
         html.Span("Item", style=_hdr_style),
+        html.Span("By", style=_hdr_style),
         html.Span("Sale", style={**_hdr_style, "textAlign": "right"}),
         html.Span("Shipping", style=_hdr_style),
         html.Span("Fees", style={**_hdr_style, "textAlign": "right"}),
         html.Span(""),
         html.Span("Profit", style={**_hdr_style, "textAlign": "right"}),
-    ], style={**_grid_style, "borderBottom": f"2px solid {CYAN}33"})
+    ], style={**_grid_style, "borderBottom": f"2px solid {_store_color}33"})
 
     # Order table container with scrolling
     _order_table = html.Div([
