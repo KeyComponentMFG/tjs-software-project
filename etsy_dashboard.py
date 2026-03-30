@@ -13652,6 +13652,12 @@ def _build_per_order_profit_section(store_orders, store_info):
     _search_container_id = f"order-rows-{_store_slug}"
     _is_primary = _store_slug == "keycomponentmfg"  # primary store gets the callback-bound IDs
 
+    # Count by shipper for the filter labels
+    _tj_count = len([o for o in _ledger_orders if o.get("Shipped By") == "TJ"])
+    _br_count = len([o for o in _ledger_orders if o.get("Shipped By") == "Braden"])
+    _un_count = len([o for o in _ledger_orders if not o.get("Shipped By")])
+
+    _filter_id = "order-filter-shipper" if _is_primary else f"order-filter-{_store_slug}"
     _search_bar = html.Div([
         dcc.Input(
             id="order-search-input" if _is_primary else f"order-search-{_store_slug}",
@@ -13661,8 +13667,21 @@ def _build_per_order_profit_section(store_orders, store_info):
             style={
                 "flex": "1", "fontSize": "13px", "backgroundColor": "#0a0f1e",
                 "color": WHITE, "border": f"1px solid {DARKGRAY}44", "borderRadius": "6px",
-                "padding": "10px 14px", "minWidth": "250px", "outline": "none",
+                "padding": "10px 14px", "minWidth": "200px", "outline": "none",
             },
+        ),
+        dcc.Dropdown(
+            id=_filter_id,
+            options=[
+                {"label": f"All ({_order_count})", "value": "all"},
+                {"label": f"TJ ({_tj_count})", "value": "TJ"},
+                {"label": f"Braden ({_br_count})", "value": "Braden"},
+                {"label": f"Unassigned ({_un_count})", "value": "unassigned"},
+            ],
+            value="all",
+            clearable=False,
+            searchable=False,
+            style={"width": "160px", "fontSize": "12px", "backgroundColor": BG},
         ),
         html.Div(f"{_order_count} orders", style={
             "color": GRAY, "fontSize": "12px", "padding": "8px 0", "whiteSpace": "nowrap",
@@ -14041,29 +14060,51 @@ def _build_per_order_profit_section(store_orders, store_info):
 # ── REMOVED OLD CODE: order cards, refund editor, label assignment editor ──
 # All replaced by clean DataTable above. Dummy IDs preserved for callback compat.
 _REMOVED_OLD_ORDER_SECTION = True
-# ── Order Search Filter (clientside — filters visible HTML rows) ──────────────
+# ── Order Search + Shipper Filter (clientside — filters visible HTML rows) ────
 app.clientside_callback(
     """
-    function(search) {
+    function(search, shipper) {
         var container = document.getElementById("order-rows-container");
         if (!container) return window.dash_clientside.no_update;
         var rows = container.children;
         var q = (search || "").toLowerCase();
-        var shown = 0;
+        var filter = shipper || "all";
         for (var i = 0; i < rows.length; i++) {
             var text = rows[i].textContent.toLowerCase();
-            if (!q || text.indexOf(q) !== -1) {
-                rows[i].style.display = "";
-                shown++;
-            } else {
-                rows[i].style.display = "none";
+            var matchSearch = !q || text.indexOf(q) !== -1;
+            var matchShipper = true;
+            if (filter === "TJ") {
+                // Look for the TJ badge text in the row
+                var bySpans = rows[i].querySelectorAll("span");
+                var hasTJ = false;
+                for (var j = 0; j < bySpans.length; j++) {
+                    if (bySpans[j].textContent.trim() === "TJ") { hasTJ = true; break; }
+                }
+                matchShipper = hasTJ;
+            } else if (filter === "Braden") {
+                var bySpans2 = rows[i].querySelectorAll("span");
+                var hasBraden = false;
+                for (var j = 0; j < bySpans2.length; j++) {
+                    if (bySpans2[j].textContent.trim() === "Braden") { hasBraden = true; break; }
+                }
+                matchShipper = hasBraden;
+            } else if (filter === "unassigned") {
+                var bySpans3 = rows[i].querySelectorAll("span");
+                var hasAssigned = false;
+                for (var j = 0; j < bySpans3.length; j++) {
+                    var t = bySpans3[j].textContent.trim();
+                    if (t === "TJ" || t === "Braden") { hasAssigned = true; break; }
+                }
+                matchShipper = !hasAssigned;
             }
+            rows[i].style.display = (matchSearch && matchShipper) ? "" : "none";
         }
         return window.dash_clientside.no_update;
     }
     """,
     Output("order-detail-table", "data"),
     Input("order-search-input", "value"),
+    Input("order-filter-shipper", "value"),
     prevent_initial_call=True,
 )
 
