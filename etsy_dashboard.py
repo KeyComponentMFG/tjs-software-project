@@ -13618,6 +13618,9 @@ def _build_per_order_profit_section(store_orders, store_info):
             dcc.Input(id="order-card-search", type="hidden", value=""),
         ], style={"display": "none"})
 
+    _src_label = "API Verified" if _store_source == "API" else "CSV Based"
+    _src_color = GREEN if _store_source == "API" else ORANGE
+
     # ── Order Management Panels (only for primary store — has callback IDs) ──
     if not _is_primary:
         return html.Div([
