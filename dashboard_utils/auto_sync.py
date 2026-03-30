@@ -536,7 +536,8 @@ def _do_sync():
                         # True Net = amount_net - txn - ads - label
                         true_net = api_net - o["Transaction Fee"] - o["Offsite Ads"] - o["Shipping Label"]
                         o["True Net"] = round(true_net, 2)
-                        o["Margin %"] = round(true_net / o["Sale Price"] * 100, 1) if o.get("Sale Price") else 0
+                        _rev = (o.get("Sale Price", 0) or 0) + (o.get("Buyer Shipping", 0) or 0)
+                        o["Margin %"] = round(true_net / _rev * 100, 1) if _rev > 0 else 0
                         o["_payment_verified"] = True
                         o["_needs_manual_net"] = False
 
@@ -605,7 +606,8 @@ def _apply_refund_logic(order, pmt, refund_amount):
         # api_net already accounts for the refund adjustment from Etsy's side
         true_net = api_net - order.get("Transaction Fee", 0) - order.get("Offsite Ads", 0) - order.get("Shipping Label", 0)
         order["True Net"] = round(true_net, 2)
-        order["Margin %"] = round(true_net / sale_price * 100, 1) if sale_price else 0
+        _rev = (order.get("Sale Price", 0) or 0) + (order.get("Buyer Shipping", 0) or 0)
+        order["Margin %"] = round(true_net / _rev * 100, 1) if _rev > 0 else 0
 
         # Fee %
         fee_base = sale_price + order.get("Buyer Shipping", 0)

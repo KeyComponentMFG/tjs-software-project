@@ -12012,7 +12012,7 @@ def etsy_set_earnings():
             if str(o.get("Order ID")) == str(order_id):
                 old_net = o["True Net"]
                 o["True Net"] = round(earned_val, 2)
-                o["Margin %"] = round(earned_val / o.get("Sale Price", 1) * 100, 1) if o.get("Sale Price") else 0
+                o["Margin %"] = round(earned_val / ((o.get("Sale Price", 0) or 0) + (o.get("Buyer Shipping", 0) or 0)) * 100, 1) if ((o.get("Sale Price", 0) or 0) + (o.get("Buyer Shipping", 0) or 0)) > 0 else 0
                 o["_needs_manual_net"] = False
                 o["_manual_override"] = True
                 updated = True
@@ -12102,8 +12102,8 @@ def etsy_sync_payments():
             order["True Net"] = round(true_net, 2)
             order["Processing Fee"] = round(proc_fee, 2)
             order["Total Etsy Fees"] = round(proc_fee + txn_fee + ads, 2)
-            sale_price = order.get("Sale Price", 0)
-            order["Margin %"] = round(true_net / sale_price * 100, 1) if sale_price else 0
+            _total_rev = (order.get("Sale Price", 0) or 0) + (order.get("Buyer Shipping", 0) or 0)
+            order["Margin %"] = round(true_net / _total_rev * 100, 1) if _total_rev > 0 else 0
             order["_payment_verified"] = True
             updated += 1
 
@@ -13552,7 +13552,8 @@ def _build_per_order_profit_section(store_orders, store_info):
                     html.Div("SALE DETAILS", style={"color": CYAN, "fontSize": "10px", "fontWeight": "bold", "marginBottom": "6px", "letterSpacing": "1px"}),
                     html.Div([html.Span("Listing Price", style=_detail_label), html.Span(f"${_listing_price:.2f}", style=_detail_val)], style=_detail_row_style),
                     html.Div([html.Span("Discount", style=_detail_label), html.Span(f"-${abs(_discount):.2f}" if _discount else "$0.00", style={**_detail_val, "color": ORANGE if _discount else GRAY})], style=_detail_row_style),
-                    html.Div([html.Span("Sale Price", style=_detail_label), html.Span(f"${_sale_price:.2f}", style={**_detail_val, "fontWeight": "bold"})], style=_detail_row_style),
+                    html.Div([html.Span("Sale Price", style=_detail_label), html.Span(f"${_sale_price:.2f}", style=_detail_val)], style=_detail_row_style),
+                    html.Div([html.Span("Subtotal", style={**_detail_label, "fontWeight": "bold"}), html.Span(f"${_sale_price + _buyer_ship:.2f}", style={**_detail_val, "fontWeight": "bold"})], style=_detail_row_style),
                     html.Div([html.Span("Quantity", style=_detail_label), html.Span(f"{_qty}", style=_detail_val)], style=_detail_row_style),
                     html.Div([html.Span("Sales Tax", style=_detail_label), html.Span(f"${_o.get('Sales Tax', 0) or 0:.2f}", style=_detail_val)], style=_detail_row_style),
                     html.Hr(style={"border": f"1px solid {DARKGRAY}33", "margin": "6px 0"}),
@@ -13611,7 +13612,7 @@ def _build_per_order_profit_section(store_orders, store_info):
                         html.Div(_variations[:60] if _variations else f"Qty: {_qty}", style={"color": GRAY, "fontSize": "10px", "marginTop": "1px"}),
                     ], style={"overflow": "hidden"}),
                     html.Div([
-                        html.Div(f"${_sale_price:.2f}", style={"color": WHITE, "fontSize": "13px", "fontWeight": "bold", "fontFamily": "monospace", "textAlign": "right"}),
+                        html.Div(f"${_sale_price + _buyer_ship:.2f}", style={"color": WHITE, "fontSize": "13px", "fontWeight": "bold", "fontFamily": "monospace", "textAlign": "right"}),
                         html.Div(f"x{_qty}" if _qty > 1 else "", style={"color": GRAY, "fontSize": "9px", "textAlign": "right"}),
                     ]),
                     html.Div(
@@ -14220,7 +14221,8 @@ def assign_label_to_order(all_clicks, all_order_inputs):
             order["Shipping Label"] = round(old_label + label_amount, 2)
             order["True Net"] = round(order["True Net"] - label_amount, 2)
         order["Ship P/L"] = round(order.get("Buyer Shipping", 0) - order["Shipping Label"], 2)
-        order["Margin %"] = round(order["True Net"] / order.get("Sale Price", 1) * 100, 1) if order.get("Sale Price") else 0
+        _total_rev_assign = (order.get("Sale Price", 0) or 0) + (order.get("Buyer Shipping", 0) or 0)
+        order["Margin %"] = round(order["True Net"] / _total_rev_assign * 100, 1) if _total_rev_assign > 0 else 0
 
         # Mark label as assigned
         label_entry["assigned_to"] = order_id
@@ -14305,8 +14307,8 @@ def save_refund_earnings(all_clicks, all_values):
             if str(_o.get("Order ID", "")) == _clicked_order:
                 _old_net = _o.get("True Net", 0)
                 _o["True Net"] = _earned_val
-                _sale_price = _o.get("Sale Price", 0) or _o.get("Gross", 0) or 1
-                _o["Margin %"] = round(_earned_val / _sale_price * 100, 1) if _sale_price else 0
+                _total_rev_earn = (_o.get("Sale Price", 0) or 0) + (_o.get("Buyer Shipping", 0) or 0)
+                _o["Margin %"] = round(_earned_val / _total_rev_earn * 100, 1) if _total_rev_earn > 0 else 0
                 _o["_needs_manual_net"] = False
                 _o["_manual_override"] = True
                 _updated = True
