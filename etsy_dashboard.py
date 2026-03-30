@@ -478,6 +478,80 @@ def _apply_store_filter(store="all"):
     # Back-fill filtered DataFrames and all derived metrics
     _backfill_etsy_derived(state)
 
+    # ── API OVERLAY: for KeyComp, override scalar metrics with API-verified data ──
+    # The API data is verified against Etsy's Payment API (432/432 matched).
+    # Statement data has discrepancies (counts multi-item orders as multiple rows,
+    # includes tax in amounts, etc.) The API data is the source of truth.
+    if store in ("keycomponentmfg", "all"):
+        try:
+            from supabase_loader import get_config_value as _gcv_api
+            import json as _json_api
+            _raw_api = _gcv_api("order_profit_ledger_keycomponentmfg")
+            if _raw_api:
+                _api_orders = _json_api.loads(_raw_api) if isinstance(_raw_api, str) else _raw_api
+                _active = [o for o in _api_orders if o.get("Status") not in ("Canceled",)]
+
+                # Compute API-verified metrics
+                _api_gross = sum((o.get("Sale Price", 0) or 0) + (o.get("Buyer Shipping", 0) or 0) for o in _active)
+                _api_txn_fees = sum(o.get("Transaction Fee", 0) or 0 for o in _active)
+                _api_proc_fees = sum(o.get("Processing Fee", 0) or 0 for o in _active)
+                _api_listing_fees = sum(o.get("Listing Fee", 0) or 0 for o in _active)
+                _api_ads = sum(o.get("Offsite Ads", 0) or 0 for o in _active)
+                _api_total_fees = _api_txn_fees + _api_proc_fees + _api_ads
+                _api_labels = sum(o.get("Shipping Label", 0) or 0 for o in _active)
+                _api_refunds = sum(o.get("Refund", 0) or 0 for o in _active)
+                _api_net = sum(o.get("True Net", 0) or 0 for o in _active)
+                _api_order_count = len(_api_orders)
+                _api_buyer_ship = sum(o.get("Buyer Shipping", 0) or 0 for o in _active)
+                _api_ship_pl = sum(o.get("Ship P/L", 0) or 0 for o in _active)
+                _api_paid_ship = len([o for o in _active if (o.get("Buyer Shipping", 0) or 0) > 0])
+                _api_free_ship = len([o for o in _active if (o.get("Buyer Shipping", 0) or 0) == 0])
+
+                if store == "keycomponentmfg":
+                    # Full override — KeyComp only
+                    gross_sales = _api_gross
+                    total_fees = _api_total_fees
+                    total_shipping_cost = _api_labels
+                    total_marketing = _api_ads
+                    total_refunds = _api_refunds
+                    order_count = _api_order_count
+                    avg_order = _api_gross / _api_order_count if _api_order_count else 0
+                    net_sales = _api_gross - _api_total_fees
+                    # Shipping metrics (were UNKNOWN before!)
+                    buyer_paid_shipping = _api_buyer_ship
+                    shipping_profit = _api_ship_pl
+                    shipping_margin = round(_api_ship_pl / _api_labels * 100, 1) if _api_labels > 0 else 0
+                    paid_ship_count = _api_paid_ship
+                    free_ship_count = _api_free_ship
+                    avg_outbound_label = round(_api_labels / _api_order_count, 2) if _api_order_count else 0
+                    # Fee breakdown from API
+                    listing_fees = _api_listing_fees
+                    transaction_fees_product = _api_txn_fees
+                    processing_fees = _api_proc_fees
+                    offsite_ads_fees = _api_ads
+                    total_fees_gross = _api_total_fees
+                    total_credits = 0  # API fees are already net of credits
+
+                elif store == "all":
+                    # Add API KeyComp on top of statement Aurvio+Luna
+                    # First subtract KeyComp statement data, then add API data
+                    _stmt_kc = _state_manager.set_store_filter("keycomponentmfg")
+                    gross_sales = (gross_sales - _stmt_kc.gross_sales) + _api_gross
+                    total_fees = (total_fees - _stmt_kc.total_fees) + _api_total_fees
+                    total_shipping_cost = (total_shipping_cost - _stmt_kc.total_shipping_cost) + _api_labels
+                    total_marketing = (total_marketing - _stmt_kc.total_marketing) + _api_ads
+                    total_refunds = (total_refunds - _stmt_kc.total_refunds) + _api_refunds
+                    order_count = (order_count - _stmt_kc.order_count) + _api_order_count
+                    avg_order = gross_sales / order_count if order_count else 0
+                    net_sales = gross_sales - total_fees
+                    buyer_paid_shipping = _api_buyer_ship  # only KeyComp has this
+                    shipping_profit = _api_ship_pl
+                    shipping_margin = round(_api_ship_pl / _api_labels * 100, 1) if _api_labels > 0 else 0
+                    # Re-set store filter back to "all" for DataFrames
+                    _state_manager.set_store_filter("all")
+        except Exception as _e:
+            _logger.warning("API overlay failed: %s", _e)
+
     # Profit and profit_margin are business-level metrics (bank-derived).
     # They stay the same regardless of store selection because all stores
     # share one bank account. Don't override them per-store.
