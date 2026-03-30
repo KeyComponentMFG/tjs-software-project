@@ -13704,10 +13704,44 @@ def _build_per_order_profit_section(store_orders, store_info):
     _src_label = "API Verified" if _store_source == "API" else "CSV Based"
     _src_color = GREEN if _store_source == "API" else ORANGE
 
-    # ── Order Management Panels (only for primary store — has callback IDs) ──
+    # ── For non-primary stores: build status bar + management info ──
     if not _is_primary:
+        # Status bar for this store
+        _np_refund_orders = [o for o in _ledger_orders if o.get("_needs_manual_net")]
+        _np_canceled = [o for o in _ledger_orders if "cancel" in (o.get("Status", "") or "").lower()]
+        _np_verified = len(_ledger_orders) - len(_np_refund_orders) - len(_np_canceled)
+
+        _np_status = html.Div([
+            html.Span(f"{_np_verified} verified ", style={"color": GREEN, "fontWeight": "bold"}),
+            html.Span(" | ", style={"color": GRAY}),
+            html.Span(f"{len(_np_refund_orders)} need earnings entry", style={"color": ORANGE, "fontWeight": "bold"}) if _np_refund_orders else html.Span(),
+            html.Span(" | ", style={"color": GRAY}) if _np_refund_orders else html.Span(),
+            html.Span(f"{len(_np_canceled)} canceled", style={"color": GRAY, "fontWeight": "bold"}) if _np_canceled else html.Span(),
+            html.Span(f"  |  CSV data — upload new order CSVs in Data Hub to update", style={"color": GRAY, "fontSize": "11px"}),
+        ], style={
+            "padding": "8px 14px", "margin": "10px 0", "borderRadius": "6px",
+            "backgroundColor": CARD, "border": f"1px solid {_store_color}33",
+            "fontSize": "12px",
+        })
+
+        # Unmatched labels for this store
+        _np_unmatched = []
+        try:
+            _np_raw_lbl = _gcv(f"unmatched_shipping_labels_{_store_slug}")
+            _np_all_lbl = _json_load.loads(_np_raw_lbl) if _np_raw_lbl and isinstance(_np_raw_lbl, str) else (_np_raw_lbl or [])
+            _np_unmatched = [l for l in _np_all_lbl if not l.get("assigned_to")]
+        except Exception:
+            pass
+
+        _np_label_info = html.Div()
+        if _np_unmatched:
+            _np_label_total = sum(l.get("amount", 0) for l in _np_unmatched)
+            _np_label_info = html.Div([
+                html.Span(f"{len(_np_unmatched)} unmatched labels (${_np_label_total:.2f})", style={"color": ORANGE, "fontSize": "12px", "fontWeight": "bold"}),
+                html.Span(" — assign in the label panel on KeyComp section or Data Hub", style={"color": GRAY, "fontSize": "11px"}),
+            ], style={"padding": "6px 14px", "marginBottom": "8px"})
+
         return html.Div([
-            _sync_bar if _is_primary else html.Div(),
             html.H3([
                 html.Span(f"{_store_name}", style={"color": _store_color}),
                 html.Span(f" — {_order_count} Orders", style={"color": GRAY}),
@@ -13718,9 +13752,13 @@ def _build_per_order_profit_section(store_orders, store_info):
             }),
             html.P(f"Per-order profit breakdown — click any row to expand",
                    style={"color": GRAY, "margin": "0 0 14px 0", "fontSize": "12px"}),
+            _np_status,
+            _np_label_info,
             _kpi_row,
             _search_bar,
             _order_table,
+            # Dummy output for search callback
+            html.Div(id=f"order-search-{_store_slug}-dummy", style={"display": "none"}),
         ], style={"marginBottom": "30px"})
 
     # Categorize orders for the management panels
@@ -13975,6 +14013,30 @@ app.clientside_callback(
     Input("order-search-input", "value"),
     prevent_initial_call=True,
 )
+
+# Search filters for Aurvio and Luna — same JS but targeting their containers
+for _store_search_id, _container_search_id in [
+    ("order-search-aurvio", "order-rows-aurvio"),
+    ("order-search-lunalinks", "order-rows-lunalinks"),
+]:
+    app.clientside_callback(
+        """
+        function(search) {
+            var container = document.getElementById('""" + _container_search_id + """');
+            if (!container) return window.dash_clientside.no_update;
+            var rows = container.children;
+            var q = (search || "").toLowerCase();
+            for (var i = 0; i < rows.length; i++) {
+                var text = rows[i].textContent.toLowerCase();
+                rows[i].style.display = (!q || text.indexOf(q) !== -1) ? "" : "none";
+            }
+            return window.dash_clientside.no_update;
+        }
+        """,
+        Output(f"{_store_search_id}-dummy", "data"),
+        Input(_store_search_id, "value"),
+        prevent_initial_call=True,
+    )
 
 
 def _build_order_table_data(orders):
