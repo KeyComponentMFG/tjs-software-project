@@ -13162,48 +13162,58 @@ def _build_ship_type():
 
 
 
-def _build_per_order_profit_section(selected_store="all"):
-    """Build the per-order detail section for the Financials tab.
+def _build_all_order_sections():
+    """Build separate order detail sections for each store."""
+    from supabase_loader import get_config_value as _gcv
+    import json as _json_load
 
-    Supports multiple stores: KeyComp (API), Aurvio (CSV), Luna&Links (CSV).
-    Formula: True Net = payment_API_amount_net - transaction_fee - offsite_ads - shipping_label
+    _stores = [
+        {"slug": "keycomponentmfg", "name": "Key Component MFG", "key": "order_profit_ledger_keycomponentmfg", "color": CYAN, "source": "API"},
+        {"slug": "aurvio", "name": "Aurvio", "key": "order_profit_ledger_aurvio", "color": "#e056fd", "source": "CSV"},
+        {"slug": "lunalinks", "name": "Luna & Links", "key": "order_profit_ledger_lunalinks", "color": "#f0932b", "source": "CSV"},
+    ]
+
+    sections = []
+    for _store_info in _stores:
+        _raw = _gcv(_store_info["key"])
+        _orders = []
+        if _raw:
+            _orders = _json_load.loads(_raw) if isinstance(_raw, str) else _raw
+        sections.append(_build_per_order_profit_section(_orders, _store_info))
+
+    return html.Div(sections)
+
+
+def _build_per_order_profit_section(store_orders, store_info):
+    """Build a single store's order detail section.
+
+    Args:
+        store_orders: list of order dicts for this store
+        store_info: dict with slug, name, color, source, key
     """
     from supabase_loader import get_config_value as _gcv
     import json as _json_load
 
-    # Store config: slug -> Supabase key
-    _store_keys = {
-        "keycomponentmfg": "order_profit_ledger_keycomponentmfg",
-        "aurvio": "order_profit_ledger_aurvio",
-        "lunalinks": "order_profit_ledger_lunalinks",
-    }
+    _ledger_orders = store_orders or []
+    _store_name = store_info["name"]
+    _store_color = store_info["color"]
+    _store_source = store_info["source"]
+    _store_slug = store_info["slug"]
 
-    # Load order data based on store selection
-    _ledger_orders = []
-    try:
-        if selected_store and selected_store != "all" and selected_store in _store_keys:
-            _raw = _gcv(_store_keys[selected_store])
-            if _raw:
-                _ledger_orders = _json_load.loads(_raw) if isinstance(_raw, str) else _raw
-        else:
-            # Load all stores
-            for _sk in _store_keys.values():
-                _raw = _gcv(_sk)
-                if _raw:
-                    _parsed = _json_load.loads(_raw) if isinstance(_raw, str) else _raw
-                    _ledger_orders.extend(_parsed)
-    except Exception:
-        pass
-
+    # Empty store — show placeholder
     if not _ledger_orders:
         return html.Div([
-            html.H3("ORDER DETAIL", style={
-                "color": CYAN, "margin": "30px 0 6px 0", "fontSize": "14px",
-                "letterSpacing": "1.5px", "borderTop": f"2px solid {CYAN}33", "paddingTop": "14px",
+            html.H3(f"{_store_name} — Orders", style={
+                "color": _store_color, "margin": "30px 0 6px 0", "fontSize": "14px",
+                "letterSpacing": "1.5px", "borderTop": f"2px solid {_store_color}33", "paddingTop": "14px",
             }),
-            html.P("No order profit data found. Run the order profit ledger builder to populate.",
-                   style={"color": GRAY, "fontSize": "12px"}),
-        ])
+            html.Div([
+                html.Span(f"No order data for {_store_name}.", style={"color": GRAY, "fontSize": "12px"}),
+                html.Span(f" Upload Etsy order CSVs to populate." if _store_source == "CSV" else " Run Etsy API sync.", style={"color": GRAY, "fontSize": "12px"}),
+            ], style={"padding": "12px 0"}),
+        ], style={"marginBottom": "30px"})
+
+    # From here, build the order detail section for this store
 
     # Sort newest first
     _ledger_orders.sort(key=lambda x: x.get("Sale Date", "") or "", reverse=True)
@@ -13540,12 +13550,15 @@ def _build_per_order_profit_section(selected_store="all"):
             _detail_section,
         ], style={"margin": "0"}, id={"type": "order-row-data", "idx": _oid}))
 
-    # Search bar
+    # Search bar — use store-specific ID for the input, JS-based filtering by container ID
+    _search_container_id = f"order-rows-{_store_slug}"
+    _is_primary = _store_slug == "keycomponentmfg"  # primary store gets the callback-bound IDs
+
     _search_bar = html.Div([
         dcc.Input(
-            id="order-search-input",
+            id="order-search-input" if _is_primary else f"order-search-{_store_slug}",
             type="text",
-            placeholder="Search by buyer, order #, or item name...",
+            placeholder=f"Search {_store_name} orders...",
             debounce=False,
             style={
                 "flex": "1", "fontSize": "13px", "backgroundColor": "#0a0f1e",
@@ -13578,33 +13591,52 @@ def _build_per_order_profit_section(selected_store="all"):
         _col_header,
         html.Div(
             _order_rows,
-            id="order-rows-container",
+            id="order-rows-container" if _is_primary else _search_container_id,
             style={"maxHeight": "700px", "overflowY": "auto"},
         ),
-    ], style={"borderRadius": "8px", "border": f"1px solid {DARKGRAY}33", "overflow": "hidden"})
+    ], style={"borderRadius": "8px", "border": f"1px solid {_store_color}33", "overflow": "hidden"})
 
-    # Hidden DataTable for backward compat with search callback
-    _hidden_table = dash_table.DataTable(
-        id="order-detail-table",
-        columns=[{"name": "x", "id": "x"}],
-        data=[],
-        style_table={"display": "none"},
-    )
+    # Hidden DataTable + dummy elements only for primary store (avoids duplicate IDs)
+    _hidden_table = html.Div()
+    _dummy_elements = html.Div()
+    if _is_primary:
+        _hidden_table = dash_table.DataTable(
+            id="order-detail-table",
+            columns=[{"name": "x", "id": "x"}],
+            data=[],
+            style_table={"display": "none"},
+        )
+        _dummy_elements = html.Div([
+            html.Div(id="refund-editor-status", style={"display": "none"}),
+            html.Div(id="label-assign-status-dummy", style={"display": "none"}),
+            dcc.Input(id="label-assign-order", type="hidden", value=""),
+            dcc.Input(id="label-assign-label", type="hidden", value=""),
+            html.Button(id="label-assign-btn", n_clicks=0, style={"display": "none"}),
+            html.Div(id="order-cards-visible", style={"display": "none"}),
+            html.Div(id="order-cards-hidden", style={"display": "none"}),
+            html.Button(id="order-cards-load-more", n_clicks=0, style={"display": "none"}),
+            dcc.Input(id="order-card-search", type="hidden", value=""),
+        ], style={"display": "none"})
 
-    # Dummy hidden elements for old callbacks that may still be registered
-    _dummy_elements = html.Div([
-        html.Div(id="refund-editor-status", style={"display": "none"}),
-        html.Div(id="label-assign-status-dummy", style={"display": "none"}),
-        dcc.Input(id="label-assign-order", type="hidden", value=""),
-        dcc.Input(id="label-assign-label", type="hidden", value=""),
-        html.Button(id="label-assign-btn", n_clicks=0, style={"display": "none"}),
-        html.Div(id="order-cards-visible", style={"display": "none"}),
-        html.Div(id="order-cards-hidden", style={"display": "none"}),
-        html.Button(id="order-cards-load-more", n_clicks=0, style={"display": "none"}),
-        dcc.Input(id="order-card-search", type="hidden", value=""),
-    ], style={"display": "none"})
+    # ── Order Management Panels (only for primary store — has callback IDs) ──
+    if not _is_primary:
+        return html.Div([
+            _sync_bar if _is_primary else html.Div(),
+            html.H3([
+                html.Span(f"{_store_name}", style={"color": _store_color}),
+                html.Span(f" — {_order_count} Orders", style={"color": GRAY}),
+                html.Span(f" ({_src_label})", style={"color": _src_color, "fontSize": "11px", "marginLeft": "8px"}),
+            ], style={
+                "margin": "30px 0 6px 0", "fontSize": "14px",
+                "letterSpacing": "1.5px", "borderTop": f"2px solid {_store_color}33", "paddingTop": "14px",
+            }),
+            html.P(f"Per-order profit breakdown — click any row to expand",
+                   style={"color": GRAY, "margin": "0 0 14px 0", "fontSize": "12px"}),
+            _kpi_row,
+            _search_bar,
+            _order_table,
+        ], style={"marginBottom": "30px"})
 
-    # ── Order Management Panels ──────────────────────────────────────────────
     # Categorize orders for the management panels
     _refund_orders = [o for o in _ledger_orders if o.get("_needs_manual_net")]
     _canceled_orders = [o for o in _ledger_orders if "cancel" in (o.get("Status", "") or "").lower()
@@ -13803,13 +13835,20 @@ def _build_per_order_profit_section(selected_store="all"):
         _panel3,
     ], style={"marginTop": "20px"})
 
+    _src_label = f"API Verified" if _store_source == "API" else "CSV Based"
+    _src_color = GREEN if _store_source == "API" else ORANGE
+
     return html.Div([
         _sync_bar,
-        html.H3("ORDER DETAIL", style={
-            "color": CYAN, "margin": "30px 0 6px 0", "fontSize": "14px",
-            "letterSpacing": "1.5px", "borderTop": f"2px solid {CYAN}33", "paddingTop": "14px",
+        html.H3([
+            html.Span(f"{_store_name}", style={"color": _store_color}),
+            html.Span(f" — {_order_count} Orders", style={"color": GRAY}),
+            html.Span(f" ({_src_label})", style={"color": _src_color, "fontSize": "11px", "marginLeft": "8px"}),
+        ], style={
+            "margin": "30px 0 6px 0", "fontSize": "14px",
+            "letterSpacing": "1.5px", "borderTop": f"2px solid {_store_color}33", "paddingTop": "14px",
         }),
-        html.P(f"Per-order profit breakdown — click order # to copy",
+        html.P(f"Per-order profit breakdown — click any row to expand",
                style={"color": GRAY, "margin": "0 0 14px 0", "fontSize": "12px"}),
         html.Div(id="order-copy-toast", style={"position": "fixed", "top": "20px", "right": "20px",
                                                   "zIndex": "9999"}),
@@ -15478,7 +15517,7 @@ def render_active_tab(tab, _strict_flag, _upload_trigger, _selected_store, _dh_a
     elif tab == "tab-deep-dive":
         return html.Div([stale_banner, store_banner, build_tab2_deep_dive()])
     elif tab == "tab-financials":
-        return html.Div([stale_banner, store_banner, build_tab3_financials(_selected_store)])
+        return html.Div([stale_banner, store_banner, build_tab3_financials()])
     elif tab == "tab-inventory":
         return html.Div([stale_banner, store_banner, build_tab4_inventory()])
     elif tab == "tab-tax-forms":
