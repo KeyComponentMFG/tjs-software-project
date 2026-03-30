@@ -927,6 +927,9 @@ class StateManager:
         with self._lock:
             if store == "all" or not store:
                 filtered = self._full_data
+            elif "Store" not in self._full_data.columns:
+                # Store column not present (single-store data or Supabase-only load)
+                filtered = self._full_data
             else:
                 filtered = self._full_data[self._full_data["Store"] == store].copy()
             self._current_state = build_etsy_state(filtered, store or "all", self._config)
