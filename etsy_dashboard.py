@@ -13743,6 +13743,41 @@ def _build_per_order_profit_section(store_orders, store_info):
                 html.Span(" — assign in the label panel on KeyComp section or Data Hub", style={"color": GRAY, "fontSize": "11px"}),
             ], style={"padding": "6px 14px", "marginBottom": "8px"})
 
+        # Refunded orders panel (read-only for non-primary stores)
+        _np_refund_panel = html.Div()
+        if _np_refund_orders:
+            _np_ref_rows = []
+            for _ro in _np_refund_orders:
+                _np_ref_rows.append(html.Div([
+                    html.Span(f"#{_ro.get('Order ID', '')}", style={"color": CYAN, "fontWeight": "bold", "width": "110px"}),
+                    html.Span(_ro.get("Buyer", ""), style={"color": WHITE, "width": "120px"}),
+                    html.Span(_ro.get("Sale Date", ""), style={"color": GRAY, "width": "80px"}),
+                    html.Span(f"Refund: -${abs(_ro.get('Refund', 0)):,.2f}", style={"color": RED, "width": "100px"}),
+                    html.Span(f"Net: ${_ro.get('True Net', 0):,.2f}", style={"color": ORANGE, "width": "100px"}),
+                ], style={"display": "flex", "gap": "8px", "padding": "4px 14px", "fontSize": "12px"}))
+            _np_refund_panel = html.Details([
+                html.Summary(f"Refunded Orders — {len(_np_refund_orders)} need earnings entry", style={
+                    "color": ORANGE, "fontSize": "13px", "fontWeight": "bold", "cursor": "pointer", "padding": "10px 14px"}),
+                html.Div(_np_ref_rows, style={"maxHeight": "300px", "overflowY": "auto"}),
+            ], style={"backgroundColor": CARD, "borderRadius": "8px", "marginBottom": "10px", "border": f"1px solid {ORANGE}66"})
+
+        # Canceled orders panel (read-only)
+        _np_cancel_panel = html.Div()
+        if _np_canceled:
+            _np_can_rows = []
+            for _co in _np_canceled:
+                _np_can_rows.append(html.Div([
+                    html.Span(f"#{_co.get('Order ID', '')}", style={"color": GRAY, "fontWeight": "bold", "width": "110px"}),
+                    html.Span(_co.get("Buyer", ""), style={"color": GRAY, "width": "120px"}),
+                    html.Span(_co.get("Sale Date", ""), style={"color": GRAY, "width": "80px"}),
+                    html.Span(f"Net: ${_co.get('True Net', 0):,.2f}", style={"color": RED, "width": "80px"}),
+                ], style={"display": "flex", "gap": "8px", "padding": "4px 14px", "fontSize": "12px"}))
+            _np_cancel_panel = html.Details([
+                html.Summary(f"Canceled Orders ({len(_np_canceled)})", style={
+                    "color": GRAY, "fontSize": "13px", "fontWeight": "bold", "cursor": "pointer", "padding": "10px 14px"}),
+                html.Div(_np_can_rows, style={"maxHeight": "200px", "overflowY": "auto"}),
+            ], style={"backgroundColor": CARD, "borderRadius": "8px", "marginBottom": "10px", "border": f"1px solid {DARKGRAY}44"})
+
         return html.Div([
             html.H3([
                 html.Span(f"{_store_name}", style={"color": _store_color}),
@@ -13754,11 +13789,13 @@ def _build_per_order_profit_section(store_orders, store_info):
             }),
             html.P(f"Per-order profit breakdown — click any row to expand",
                    style={"color": GRAY, "margin": "0 0 14px 0", "fontSize": "12px"}),
-            _np_status,
-            _np_label_info,
             _kpi_row,
             _search_bar,
             _order_table,
+            _np_status,
+            _np_label_info,
+            _np_refund_panel,
+            _np_cancel_panel,
             # Dummy output for search callback
             html.Div(id=f"order-search-{_store_slug}-dummy", style={"display": "none"}),
         ], style={"marginBottom": "30px"})
