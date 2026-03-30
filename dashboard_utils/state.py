@@ -497,8 +497,9 @@ def build_etsy_state_from_api_ledger(
     """
     from datetime import datetime as _dt
 
-    # Filter out canceled orders for revenue metrics
-    active = [o for o in ledger_orders if o.get("Status") not in ("Canceled",)]
+    # Include ALL orders — canceled ones may have real costs (user confirmed some
+    # "canceled" orders were actually refunds with payments and sunk label costs)
+    active = list(ledger_orders)
 
     # --- Build a synthetic DataFrame for compatibility ---
     rows = []

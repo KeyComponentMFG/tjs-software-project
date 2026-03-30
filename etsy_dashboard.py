@@ -13383,8 +13383,7 @@ def _build_per_order_profit_section(store_orders, store_info):
         pass
 
     # Compute KPIs
-    _active_orders = [o for o in _ledger_orders if o.get("Status") not in ("Canceled",)]
-    _total_revenue = sum((o.get("Sale Price", 0) or 0) + (o.get("Buyer Shipping", 0) or 0) for o in _active_orders)
+    _total_revenue = sum((o.get("Sale Price", 0) or 0) + (o.get("Buyer Shipping", 0) or 0) for o in _ledger_orders)
     _total_fees = sum(o.get("Total Etsy Fees", 0) or 0 for o in _ledger_orders)
     _total_labels = sum(o.get("Shipping Label", 0) or 0 for o in _ledger_orders)
     _total_net = sum(o.get("True Net", 0) or 0 for o in _ledger_orders)
