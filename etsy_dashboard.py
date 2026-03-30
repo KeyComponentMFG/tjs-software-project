@@ -430,6 +430,8 @@ def _filtered_data(store="all"):
     """Return DATA filtered by store slug. 'all' or falsy returns everything."""
     if store == "all" or not store:
         return DATA
+    if "Store" not in DATA.columns:
+        return DATA
     return DATA[DATA["Store"] == store]
 
 
@@ -480,8 +482,8 @@ def _apply_store_filter(store="all"):
     _backfill_etsy_derived(state)
 
     # ── API STATE: for KeyComp, build full state from API-verified data ──
-    # The API data is verified against Etsy's Payment API (432/432 matched).
-    # This replaces ALL metrics — scalars, monthly, daily, fees, shipping.
+    # For "all" stores: just use statement data as-is (no API overlay — too fragile)
+    # For "keycomponentmfg": replace with API-verified data
     if store == "keycomponentmfg":
         try:
             from supabase_loader import get_config_value as _gcv_api
@@ -492,7 +494,6 @@ def _apply_store_filter(store="all"):
                 _api_orders = _json_api.loads(_raw_api) if isinstance(_raw_api, str) else _raw_api
                 _raw_labels = _gcv_api("unmatched_shipping_labels")
                 _labels = _json_api.loads(_raw_labels) if _raw_labels and isinstance(_raw_labels, str) else (_raw_labels or [])
-                # Build full API state (monthly, daily, fees, shipping — everything)
                 _api_state = build_etsy_state_from_api_ledger(
                     _api_orders, CONFIG,
                     statement_data=_DATA_ALL,
@@ -513,53 +514,6 @@ def _apply_store_filter(store="all"):
                 _backfill_etsy_derived(_api_state)
         except Exception as _e:
             _logger.warning("API state build failed, falling back to statement: %s", _e)
-
-    elif store == "all":
-        # For "all": build KeyComp from API, get Aurvio+Luna from statement,
-        # then override ALL globals with the combined numbers
-        try:
-            from supabase_loader import get_config_value as _gcv_api
-            import json as _json_api
-            from dashboard_utils.state import build_etsy_state_from_api_ledger
-            _raw_api = _gcv_api("order_profit_ledger_keycomponentmfg")
-            if _raw_api:
-                _api_orders = _json_api.loads(_raw_api) if isinstance(_raw_api, str) else _raw_api
-                _raw_labels = _gcv_api("unmatched_shipping_labels")
-                _labels = _json_api.loads(_raw_labels) if _raw_labels and isinstance(_raw_labels, str) else (_raw_labels or [])
-                _api_state = build_etsy_state_from_api_ledger(
-                    _api_orders, CONFIG,
-                    statement_data=_DATA_ALL,
-                    labels_data=_labels,
-                )
-                # Get Aurvio+Luna statement totals (subtract KeyComp from "all")
-                _stmt_kc = _state_manager.set_store_filter("keycomponentmfg")
-                _stmt_all = _state_manager.set_store_filter("all")  # re-get "all" state
-
-                # Aurvio+Luna = "all" statement minus KeyComp statement
-                _other_gross = _stmt_all.gross_sales - _stmt_kc.gross_sales
-                _other_fees = _stmt_all.total_fees - _stmt_kc.total_fees
-                _other_ship = _stmt_all.total_shipping_cost - _stmt_kc.total_shipping_cost
-                _other_mkt = _stmt_all.total_marketing - _stmt_kc.total_marketing
-                _other_refunds = _stmt_all.total_refunds - _stmt_kc.total_refunds
-                _other_orders = _stmt_all.order_count - _stmt_kc.order_count
-
-                # Combined = API KeyComp + Statement Aurvio/Luna
-                gross_sales = _api_state.gross_sales + _other_gross
-                total_fees = _api_state.total_fees + _other_fees
-                total_shipping_cost = _api_state.total_shipping_cost + _other_ship
-                total_marketing = _api_state.total_marketing + _other_mkt
-                total_refunds = _api_state.total_refunds + _other_refunds
-                order_count = _api_state.order_count + _other_orders
-                net_sales = gross_sales - total_fees
-                avg_order = gross_sales / order_count if order_count else 0
-                total_taxes = _stmt_all.total_taxes
-                total_payments = _stmt_all.total_payments
-                total_buyer_fees = _stmt_all.total_buyer_fees
-                buyer_paid_shipping = _api_state.buyer_paid_shipping
-                shipping_profit = _api_state.shipping_profit
-                shipping_margin = _api_state.shipping_margin
-        except Exception as _e:
-            _logger.warning("API overlay for 'all' failed: %s", _e)
 
     # Recompute etsy_net from the (possibly API-overridden) globals
     etsy_net_earned = (gross_sales - total_fees - total_shipping_cost - total_marketing
