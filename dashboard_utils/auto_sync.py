@@ -611,6 +611,42 @@ def _do_sync():
             except Exception as e:
                 _logger.warning("Payment fetch failed for %s: %s", rid, e)
 
+    # === Tag shipped orders with origin (TJ vs Braden) via Shippo ===
+    try:
+        import requests as _req_shippo
+        _shippo_token = get_config_value("shippo_api_token")
+        if _shippo_token:
+            _needs_origin = [o for o in orders if o.get("Tracking") and not o.get("Shipped By") and o.get("Status") == "Completed"]
+            if _needs_origin:
+                _logger.info("Looking up ship origin for %d orders via Shippo", len(_needs_origin))
+                for o in _needs_origin:
+                    try:
+                        _resp = _req_shippo.get(
+                            f"https://api.goshippo.com/tracks/usps/{o['Tracking']}",
+                            headers={"Authorization": f"ShippoToken {_shippo_token}"},
+                            timeout=10,
+                        )
+                        _sdata = _resp.json()
+                        _sevents = _sdata.get("tracking_history", [])
+                        if _sevents:
+                            _sloc = _sevents[0].get("location", {})
+                            _scity = _sloc.get("city", "")
+                            _sstate = _sloc.get("state", "")
+                            _szip = _sloc.get("zip", "")
+                            o["Ship Origin"] = f"{_scity}, {_sstate} {_szip}"
+                            # Tulsa/OK = TJ, Celina/TX = Braden
+                            if _szip.startswith("74") or "tulsa" in _scity.lower() or _sstate.upper() == "OK":
+                                o["Shipped By"] = "TJ"
+                            elif _szip.startswith("75") or "celina" in _scity.lower() or _sstate.upper() == "TX":
+                                o["Shipped By"] = "Braden"
+                            else:
+                                o["Shipped By"] = "Unknown"
+                        time.sleep(0.5)
+                    except Exception:
+                        pass
+    except Exception as _e:
+        _logger.warning("Shippo origin lookup failed: %s", _e)
+
     # === Count items needing attention ===
     unmatched_count = len([l for l in labels if not l.get("assigned_to")])
     needs_manual = len([o for o in orders if o.get("_needs_manual_net")])

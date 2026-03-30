@@ -13615,6 +13615,11 @@ def _build_per_order_profit_section(store_orders, store_info):
                     html.Div([html.Span("Label Cost", style=_detail_label), html.Span(f"-${_label:.2f}", style={**_detail_val, "color": RED})], style=_detail_row_style),
                     html.Div([html.Span("Ship P/L", style={**_detail_label, "fontWeight": "bold"}), html.Span(_spl_str, style={**_detail_val, "color": _spl_color, "fontWeight": "bold"})], style=_detail_row_style),
                     html.Hr(style={"border": f"1px solid {DARKGRAY}33", "margin": "6px 0"}),
+                    html.Div([html.Span("Shipped By", style={**_detail_label, "fontWeight": "bold"}), html.Span(
+                        _o.get("Shipped By", "—"),
+                        style={**_detail_val, "color": CYAN if _o.get("Shipped By") == "TJ" else (GREEN if _o.get("Shipped By") == "Braden" else GRAY), "fontWeight": "bold"}
+                    )], style=_detail_row_style) if _o.get("Shipped By") else html.Div(),
+                    html.Div([html.Span("Ship Origin", style=_detail_label), html.Span(_o.get("Ship Origin", ""), style={**_detail_val, "fontSize": "10px"})], style=_detail_row_style) if _o.get("Ship Origin") else html.Div(),
                     html.Div([html.Span("Label ID", style=_detail_label), html.Span(f"#{_label_id}" if _label_id else "N/A", style={"color": CYAN if _label_id else GRAY, "fontSize": "10px", "fontFamily": "monospace"})], style=_detail_row_style),
                     html.Div([html.Span("Tracking", style=_detail_label), html.Span(_tracking or "N/A", style={"color": CYAN if _tracking else GRAY, "fontSize": "10px", "fontFamily": "monospace"})], style=_detail_row_style),
                     html.Div([html.Span("Ship To", style=_detail_label), html.Span(f"{_ship_state}{', ' if _ship_state and _ship_country else ''}{_ship_country}" or "N/A", style={**_detail_val})], style=_detail_row_style),
