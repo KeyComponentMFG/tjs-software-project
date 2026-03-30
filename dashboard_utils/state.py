@@ -553,10 +553,12 @@ def build_etsy_state_from_api_ledger(
     _proc_fees = sum(o.get("Processing Fee", 0) or 0 for o in active)
     _listing_fees_total = sum(o.get("Listing Fee", 0) or 0 for o in active)
     _ads_total = sum(o.get("Offsite Ads", 0) or 0 for o in active)
-    total_fees = _txn_fees + _proc_fees + _ads_total
+    # total_fees = txn + proc (NOT ads — ads go in total_marketing to avoid double-counting)
+    total_fees = _txn_fees + _proc_fees
     total_shipping_cost = sum(o.get("Shipping Label", 0) or 0 for o in active)
     total_marketing = _ads_total
-    total_taxes = sum(o.get("Sales Tax", 0) or 0 for o in active)
+    # Sales tax is pass-through (collected from buyer, remitted by Etsy) — NOT a cost
+    total_taxes = 0.0
     total_payments = 0.0
     total_buyer_fees = 0.0
     order_count = len(ledger_orders)
@@ -588,7 +590,7 @@ def build_etsy_state_from_api_ledger(
         m = r.get("Month")
         if not m:
             continue
-        _monthly_fees_dict[m] = _monthly_fees_dict.get(m, 0) + r["_txn_fee"] + r["_proc_fee"] + r["_ads"]
+        _monthly_fees_dict[m] = _monthly_fees_dict.get(m, 0) + r["_txn_fee"] + r["_proc_fee"]  # ads in marketing, not fees
         _monthly_shipping_dict[m] = _monthly_shipping_dict.get(m, 0) + r["_label"]
         _monthly_marketing_dict[m] = _monthly_marketing_dict.get(m, 0) + r["_ads"]
         _monthly_refunds_dict[m] = _monthly_refunds_dict.get(m, 0) + r["_refund"]
@@ -651,7 +653,7 @@ def build_etsy_state_from_api_ledger(
         if dt is None:
             continue
         d = dt.date()
-        _daily_fees[d] = _daily_fees.get(d, 0) - (r["_txn_fee"] + r["_proc_fee"] + r["_ads"])
+        _daily_fees[d] = _daily_fees.get(d, 0) - (r["_txn_fee"] + r["_proc_fee"])  # ads in marketing, not fees
         _daily_shipping[d] = _daily_shipping.get(d, 0) - r["_label"]
         _daily_marketing[d] = _daily_marketing.get(d, 0) - r["_ads"]
         _daily_refunds[d] = _daily_refunds.get(d, 0) - r["_refund"]
