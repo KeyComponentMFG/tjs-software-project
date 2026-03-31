@@ -16639,62 +16639,92 @@ def _refresh_editor_on_save(trigger, search, cat_filter, status_filter):
 # ── Current Inventory (on-hand stock) ─────────────────────────────────────────
 
 def _build_current_inv_table():
-    """Build the current inventory table with editable quantities."""
+    """Build the current inventory table — same format as warehouse cards but with editable qty."""
     from supabase_loader import get_config_value
     raw = get_config_value("current_inventory")
-    items = json.loads(raw) if raw and isinstance(raw, str) else (raw or [])
+    on_hand = {}
+    if raw:
+        saved = json.loads(raw) if isinstance(raw, str) else raw
+        for item in saved:
+            key = (item.get("name", ""), item.get("location", ""))
+            on_hand[key] = item.get("qty", 0)
 
-    if not items:
-        return html.Div("No items yet.",
+    # Use the same items from warehouse inventory
+    cat_colors = {"Filament": TEAL, "Lighting": ORANGE, "Crafts": PINK, "Packaging": BLUE,
+                  "Hardware": GRAY, "Tools": CYAN, "Printer Parts": PURPLE, "Jewelry": "#f1c40f",
+                  "Other": DARKGRAY}
+
+    # Build items from _UPLOADED_INVENTORY (same source as warehouse cards)
+    all_items = []
+    for (loc, name, cat), purchased_qty in sorted(_UPLOADED_INVENTORY.items(), key=lambda x: (x[0][0], x[0][2], x[0][1])):
+        qty = on_hand.get((name, loc), 0)
+        thumb_url = _IMAGE_URLS.get(name, "")
+        all_items.append({"name": name, "location": loc, "category": cat, "qty": qty,
+                          "purchased_qty": purchased_qty, "thumb_url": thumb_url})
+
+    if not all_items:
+        return html.Div("No warehouse items found. Categorize items in the Item Organizer first.",
                         style={"color": GRAY, "fontSize": "12px", "padding": "14px"})
 
-    # Group by location for section headers
-    sorted_items = sorted(items, key=lambda x: (x.get("location", ""), x.get("category", ""), x.get("name", "")))
-    rows = []
-    current_loc = None
+    # Build two side-by-side cards like the warehouse section
+    def _build_location_card(loc_name, color, items_for_loc):
+        item_rows = []
+        for i, item in enumerate(items_for_loc):
+            idx_key = f"{item['location']}|{item['name']}"
+            qty = item["qty"]
+            qty_color = GREEN if qty > 5 else (ORANGE if qty > 0 else RED)
+            cat_color = cat_colors.get(item["category"], GRAY)
+            _thumb_el = item_thumbnail(item["thumb_url"], 32) if item["thumb_url"] else None
 
-    for i, item in enumerate(sorted_items):
-        loc = item.get("location", "")
-        if loc != current_loc:
-            current_loc = loc
-            rows.append(html.Tr([
-                html.Td(loc, colSpan=4, style={"color": CYAN, "padding": "10px 10px 4px", "fontSize": "13px",
-                                                "fontWeight": "bold", "letterSpacing": "1px",
-                                                "borderBottom": f"2px solid {CYAN}33"}),
-            ]))
-
-        qty = item.get("qty", 0)
-        qty_color = GREEN if qty > 5 else (ORANGE if qty > 0 else RED)
-        rows.append(html.Tr([
-            html.Td(item.get("name", ""), style={"color": WHITE, "padding": "5px 10px", "fontSize": "12px"}),
-            html.Td(
+            item_rows.append(html.Div([
+                _thumb_el,
+                html.Span(item["name"][:35], title=item["name"], style={
+                    "color": WHITE, "fontSize": "12px",
+                    "marginLeft": "8px" if _thumb_el else "0", "flex": "1",
+                    "overflow": "hidden", "textOverflow": "ellipsis", "whiteSpace": "nowrap"}),
                 dcc.Input(
-                    id={"type": "current-inv-qty-input", "idx": i},
+                    id={"type": "current-inv-qty-input", "idx": idx_key},
                     type="number", value=qty, min=0,
-                    style={"width": "60px", "fontSize": "13px", "fontWeight": "bold", "fontFamily": "monospace",
+                    style={"width": "55px", "fontSize": "12px", "fontWeight": "bold", "fontFamily": "monospace",
                            "backgroundColor": BG, "color": qty_color, "textAlign": "center",
-                           "border": f"1px solid {DARKGRAY}44", "borderRadius": "4px", "padding": "4px"},
+                           "border": f"1px solid {DARKGRAY}44", "borderRadius": "4px", "padding": "3px",
+                           "marginLeft": "8px"},
                 ),
-                style={"padding": "3px 10px", "textAlign": "center"},
-            ),
-            html.Td(item.get("category", ""), style={"color": TEAL, "padding": "5px 10px", "fontSize": "11px"}),
-            html.Td(
-                html.Button("Save", id={"type": "current-inv-save", "idx": i}, n_clicks=0,
-                    style={"fontSize": "10px", "padding": "3px 10px", "backgroundColor": f"{GREEN}22",
-                           "border": f"1px solid {GREEN}44", "borderRadius": "3px", "color": GREEN, "cursor": "pointer"}),
-                style={"padding": "3px 10px", "textAlign": "center"},
-            ),
-        ], style={"borderBottom": f"1px solid {DARKGRAY}15"}))
+                html.Button("Save", id={"type": "current-inv-save", "idx": idx_key}, n_clicks=0,
+                    style={"fontSize": "9px", "padding": "3px 8px", "backgroundColor": f"{GREEN}22",
+                           "border": f"1px solid {GREEN}44", "borderRadius": "3px", "color": GREEN,
+                           "cursor": "pointer", "marginLeft": "4px"}),
+            ], style={"display": "flex", "alignItems": "center", "padding": "4px 0",
+                      "borderBottom": "1px solid #ffffff06"}))
 
-    return html.Table([
-        html.Thead(html.Tr([
-            html.Th("Item", style={"color": GRAY, "padding": "6px 10px", "fontSize": "10px", "textTransform": "uppercase"}),
-            html.Th("On Hand", style={"color": GRAY, "padding": "6px 10px", "fontSize": "10px", "textTransform": "uppercase", "textAlign": "center"}),
-            html.Th("Category", style={"color": GRAY, "padding": "6px 10px", "fontSize": "10px", "textTransform": "uppercase"}),
-            html.Th("", style={"width": "60px"}),
-        ], style={"borderBottom": f"2px solid {GREEN}33"})),
-        html.Tbody(rows),
-    ], style={"width": "100%", "borderCollapse": "collapse", "backgroundColor": CARD, "borderRadius": "8px"})
+        total_on_hand = sum(it["qty"] for it in items_for_loc)
+        total_purchased = sum(it["purchased_qty"] for it in items_for_loc)
+
+        return html.Div([
+            html.Div(style={"height": "5px",
+                             "background": f"linear-gradient(90deg, {color}, {color}66)",
+                             "borderRadius": "10px 10px 0 0",
+                             "margin": "-16px -16px 14px -16px"}),
+            html.Div([
+                html.Span(loc_name, style={"color": color, "fontSize": "17px", "fontWeight": "bold"}),
+                html.Div([
+                    html.Span(f"{total_on_hand} on hand", style={"color": WHITE, "fontSize": "13px", "fontWeight": "bold"}),
+                    html.Span(f" of {total_purchased} purchased", style={"color": GRAY, "fontSize": "12px", "marginLeft": "6px"}),
+                ], style={"marginTop": "4px"}),
+            ], style={"marginBottom": "12px", "paddingBottom": "10px",
+                      "borderBottom": f"1px solid {color}22"}),
+            html.Div(item_rows, style={"maxHeight": "400px", "overflowY": "auto"}),
+        ], style={"backgroundColor": CARD, "padding": "16px", "borderRadius": "10px",
+                  "flex": "1", "border": f"1px solid {color}33", "minHeight": "200px",
+                  "boxShadow": "0 4px 16px rgba(0,0,0,0.3)"})
+
+    tulsa_items = [it for it in all_items if "Tulsa" in it["location"] or "OK" in it["location"]]
+    texas_items = [it for it in all_items if "Texas" in it["location"] or "TX" in it["location"]]
+
+    return html.Div([
+        _build_location_card("Tulsa, OK", CYAN, tulsa_items),
+        _build_location_card("Texas", ORANGE, texas_items),
+    ], style={"display": "flex", "gap": "16px", "flexWrap": "wrap"})
 
 
 @app.callback(
@@ -16714,26 +16744,45 @@ def save_current_inv_qty(all_clicks, all_qtys):
 
     try:
         trigger_id = json.loads(trigger["prop_id"].split(".")[0])
-        idx = trigger_id.get("idx", -1)
+        idx_key = trigger_id.get("idx", "")  # "location|name" format
     except Exception:
         raise dash.exceptions.PreventUpdate
+
+    if "|" not in str(idx_key):
+        raise dash.exceptions.PreventUpdate
+
+    location, name = str(idx_key).split("|", 1)
+
+    # Find the matching qty value
+    idx_pos = None
+    for i, inp in enumerate(ctx.inputs_list[0]):
+        if inp.get("id", {}).get("idx") == idx_key:
+            idx_pos = i
+            break
+    if idx_pos is None:
+        raise dash.exceptions.PreventUpdate
+
+    new_qty = int(all_qtys[idx_pos]) if all_qtys[idx_pos] is not None else 0
 
     from supabase_loader import get_config_value, _get_supabase_client
     raw = get_config_value("current_inventory")
     items = json.loads(raw) if raw and isinstance(raw, str) else (raw or [])
-    sorted_items = sorted(items, key=lambda x: (x.get("location", ""), x.get("category", ""), x.get("name", "")))
 
-    if idx < 0 or idx >= len(sorted_items):
-        raise dash.exceptions.PreventUpdate
-
-    # Find this item in the original list and update qty
-    target = sorted_items[idx]
-    new_qty = int(all_qtys[idx]) if all_qtys[idx] is not None else 0
-
+    # Find and update or add this item
+    found = False
     for item in items:
-        if item.get("name") == target.get("name") and item.get("location") == target.get("location"):
+        if item.get("name") == name and item.get("location") == location:
             item["qty"] = new_qty
+            found = True
             break
+    if not found:
+        # Get category from _UPLOADED_INVENTORY
+        cat = "Other"
+        for (loc, n, c), _ in _UPLOADED_INVENTORY.items():
+            if n == name and loc == location:
+                cat = c
+                break
+        items.append({"name": name, "qty": new_qty, "location": location, "category": cat})
 
     client = _get_supabase_client()
     if client:
@@ -16742,7 +16791,7 @@ def save_current_inv_qty(all_clicks, all_qtys):
             "value": json.dumps(items),
         }, on_conflict="key").execute()
 
-    return html.Span(f"Saved {target.get('name', '')} = {new_qty}", style={"color": GREEN, "fontSize": "12px"})
+    return html.Span(f"Saved {name} = {new_qty}", style={"color": GREEN, "fontSize": "12px"})
 
 
 @app.callback(
