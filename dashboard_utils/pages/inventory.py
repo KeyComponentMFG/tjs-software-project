@@ -213,6 +213,50 @@ def build_tab4_inventory():
         ], style={"marginBottom": "20px"}),
 
         # ══════════════════════════════════════════════════════════════════════
+        # CURRENT INVENTORY — what's actually on the shelf
+        # ══════════════════════════════════════════════════════════════════════
+        html.Div([
+            html.H3("CURRENT INVENTORY", style={
+                "color": GREEN, "margin": "0 0 6px 0", "fontSize": "20px",
+                "fontWeight": "700", "letterSpacing": "1px",
+                "textShadow": f"0 0 20px {GREEN}22"}),
+            html.P("What you actually have on hand right now. Update quantities as you use or restock.",
+                   style={"color": GRAY, "fontSize": "12px", "margin": "0 0 14px 0"}),
+            html.Div(id="current-inv-status", style={"minHeight": "16px", "marginBottom": "8px"}),
+            # Add item row
+            html.Div([
+                dcc.Input(id="current-inv-name", type="text", placeholder="Item name...",
+                          style={"flex": "2", "fontSize": "12px", "backgroundColor": BG, "color": WHITE,
+                                 "border": f"1px solid {DARKGRAY}44", "borderRadius": "4px", "padding": "8px 10px"}),
+                dcc.Input(id="current-inv-qty", type="number", placeholder="Qty",
+                          style={"width": "70px", "fontSize": "12px", "backgroundColor": BG, "color": WHITE,
+                                 "border": f"1px solid {DARKGRAY}44", "borderRadius": "4px", "padding": "8px 10px"}),
+                dcc.Dropdown(id="current-inv-location", options=[
+                    {"label": "Tulsa, OK", "value": "Tulsa, OK"},
+                    {"label": "Texas", "value": "Texas"},
+                ], placeholder="Location", clearable=False, searchable=False,
+                    style={"width": "130px", "fontSize": "12px", "backgroundColor": BG}),
+                dcc.Dropdown(id="current-inv-category", options=[
+                    {"label": "Filament", "value": "Filament"},
+                    {"label": "Finished Product", "value": "Finished Product"},
+                    {"label": "Packaging", "value": "Packaging"},
+                    {"label": "Lighting", "value": "Lighting"},
+                    {"label": "Electronics", "value": "Electronics"},
+                    {"label": "Hardware", "value": "Hardware"},
+                    {"label": "Craft Supplies", "value": "Craft Supplies"},
+                    {"label": "Other", "value": "Other"},
+                ], placeholder="Category", clearable=False, searchable=False,
+                    style={"width": "140px", "fontSize": "12px", "backgroundColor": BG}),
+                html.Button("Add", id="current-inv-add-btn", n_clicks=0,
+                    style={"fontSize": "12px", "padding": "8px 16px", "backgroundColor": f"{GREEN}25",
+                           "border": f"1px solid {GREEN}", "borderRadius": "4px", "color": GREEN,
+                           "cursor": "pointer", "fontWeight": "bold"}),
+            ], style={"display": "flex", "gap": "8px", "alignItems": "center", "marginBottom": "12px"}),
+            # Inventory table
+            html.Div(id="current-inv-table-container"),
+        ], style={"marginBottom": "20px"}),
+
+        # ══════════════════════════════════════════════════════════════════════
         # TULSA vs TEXAS — STATS COMPARISON
         # ══════════════════════════════════════════════════════════════════════
         html.Div([

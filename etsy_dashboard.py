@@ -16636,6 +16636,130 @@ def _refresh_editor_on_save(trigger, search, cat_filter, status_filter):
     raise dash.exceptions.PreventUpdate
 
 
+# ── Current Inventory (on-hand stock) ─────────────────────────────────────────
+
+def _build_current_inv_table():
+    """Build the current inventory table from Supabase data."""
+    from supabase_loader import get_config_value
+    raw = get_config_value("current_inventory")
+    items = json.loads(raw) if raw and isinstance(raw, str) else (raw or [])
+
+    if not items:
+        return html.Div("No items yet. Add your first item above.",
+                        style={"color": GRAY, "fontSize": "12px", "padding": "14px"})
+
+    # Group by location
+    rows = []
+    for i, item in enumerate(sorted(items, key=lambda x: (x.get("location", ""), x.get("category", ""), x.get("name", "")))):
+        qty = item.get("qty", 0)
+        qty_color = GREEN if qty > 5 else (ORANGE if qty > 0 else RED)
+        rows.append(html.Tr([
+            html.Td(item.get("name", ""), style={"color": WHITE, "padding": "6px 10px", "fontSize": "12px"}),
+            html.Td(str(qty), style={"color": qty_color, "padding": "6px 10px", "fontSize": "13px",
+                                      "fontWeight": "bold", "textAlign": "center", "fontFamily": "monospace"}),
+            html.Td(item.get("location", ""), style={"color": CYAN, "padding": "6px 10px", "fontSize": "11px"}),
+            html.Td(item.get("category", ""), style={"color": TEAL, "padding": "6px 10px", "fontSize": "11px"}),
+            html.Td(
+                html.Button("X", id={"type": "current-inv-del", "idx": i}, n_clicks=0,
+                    style={"fontSize": "10px", "padding": "2px 8px", "backgroundColor": f"{RED}22",
+                           "border": f"1px solid {RED}44", "borderRadius": "3px", "color": RED, "cursor": "pointer"}),
+                style={"padding": "6px 10px", "textAlign": "center"},
+            ),
+        ], style={"borderBottom": f"1px solid {DARKGRAY}22"}))
+
+    return html.Table([
+        html.Thead(html.Tr([
+            html.Th("Item", style={"color": GRAY, "padding": "6px 10px", "fontSize": "10px", "textTransform": "uppercase"}),
+            html.Th("Qty", style={"color": GRAY, "padding": "6px 10px", "fontSize": "10px", "textTransform": "uppercase", "textAlign": "center"}),
+            html.Th("Location", style={"color": GRAY, "padding": "6px 10px", "fontSize": "10px", "textTransform": "uppercase"}),
+            html.Th("Category", style={"color": GRAY, "padding": "6px 10px", "fontSize": "10px", "textTransform": "uppercase"}),
+            html.Th("", style={"width": "50px"}),
+        ], style={"borderBottom": f"2px solid {GREEN}33"})),
+        html.Tbody(rows),
+    ], style={"width": "100%", "borderCollapse": "collapse", "backgroundColor": CARD, "borderRadius": "8px"})
+
+
+@app.callback(
+    Output("current-inv-table-container", "children"),
+    Output("current-inv-status", "children"),
+    Output("current-inv-name", "value"),
+    Output("current-inv-qty", "value"),
+    Input("current-inv-add-btn", "n_clicks"),
+    Input({"type": "current-inv-del", "idx": ALL}, "n_clicks"),
+    State("current-inv-name", "value"),
+    State("current-inv-qty", "value"),
+    State("current-inv-location", "value"),
+    State("current-inv-category", "value"),
+    prevent_initial_call=True,
+)
+def manage_current_inventory(add_clicks, del_clicks, name, qty, location, category):
+    """Add or delete items from current inventory."""
+    from supabase_loader import get_config_value, _get_supabase_client
+    ctx = callback_context
+
+    raw = get_config_value("current_inventory")
+    items = json.loads(raw) if raw and isinstance(raw, str) else (raw or [])
+
+    status = html.Div()
+    clear_name = dash.no_update
+    clear_qty = dash.no_update
+
+    if ctx.triggered:
+        trigger = ctx.triggered[0]
+        prop_id = trigger["prop_id"]
+
+        if "current-inv-add-btn" in prop_id and trigger.get("value"):
+            # Add item
+            if not name or not name.strip():
+                status = html.Span("Enter an item name", style={"color": ORANGE, "fontSize": "12px"})
+                return _build_current_inv_table(), status, dash.no_update, dash.no_update
+
+            items.append({
+                "name": name.strip(),
+                "qty": int(qty) if qty else 0,
+                "location": location or "Tulsa, OK",
+                "category": category or "Other",
+            })
+            status = html.Span(f"Added {name.strip()}", style={"color": GREEN, "fontSize": "12px"})
+            clear_name = ""
+            clear_qty = ""
+
+        elif "current-inv-del" in prop_id:
+            # Delete item
+            try:
+                trigger_id = json.loads(prop_id.split(".")[0])
+                idx = trigger_id.get("idx", -1)
+                sorted_items = sorted(items, key=lambda x: (x.get("location", ""), x.get("category", ""), x.get("name", "")))
+                if 0 <= idx < len(sorted_items):
+                    removed = sorted_items[idx]
+                    items.remove(removed)
+                    status = html.Span(f"Removed {removed.get('name', '')}", style={"color": RED, "fontSize": "12px"})
+            except Exception:
+                pass
+
+    # Save
+    client = _get_supabase_client()
+    if client:
+        client.table("config").upsert({
+            "key": "current_inventory",
+            "value": json.dumps(items),
+        }, on_conflict="key").execute()
+
+    return _build_current_inv_table(), status, clear_name, clear_qty
+
+
+# Initial render of current inventory table on page load
+@app.callback(
+    Output("current-inv-table-container", "children", allow_duplicate=True),
+    Input("main-tabs", "value"),
+    prevent_initial_call=True,
+)
+def load_current_inv_on_tab(tab):
+    if tab != "tab-inventory":
+        raise dash.exceptions.PreventUpdate
+    return _build_current_inv_table()
+
+
 # ── Receipt Upload + Item Wizard ──────────────────────────────────────────────
 
 @app.callback(
