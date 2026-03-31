@@ -16654,9 +16654,42 @@ def _build_current_inv_table():
                   "Hardware": GRAY, "Tools": CYAN, "Printer Parts": PURPLE, "Jewelry": "#f1c40f",
                   "Other": DARKGRAY}
 
-    # Build items from _UPLOADED_INVENTORY (same source as warehouse cards)
+    # Build items from _UPLOADED_INVENTORY if available, otherwise load from Supabase
+    _inv_source = _UPLOADED_INVENTORY
+    if not _inv_source:
+        # Load directly from Supabase inventory_item_details
+        try:
+            from supabase_loader import _get_supabase_client
+            _ci_client = _get_supabase_client()
+            if _ci_client:
+                _ci_all = []
+                _ci_offset = 0
+                while True:
+                    _ci_batch = _ci_client.table("inventory_item_details").select("*").range(_ci_offset, _ci_offset + 999).execute()
+                    if not _ci_batch.data:
+                        break
+                    _ci_all.extend(_ci_batch.data)
+                    if len(_ci_batch.data) < 1000:
+                        break
+                    _ci_offset += 1000
+                _inv_source = {}
+                for _ci_row in _ci_all:
+                    _ci_dn = _ci_row.get("display_name", "")
+                    if _ci_dn and _ci_dn.startswith("["):
+                        _ci_details = json.loads(_ci_dn)
+                        for _ci_d in _ci_details:
+                            _ci_name = _ci_d.get("display_name", "")
+                            _ci_cat = _ci_d.get("category", "Other")
+                            _ci_loc = _ci_d.get("location", "")
+                            _ci_qty = _ci_d.get("true_qty", 1)
+                            if _ci_name:
+                                _ci_key = (_ci_loc, _ci_name, _ci_cat)
+                                _inv_source[_ci_key] = _inv_source.get(_ci_key, 0) + _ci_qty
+        except Exception:
+            pass
+
     all_items = []
-    for (loc, name, cat), purchased_qty in sorted(_UPLOADED_INVENTORY.items(), key=lambda x: (x[0][0], x[0][2], x[0][1])):
+    for (loc, name, cat), purchased_qty in sorted(_inv_source.items(), key=lambda x: (x[0][0], x[0][2], x[0][1])):
         qty = on_hand.get((name, loc), 0)
         thumb_url = _IMAGE_URLS.get(name, "")
         all_items.append({"name": name, "location": loc, "category": cat, "qty": qty,
