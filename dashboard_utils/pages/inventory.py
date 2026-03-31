@@ -252,8 +252,8 @@ def build_tab4_inventory():
                            "border": f"1px solid {GREEN}", "borderRadius": "4px", "color": GREEN,
                            "cursor": "pointer", "fontWeight": "bold"}),
             ], style={"display": "flex", "gap": "8px", "alignItems": "center", "marginBottom": "12px"}),
-            # Inventory table
-            html.Div(id="current-inv-table-container"),
+            # Inventory table — rendered at build time
+            html.Div(id="current-inv-table-container", children=ed._build_current_inv_table()),
         ], style={"marginBottom": "20px"}),
 
         # ══════════════════════════════════════════════════════════════════════
