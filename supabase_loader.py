@@ -580,11 +580,13 @@ def save_config_value(key: str, value) -> bool:
     try:
         # Upsert: insert or update if key exists
         client.table("config").upsert({"key": key, "value": value}).execute()
-        try:
-            from agents.governance import log_mutation
-            log_mutation("config", key, value)
-        except ImportError:
-            pass
+        # Log mutation (skip for governance log itself to prevent infinite recursion)
+        if key != "governance_mutation_log":
+            try:
+                from agents.governance import log_mutation
+                log_mutation("config", key, value)
+            except (ImportError, RecursionError):
+                pass
         return True
     except Exception as e:
         print(f"Failed to save config {key}: {e}")
