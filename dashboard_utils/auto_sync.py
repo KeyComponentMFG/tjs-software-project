@@ -158,18 +158,23 @@ def _do_sync():
     labels = json.loads(raw_labels) if isinstance(raw_labels, str) else (raw_labels or [])
     existing_label_ids = {l["label_id"] for l in labels}
 
-    # === Re-check recent orders (last 7 days) for status changes ===
+    # === Re-check ALL non-manual orders for status changes ===
+    # Uses individual receipt fetch (returns correct "Completed"/"Canceled" status)
+    # plus shipments array and payment data for refund detection.
+    # NOTE: The bulk receipts endpoint returns status="Paid" and was_shipped=None
+    #       for ALL non-canceled orders. NEVER use those fields for status.
+    #       Always use: individual receipt status, shipments[], or stored tracking/label.
     orders_updated = 0
-    recheck_ts = int(time.time()) - (7 * 86400)
-    recent_order_ids = [
+    orders_to_recheck = [
         o for o in orders
         if not o.get("_manual_override")
-        and o.get("Status") == "Completed"
+        and o.get("Status") in ("Completed", "Paid")
         and o.get("Sale Date")
     ]
-    # Filter to orders from last 7 days
+    # Focus on recent orders (last 14 days) for individual API re-checks to limit API calls
+    recheck_ts = int(time.time()) - (14 * 86400)
     recent_to_check = []
-    for o in recent_order_ids:
+    for o in orders_to_recheck:
         try:
             sale_dt = datetime.strptime(o["Sale Date"], "%m/%d/%Y")
             if sale_dt.timestamp() >= recheck_ts:
@@ -186,32 +191,43 @@ def _do_sync():
                 if not receipt:
                     continue
 
-                new_status = receipt.get("status", "")
-                is_now_refunded = new_status in ("refunded", "Refunded")
-                is_now_canceled = new_status in ("canceled", "Canceled")
+                # Determine correct status from individual receipt fetch
+                api_status = receipt.get("status", "")
+                is_now_canceled = api_status in ("Canceled", "canceled")
+                shipments = receipt.get("shipments", [])
+                has_shipment = any(s.get("tracking_code") or s.get("shipped_timestamp") for s in shipments)
 
-                if is_now_refunded or is_now_canceled:
-                    _logger.info("Order %s status changed to %s", rid, new_status)
-
-                    if is_now_canceled:
-                        o["Status"] = "Canceled"
-                        o["_needs_manual_net"] = True
-                        orders_updated += 1
-                    elif is_now_refunded:
-                        # Re-fetch payment to determine partial vs full refund
-                        pmt_data = _safe_get_receipt_payments(shop_id, rid)
-                        if pmt_data and pmt_data.get("results"):
-                            pmt = pmt_data["results"][0]
-                            refund = 0
-                            for adj in pmt.get("payment_adjustments", []):
-                                adj_amt = adj.get("total_adjustment_amount", 0)
-                                if adj_amt:
-                                    refund += adj_amt / 100.0
+                if is_now_canceled and o["Status"] != "Canceled":
+                    _logger.info("Order %s is now Canceled", rid)
+                    o["Status"] = "Canceled"
+                    o["_needs_manual_net"] = True
+                    orders_updated += 1
+                elif api_status in ("Completed",) or has_shipment:
+                    # Check for refund via payment API
+                    pmt_data = _safe_get_receipt_payments(shop_id, rid)
+                    if pmt_data and pmt_data.get("results"):
+                        pmt = pmt_data["results"][0]
+                        refund = 0
+                        for adj in pmt.get("payment_adjustments", []):
+                            adj_amt = adj.get("total_adjustment_amount", 0)
+                            if adj_amt:
+                                refund += adj_amt / 100.0
+                        if refund > 0 and o.get("Status") != "Refunded":
                             o["Refund"] = round(refund, 2)
                             o["Status"] = "Refunded"
-
                             _apply_refund_logic(o, pmt, refund)
                             orders_updated += 1
+                        elif o.get("Status") != "Completed":
+                            o["Status"] = "Completed"
+                            # Update tracking if available
+                            if shipments and not o.get("Tracking"):
+                                o["Tracking"] = shipments[0].get("tracking_code", "")
+                            orders_updated += 1
+
+                elif o.get("Status") != "Paid":
+                    # Not shipped, not canceled — it's Paid
+                    o["Status"] = "Paid"
+                    orders_updated += 1
 
                 time.sleep(0.25)
             except Exception as e:
@@ -282,8 +298,22 @@ def _do_sync():
             ship_country = addr.get("country_iso", "")
             ship_state = addr.get("state", "")
 
-        is_refunded = r.get("status", "") in ("refunded", "Refunded")
-        is_canceled = r.get("status", "") in ("canceled", "Canceled")
+        # Determine status correctly:
+        # - was_canceled or status contains "canceled" -> Canceled
+        # - has shipments with tracking -> Completed
+        # - otherwise -> Paid
+        # NOTE: Refund detection happens later via Payment API, not from receipt status.
+        # The bulk receipts endpoint returns status="Paid" for all non-canceled,
+        # so NEVER rely on r.get("status") == "Refunded" from bulk fetch.
+        is_canceled = r.get("was_canceled", False) or r.get("status", "") in ("canceled", "Canceled")
+        has_shipment = bool(tracking)  # tracking was extracted from shipments above
+
+        if is_canceled:
+            initial_status = "Canceled"
+        elif has_shipment:
+            initial_status = "Completed"
+        else:
+            initial_status = "Paid"
 
         order = {
             "Order ID": rid,
@@ -309,7 +339,7 @@ def _do_sync():
             "True Net": 0,
             "Fee %": 0,
             "Margin %": 0,
-            "Status": "Refunded" if is_refunded else ("Canceled" if is_canceled else "Completed"),
+            "Status": initial_status,
             "Ship State": ship_state,
             "Ship Country": ship_country,
             "Tracking": tracking,
@@ -543,9 +573,8 @@ def _do_sync():
         if lt in ("transaction", "shipping_transaction"):
             o["Transaction Fee"] = round(o.get("Transaction Fee", 0) + amount, 2)
         elif lt == "regulatory_operating_fee":
-            # Regulatory operating fee goes to the transaction_fee bucket
+            # Regulatory operating fee is its own bucket — NOT added to Transaction Fee
             o["Regulatory Fee"] = round(o.get("Regulatory Fee", 0) + amount, 2)
-            o["Transaction Fee"] = round(o.get("Transaction Fee", 0) + amount, 2)
         elif lt == "transaction_quantity":
             # transaction_quantity goes to listing_fee, NOT transaction_fee
             o["Listing Fee"] = round(o.get("Listing Fee", 0) + amount, 2)
@@ -576,14 +605,18 @@ def _do_sync():
                     proc_fee = abs(af.get("amount", 0) / af.get("divisor", 100)) if isinstance(af, dict) else 0
 
                     o["Processing Fee"] = round(proc_fee, 2)
+                    # Total Etsy Fees = Transaction + Processing + Listing + Regulatory
+                    # Offsite Ads goes to total_marketing, NOT total_fees (avoid double-count)
                     o["Total Etsy Fees"] = round(
-                        o["Transaction Fee"] + o["Offsite Ads"] + proc_fee, 2
+                        o.get("Transaction Fee", 0) + proc_fee +
+                        o.get("Listing Fee", 0) + o.get("Regulatory Fee", 0), 2
                     )
 
-                    # Compute Fee %: Total Etsy Fees / (Sale Price + Buyer Shipping) * 100
+                    # Fee % includes ALL costs as % of revenue (including Offsite Ads for display)
                     fee_base = o.get("Sale Price", 0) + o.get("Buyer Shipping", 0)
                     if fee_base > 0:
-                        o["Fee %"] = round(o["Total Etsy Fees"] / fee_base * 100, 1)
+                        all_fees = o["Total Etsy Fees"] + o.get("Offsite Ads", 0)
+                        o["Fee %"] = round(all_fees / fee_base * 100, 1)
                     else:
                         o["Fee %"] = 0
 
