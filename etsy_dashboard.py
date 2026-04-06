@@ -13967,6 +13967,8 @@ def _build_per_order_profit_section(store_orders, store_info):
                 "fontWeight": "bold", "width": "65px", "flexShrink": "0",
             }),
             html.Span(_type_display, style={"color": CYAN, "fontSize": "11px", "width": "75px", "flexShrink": "0"}),
+            html.Span(f"#{_ul.get('label_id', '')}", style={"color": GRAY, "fontSize": "10px", "fontFamily": "monospace",
+                       "width": "110px", "flexShrink": "0", "overflow": "hidden", "textOverflow": "ellipsis"}),
             html.Div(
                 dcc.Dropdown(
                     id={"type": "label-assign-order-input", "label": _ul.get("label_id", "")},
@@ -13998,7 +14000,8 @@ def _build_per_order_profit_section(store_orders, store_info):
                     html.Span("Date", style={"width": "85px", "color": GRAY, "fontSize": "10px"}),
                     html.Span("Amount", style={"width": "65px", "color": GRAY, "fontSize": "10px"}),
                     html.Span("Type", style={"width": "75px", "color": GRAY, "fontSize": "10px"}),
-                    html.Span("Assign to Order (search by name or #)", style={"color": GRAY, "fontSize": "10px"}),
+                    html.Span("Label ID", style={"width": "110px", "color": GRAY, "fontSize": "10px"}),
+                    html.Span("Assign to Order", style={"color": GRAY, "fontSize": "10px"}),
                 ], style={"display": "flex", "gap": "8px", "padding": "4px 14px", "borderBottom": f"1px solid {DARKGRAY}44"}),
                 *_label_rows,
             ], style={"maxHeight": "500px", "overflowY": "auto"}),
